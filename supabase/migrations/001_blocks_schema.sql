@@ -55,6 +55,17 @@ comment on column blocks.lat is 'Latitude (nullable — some blocks cannot be ge
 comment on column blocks.lng is 'Longitude (nullable — some blocks cannot be geocoded)';
 comment on column blocks.geom is 'PostGIS geography point derived from lat/lng; null when coordinates are missing';
 
+-- Enable Row Level Security on blocks table.
+-- The mobile app uses the Supabase anon key and only needs SELECT access.
+-- The ingestion script uses the service_role key which bypasses RLS entirely.
+alter table blocks enable row level security;
+
+-- Allow public read access (anon + authenticated) — the app is read-only in MVP
+create policy "Public read access"
+  on blocks
+  for select
+  using (true);
+
 -- ---------------------------------------------------------------------------
 -- 3. Create unmatched_hdb_blocks table
 --
@@ -75,6 +86,11 @@ create table if not exists unmatched_hdb_blocks (
 
 comment on table unmatched_hdb_blocks is 'HDB records that failed all geocoding passes — logged for manual review';
 comment on column unmatched_hdb_blocks.reason is 'Description of which geocoding pass failed and why';
+
+-- Enable RLS on unmatched_hdb_blocks.
+-- Only the service_role (ingestion script) should access this table.
+-- Anon/authenticated users have no access.
+alter table unmatched_hdb_blocks enable row level security;
 
 -- ---------------------------------------------------------------------------
 -- 4. Trigger function: auto-populate geom from lat/lng
@@ -199,6 +215,11 @@ $$;
 comment on function blocks_set_updated_at() is 'Trigger function: sets updated_at to now() on row modification';
 
 -- Attach both triggers to the blocks table
+
+-- The following DROP + CREATE trigger pairs are intentionally idempotent
+-- (safe to run multiple times). Supabase may flag DROP as "destructive"
+-- but DROP IF EXISTS on a trigger is non-destructive -- it only removes
+-- the trigger if it already exists so the CREATE below can re-add it.
 drop trigger if exists trg_blocks_set_geom on blocks;
 create trigger trg_blocks_set_geom
   before insert or update of lat, lng
