@@ -132,8 +132,8 @@ create index if not exists blocks_geom_idx on blocks using gist (geom);
 -- "Nearest to me"). Only returns blocks with non-null geom.
 --
 -- Parameters:
---   lat       float  — Latitude of the query point
---   lng       float  — Longitude of the query point
+--   query_lat float  — Latitude of the query point
+--   query_lng float  — Longitude of the query point
 --   radius_m  float  — Search radius in metres (default 5000)
 --   sort_by   text   — Sort order: 'storeys' (default) or 'distance'
 --
@@ -141,10 +141,10 @@ create index if not exists blocks_geom_idx on blocks using gist (geom);
 --   All visible block columns plus computed distance_m.
 -- ---------------------------------------------------------------------------
 create or replace function nearby_blocks(
-  lat      float,
-  lng      float,
-  radius_m float default 5000,
-  sort_by  text  default 'storeys'
+  query_lat float,
+  query_lng float,
+  radius_m  float default 5000,
+  sort_by   text  default 'storeys'
 )
 returns table (
   block_id            uuid,
@@ -167,7 +167,7 @@ declare
   query_point geography;
 begin
   -- Build the query point as a geography
-  query_point := st_setsrid(st_makepoint(lng, lat), 4326)::geography;
+  query_point := st_setsrid(st_makepoint(query_lng, query_lat), 4326)::geography;
 
   return query
   select
@@ -194,7 +194,7 @@ end;
 $$;
 
 comment on function nearby_blocks(float, float, float, text) is
-  'Returns up to 100 blocks within radius_m of (lat, lng), sorted by storey count (desc) or distance (asc)';
+  'Returns up to 100 blocks within radius_m of (query_lat, query_lng), sorted by storey count (desc) or distance (asc)';
 
 -- ---------------------------------------------------------------------------
 -- 7. Trigger: auto-update updated_at on row changes

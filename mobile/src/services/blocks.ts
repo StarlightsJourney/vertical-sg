@@ -23,8 +23,8 @@ export async function fetchNearbyBlocks(
   const { lat, lng, radius, sortBy } = params;
 
   const { data, error } = await supabase.rpc('nearby_blocks', {
-    lat,
-    lng,
+    query_lat: lat,
+    query_lng: lng,
     radius_m: radius,
     sort_by: sortBy,
   });
