@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -6,9 +6,15 @@ import {
   ActivityIndicator,
   TouchableOpacity,
 } from 'react-native';
-import Mapbox, { MapView, Camera, PointAnnotation } from '@rnmapbox/maps';
+import Mapbox, {
+  MapView,
+  Camera,
+  ShapeSource,
+  CircleLayer,
+  SymbolLayer,
+} from '@rnmapbox/maps';
 import { useLocation } from '../hooks/useLocation';
-import { fetchNearbyBlocks } from '../services/blocks';
+import { fetchNearbyBlocks, fetchBlocksInBounds } from '../services/blocks';
 import type { Block, SortMode } from '../types';
 import BlockDetailSheet from '../components/BlockDetailSheet';
 
@@ -17,22 +23,18 @@ Mapbox.setAccessToken(process.env.EXPO_PUBLIC_MAPBOX_TOKEN ?? '');
 
 const RADIUS_PRESETS = [1000, 3000, 5000];
 
-function getMarkerColor(storeys: number): string {
-  if (storeys <= 10) return '#4A90D9';
-  if (storeys <= 20) return '#FF9500';
-  if (storeys <= 30) return '#FF3B30';
-  return '#8B0000';
-}
-
-function getMarkerSize(storeys: number): number {
-  if (storeys <= 10) return 12;
-  if (storeys <= 20) return 14;
-  if (storeys <= 30) return 16;
-  return 18;
-}
-
 export default function MapScreen() {
   const location = useLocation();
+  const mapRef = useRef<MapView>(null);
+  const cameraRef = useRef<Camera>(null);
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sortByRef = useRef<SortMode>('storeys');
+  const blocksRef = useRef<Block[]>([]);
+  const zoomRef = useRef(13);
+  const mapBoundsRef = useRef<{
+    ne: [number, number];
+    sw: [number, number];
+  } | null>(null);
 
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [selectedBlock, setSelectedBlock] = useState<Block | null>(null);
@@ -41,7 +43,41 @@ export default function MapScreen() {
   const [sortBy, setSortBy] = useState<SortMode>('storeys');
   const [radius, setRadius] = useState(5000);
 
-  const fetchBlocks = useCallback(async () => {
+  // Keep refs in sync with state
+  sortByRef.current = sortBy;
+  blocksRef.current = blocks;
+
+  // Convert blocks array to a GeoJSON FeatureCollection for the ShapeSource
+  const geojson = useMemo(() => {
+    return {
+      type: 'FeatureCollection' as const,
+      features: blocks
+        .filter((b) => b.lat != null && b.lng != null)
+        .map((b) => ({
+          type: 'Feature' as const,
+          geometry: {
+            type: 'Point' as const,
+            coordinates: [b.lng!, b.lat!] as [number, number],
+          },
+          properties: {
+            block_id: b.block_id,
+            blk_no: b.blk_no,
+            street: b.street,
+            storeys: b.storeys,
+            est_height_m: b.est_height_m,
+            height_source: b.height_source,
+            town: b.town,
+            year_completed: b.year_completed,
+            total_dwelling_units: b.total_dwelling_units,
+            lat: b.lat,
+            lng: b.lng,
+          },
+        })),
+    };
+  }, [blocks]);
+
+  // Fetch nearby blocks — used when "Nearest" sort is active
+  const fetchNearby = useCallback(async () => {
     if (location.loading) return;
     setLoading(true);
     setError(null);
@@ -68,9 +104,102 @@ export default function MapScreen() {
     sortBy,
   ]);
 
-  useEffect(() => {
-    fetchBlocks();
-  }, [fetchBlocks]);
+  // Fetch blocks in the given map bounds — used when "Tallest" sort is active
+  const fetchBounds = useCallback(
+    async (
+      bounds: { ne: [number, number]; sw: [number, number] },
+      sort: SortMode,
+    ) => {
+      setLoading(true);
+      setError(null);
+      try {
+        const data = await fetchBlocksInBounds({
+          minLat: bounds.sw[1],
+          minLng: bounds.sw[0],
+          maxLat: bounds.ne[1],
+          maxLng: bounds.ne[0],
+          sortBy: sort,
+        });
+        setBlocks(data);
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : 'Failed to load blocks',
+        );
+      } finally {
+        setLoading(false);
+      }
+    },
+    [],
+  );
+
+  // Handle camera changes: track bounds and zoom, debounce bounds fetch
+  const handleCameraChanged = useCallback(
+    (e: { properties: Record<string, any> }) => {
+      const bounds = e.properties?.bounds;
+      const zoom = e.properties?.zoom;
+
+      if (bounds?.ne && bounds?.sw) {
+        mapBoundsRef.current = {
+          ne: bounds.ne as [number, number],
+          sw: bounds.sw as [number, number],
+        };
+      }
+      if (typeof zoom === 'number') {
+        zoomRef.current = zoom;
+      }
+
+      // Don't fetch bounds in "Nearest" mode
+      if (sortByRef.current === 'distance') return;
+
+      // Debounce: wait 300ms after the last camera movement
+      if (debounceTimer.current) {
+        clearTimeout(debounceTimer.current);
+      }
+      debounceTimer.current = setTimeout(() => {
+        // Double-check mode hasn't changed mid-debounce
+        if (sortByRef.current === 'distance') return;
+        if (mapBoundsRef.current) {
+          fetchBounds(mapBoundsRef.current, sortByRef.current);
+        }
+      }, 300);
+    },
+    [fetchBounds],
+  );
+
+  // Handle tap on map: clusters zoom in, individual points show detail sheet
+  const handleMapPress = useCallback(
+    async (e: { properties: Record<string, any> }) => {
+      const queryResult =
+        await mapRef.current?.queryRenderedFeaturesAtPoint([
+          e.properties.screenPointX,
+          e.properties.screenPointY,
+        ]);
+      const features = queryResult?.features ?? [];
+
+      if (features.length === 0) return;
+
+      const feature = features[0] as any;
+
+      if (feature.properties?.cluster) {
+        // Tapped a cluster — zoom in by 2 levels
+        cameraRef.current?.setCamera({
+          centerCoordinate: feature.geometry.coordinates,
+          zoomLevel: zoomRef.current + 2,
+          animationDuration: 300,
+        });
+      } else {
+        // Tapped an individual block — show detail sheet
+        const blockId: string | undefined = feature.properties?.block_id;
+        if (blockId) {
+          const block = blocksRef.current.find(
+            (b) => b.block_id === blockId,
+          );
+          if (block) setSelectedBlock(block);
+        }
+      }
+    },
+    [],
+  );
 
   const handleCloseDetail = useCallback(() => {
     setSelectedBlock(null);
@@ -82,40 +211,106 @@ export default function MapScreen() {
     location.latitude,
   ];
 
+  // Fetch data when sort mode, radius, or location availability changes
+  useEffect(() => {
+    if (location.loading) return;
+
+    if (sortBy === 'distance') {
+      fetchNearby();
+    }
+    // In 'storeys' mode the camera-change handler drives fetching
+  }, [sortBy, radius, location.loading, fetchNearby]);
+
+  // Cleanup debounce timer on unmount
+  useEffect(() => {
+    return () => {
+      if (debounceTimer.current) {
+        clearTimeout(debounceTimer.current);
+      }
+    };
+  }, []);
+
   return (
     <View style={styles.container}>
-      <MapView style={styles.map} logoEnabled={false}>
+      <MapView
+        ref={mapRef}
+        style={styles.map}
+        logoEnabled={false}
+        onPress={handleMapPress}
+        onCameraChanged={handleCameraChanged}
+      >
         <Camera
+          ref={cameraRef}
           centerCoordinate={cameraCoordinate}
           zoomLevel={13}
           animationMode="flyTo"
         />
-        {blocks.map((block) => {
-          if (block.lat == null || block.lng == null) return null;
-          const size = getMarkerSize(block.storeys);
-          return (
-            <PointAnnotation
-              key={block.block_id}
-              id={block.block_id}
-              coordinate={[block.lng, block.lat]}
-              onSelected={() => setSelectedBlock(block)}
-            >
-              <View style={styles.markerContainer}>
-                <View
-                  style={[
-                    styles.marker,
-                    {
-                      backgroundColor: getMarkerColor(block.storeys),
-                      width: size * 2,
-                      height: size * 2,
-                      borderRadius: size,
-                    },
-                  ]}
-                />
-              </View>
-            </PointAnnotation>
-          );
-        })}
+
+        <ShapeSource
+          id="blocks"
+          shape={geojson}
+          cluster
+          clusterRadius={50}
+          clusterMaxZoomLevel={14}
+        >
+          {/* Cluster background circles */}
+          <CircleLayer
+            id="clusters-bg"
+            filter={['has', 'point_count']}
+            style={{
+              circleColor: '#2563EB',
+              circleRadius: 18,
+              circleOpacity: 0.9,
+              circleStrokeWidth: 2,
+              circleStrokeColor: '#fff',
+            }}
+          />
+
+          {/* Cluster count labels */}
+          <SymbolLayer
+            id="clusters"
+            filter={['has', 'point_count']}
+            style={{
+              textField: ['get', 'point_count'],
+              textSize: 14,
+              textColor: '#fff',
+              textIgnorePlacement: true,
+              textAllowOverlap: true,
+            }}
+          />
+
+          {/* Individual block points — coloured circles by height tier */}
+          <CircleLayer
+            id="unclustered-points"
+            filter={['!', ['has', 'point_count']]}
+            style={{
+              circleColor: [
+                'step',
+                ['get', 'storeys'],
+                '#4A90D9', // 1-10: blue
+                11,
+                '#FF9500', // 11-20: orange
+                21,
+                '#FF3B30', // 21-30: red
+                31,
+                '#8B0000', // 31+: dark red
+              ],
+              circleRadius: [
+                'step',
+                ['get', 'storeys'],
+                7, // 1-10
+                11,
+                9, // 11-20
+                21,
+                11, // 21-30
+                31,
+                13, // 31+
+              ],
+              circleStrokeWidth: 1.5,
+              circleStrokeColor: '#fff',
+            }}
+          />
+        </ShapeSource>
       </MapView>
 
       {/* Error banner */}
@@ -303,13 +498,5 @@ const styles = StyleSheet.create({
   },
   radiusButtonTextActive: {
     color: '#FFFFFF',
-  },
-  markerContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  marker: {
-    borderWidth: 2,
-    borderColor: 'rgba(255, 255, 255, 0.8)',
   },
 });
