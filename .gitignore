@@ -37,6 +37,9 @@ supabase/.temp/
 Thumbs.db
 Desktop.ini
 
+# Claude Code (session data, not project code)
+.claude/
+
 # Logs
 logs/
 *.log
