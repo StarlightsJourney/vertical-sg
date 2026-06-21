@@ -6,35 +6,35 @@ import {
   ActivityIndicator,
   TouchableOpacity,
 } from 'react-native';
-import Mapbox, {
-  MapView,
+import {
+  Map,
   Camera,
-  ShapeSource,
-  CircleLayer,
-  SymbolLayer,
-} from '@rnmapbox/maps';
+  GeoJSONSource,
+  Layer,
+  type MapRef,
+  type CameraRef,
+} from '@maplibre/maplibre-react-native';
 import { useLocation } from '../hooks/useLocation';
 import { fetchNearbyBlocks, fetchBlocksInBounds } from '../services/blocks';
 import type { Block, SortMode } from '../types';
 import BlockDetailSheet from '../components/BlockDetailSheet';
 
-// Set Mapbox access token before any map renders
-Mapbox.setAccessToken(process.env.EXPO_PUBLIC_MAPBOX_TOKEN ?? '');
-
+// Free vector tile style (no API key needed — MapLibre is open source)
+const MAP_STYLE = 'https://demotiles.maplibre.org/style.json';
 const RADIUS_PRESETS = [1000, 3000, 5000];
+
+// Default Singapore bounds for initial fetch before map camera settles
+const SG_BOUNDS = { sw: [103.6, 1.2] as [number, number], ne: [104.0, 1.48] as [number, number] };
 
 export default function MapScreen() {
   const location = useLocation();
-  const mapRef = useRef<MapView>(null);
-  const cameraRef = useRef<Camera>(null);
+  const mapRef = useRef<MapRef>(null);
+  const cameraRef = useRef<CameraRef>(null);
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sortByRef = useRef<SortMode>('storeys');
   const blocksRef = useRef<Block[]>([]);
   const zoomRef = useRef(13);
-  const mapBoundsRef = useRef<{
-    ne: [number, number];
-    sw: [number, number];
-  } | null>(null);
+  const boundsRef = useRef<{ sw: [number, number]; ne: [number, number] } | null>(null);
 
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [selectedBlock, setSelectedBlock] = useState<Block | null>(null);
@@ -43,40 +43,35 @@ export default function MapScreen() {
   const [sortBy, setSortBy] = useState<SortMode>('storeys');
   const [radius, setRadius] = useState(5000);
 
-  // Keep refs in sync with state
+  // Sync refs with state
   sortByRef.current = sortBy;
   blocksRef.current = blocks;
 
-  // Convert blocks array to a GeoJSON FeatureCollection for the ShapeSource
-  const geojson = useMemo(() => {
-    return {
-      type: 'FeatureCollection' as const,
-      features: blocks
-        .filter((b) => b.lat != null && b.lng != null)
-        .map((b) => ({
-          type: 'Feature' as const,
-          geometry: {
-            type: 'Point' as const,
-            coordinates: [b.lng!, b.lat!] as [number, number],
-          },
-          properties: {
-            block_id: b.block_id,
-            blk_no: b.blk_no,
-            street: b.street,
-            storeys: b.storeys,
-            est_height_m: b.est_height_m,
-            height_source: b.height_source,
-            town: b.town,
-            year_completed: b.year_completed,
-            total_dwelling_units: b.total_dwelling_units,
-            lat: b.lat,
-            lng: b.lng,
-          },
-        })),
-    };
-  }, [blocks]);
+  // Build GeoJSON FeatureCollection from blocks for the map source
+  const geojson = useMemo((): GeoJSON.FeatureCollection => ({
+    type: 'FeatureCollection',
+    features: blocks
+      .filter((b) => b.lat != null && b.lng != null)
+      .map((b) => ({
+        type: 'Feature',
+        geometry: {
+          type: 'Point',
+          coordinates: [b.lng!, b.lat!] as [number, number],
+        },
+        properties: {
+          block_id: b.block_id,
+          storeys: b.storeys,
+          est_height_m: b.est_height_m,
+          height_source: b.height_source,
+          town: b.town,
+          street: b.street,
+          year_completed: b.year_completed,
+          total_dwelling_units: b.total_dwelling_units,
+        },
+      })),
+  }), [blocks]);
 
-  // Fetch nearby blocks — used when "Nearest" sort is active
+  // Fetch nearby blocks (used when "Nearest" sort is active)
   const fetchNearby = useCallback(async () => {
     if (location.loading) return;
     setLoading(true);
@@ -96,28 +91,22 @@ export default function MapScreen() {
     } finally {
       setLoading(false);
     }
-  }, [
-    location.latitude,
-    location.longitude,
-    location.loading,
-    radius,
-    sortBy,
-  ]);
+  }, [location.latitude, location.longitude, location.loading, radius, sortBy]);
 
-  // Fetch blocks in the given map bounds — used when "Tallest" sort is active
+  // Fetch blocks within visible map bounds (used when "Tallest" sort is active)
   const fetchBounds = useCallback(
     async (
-      bounds: { ne: [number, number]; sw: [number, number] },
+      b: { sw: [number, number]; ne: [number, number] },
       sort: SortMode,
     ) => {
       setLoading(true);
       setError(null);
       try {
         const data = await fetchBlocksInBounds({
-          minLat: bounds.sw[1],
-          minLng: bounds.sw[0],
-          maxLat: bounds.ne[1],
-          maxLng: bounds.ne[0],
+          minLat: b.sw[1],
+          minLng: b.sw[0],
+          maxLat: b.ne[1],
+          maxLng: b.ne[0],
           sortBy: sort,
         });
         setBlocks(data);
@@ -132,34 +121,32 @@ export default function MapScreen() {
     [],
   );
 
-  // Handle camera changes: track bounds and zoom, debounce bounds fetch
-  const handleCameraChanged = useCallback(
-    (e: { properties: Record<string, any> }) => {
-      const bounds = e.properties?.bounds;
-      const zoom = e.properties?.zoom;
+  // Debounced handler for map region changes: track bounds/zoom, fetch blocks
+  const handleRegionDidChange = useCallback(
+    (event: any) => {
+      const ev = event.nativeEvent ?? event;
+      const boundsArr = ev.bounds as [number, number, number, number] | undefined; // [west, south, east, north]
+      const zoom = ev.zoom as number | undefined;
 
-      if (bounds?.ne && bounds?.sw) {
-        mapBoundsRef.current = {
-          ne: bounds.ne as [number, number],
-          sw: bounds.sw as [number, number],
+      if (boundsArr) {
+        boundsRef.current = {
+          sw: [boundsArr[0], boundsArr[1]],
+          ne: [boundsArr[2], boundsArr[3]],
         };
       }
       if (typeof zoom === 'number') {
         zoomRef.current = zoom;
       }
 
-      // Don't fetch bounds in "Nearest" mode
+      // Don't fetch in "Nearest" mode
       if (sortByRef.current === 'distance') return;
 
-      // Debounce: wait 300ms after the last camera movement
-      if (debounceTimer.current) {
-        clearTimeout(debounceTimer.current);
-      }
+      // Debounce: wait 300ms after last camera movement
+      if (debounceTimer.current) clearTimeout(debounceTimer.current);
       debounceTimer.current = setTimeout(() => {
-        // Double-check mode hasn't changed mid-debounce
         if (sortByRef.current === 'distance') return;
-        if (mapBoundsRef.current) {
-          fetchBounds(mapBoundsRef.current, sortByRef.current);
+        if (boundsRef.current) {
+          fetchBounds(boundsRef.current, sortByRef.current);
         }
       }, 300);
     },
@@ -167,46 +154,39 @@ export default function MapScreen() {
   );
 
   // Handle tap on map: clusters zoom in, individual points show detail sheet
-  const handleMapPress = useCallback(
-    async (e: { properties: Record<string, any> }) => {
-      const queryResult =
-        await mapRef.current?.queryRenderedFeaturesAtPoint([
-          e.properties.screenPointX,
-          e.properties.screenPointY,
-        ]);
-      const features = queryResult?.features ?? [];
+  const handleMapPress = useCallback(async (event: any) => {
+    const point = event.nativeEvent?.point as [number, number] | undefined;
+    if (!point) return;
 
-      if (features.length === 0) return;
+    const features = await mapRef.current?.queryRenderedFeatures(point);
+    if (!features || features.length === 0) return;
 
-      const feature = features[0] as any;
+    const feature = features[0];
+    const props = feature.properties ?? {};
 
-      if (feature.properties?.cluster) {
-        // Tapped a cluster — zoom in by 2 levels
-        cameraRef.current?.setCamera({
-          centerCoordinate: feature.geometry.coordinates,
-          zoomLevel: zoomRef.current + 2,
-          animationDuration: 300,
-        });
-      } else {
-        // Tapped an individual block — show detail sheet
-        const blockId: string | undefined = feature.properties?.block_id;
-        if (blockId) {
-          const block = blocksRef.current.find(
-            (b) => b.block_id === blockId,
-          );
-          if (block) setSelectedBlock(block);
-        }
-      }
-    },
-    [],
-  );
+    if (props.cluster) {
+      // Tapped a cluster — zoom in by 2 levels
+      const coords = (feature.geometry as GeoJSON.Point).coordinates;
+      cameraRef.current?.easeTo({
+        center: coords as [number, number],
+        zoom: zoomRef.current + 2,
+        duration: 300,
+      });
+    } else if (props.block_id) {
+      // Tapped an individual block — show detail sheet
+      const block = blocksRef.current.find(
+        (b) => b.block_id === props.block_id,
+      );
+      if (block) setSelectedBlock(block);
+    }
+  }, []);
 
   const handleCloseDetail = useCallback(() => {
     setSelectedBlock(null);
   }, []);
 
-  // Camera requires [lng, lat] format
-  const cameraCoordinate: [number, number] = [
+  // Camera initial position [lng, lat]
+  const cameraCenter: [number, number] = [
     location.longitude,
     location.latitude,
   ];
@@ -217,74 +197,85 @@ export default function MapScreen() {
 
     if (sortBy === 'distance') {
       fetchNearby();
+    } else {
+      // Fetch bounds using current bounds or fall back to default SG bounds
+      if (boundsRef.current) {
+        fetchBounds(boundsRef.current, sortBy);
+      } else {
+        fetchBounds(SG_BOUNDS, sortBy);
+      }
     }
-    // In 'storeys' mode the camera-change handler drives fetching
-  }, [sortBy, radius, location.loading, fetchNearby]);
+  }, [sortBy, radius, location.loading, fetchNearby, fetchBounds]);
 
-  // Cleanup debounce timer on unmount
+  // Cleanup debounce on unmount
   useEffect(() => {
     return () => {
-      if (debounceTimer.current) {
-        clearTimeout(debounceTimer.current);
-      }
+      if (debounceTimer.current) clearTimeout(debounceTimer.current);
     };
   }, []);
 
   return (
     <View style={styles.container}>
-      <MapView
+      <Map
         ref={mapRef}
         style={styles.map}
-        logoEnabled={false}
+        mapStyle={MAP_STYLE}
+        logo={false}
         onPress={handleMapPress}
-        onCameraChanged={handleCameraChanged}
+        onRegionDidChange={handleRegionDidChange}
       >
         <Camera
           ref={cameraRef}
-          centerCoordinate={cameraCoordinate}
-          zoomLevel={13}
-          animationMode="flyTo"
+          center={cameraCenter}
+          zoom={13}
+          duration={500}
         />
 
-        <ShapeSource
+        <GeoJSONSource
           id="blocks"
-          shape={geojson}
+          data={geojson}
           cluster
           clusterRadius={50}
-          clusterMaxZoomLevel={14}
+          clusterMaxZoom={14}
         >
           {/* Cluster background circles */}
-          <CircleLayer
+          <Layer
             id="clusters-bg"
+            source="blocks"
+            type="circle"
             filter={['has', 'point_count']}
-            style={{
-              circleColor: '#2563EB',
-              circleRadius: 18,
-              circleOpacity: 0.9,
-              circleStrokeWidth: 2,
-              circleStrokeColor: '#fff',
+            paint={{
+              'circle-color': '#2563EB',
+              'circle-radius': 18,
+              'circle-opacity': 0.9,
+              'circle-stroke-width': 2,
+              'circle-stroke-color': '#ffffff',
             }}
           />
 
           {/* Cluster count labels */}
-          <SymbolLayer
+          <Layer
             id="clusters"
+            source="blocks"
+            type="symbol"
             filter={['has', 'point_count']}
-            style={{
-              textField: ['get', 'point_count'],
-              textSize: 14,
-              textColor: '#fff',
-              textIgnorePlacement: true,
-              textAllowOverlap: true,
+            layout={{
+              'text-field': ['get', 'point_count'],
+              'text-size': 14,
+              'text-ignore-placement': true,
+              'text-allow-overlap': true,
             }}
+            paint={{ 'text-color': '#ffffff' }}
           />
 
           {/* Individual block points — coloured circles by height tier */}
-          <CircleLayer
+          <Layer
             id="unclustered-points"
+            source="blocks"
+            type="circle"
             filter={['!', ['has', 'point_count']]}
-            style={{
-              circleColor: [
+            paint={{
+              'circle-color': [
                 'step',
                 ['get', 'storeys'],
                 '#4A90D9', // 1-10: blue
@@ -295,23 +286,23 @@ export default function MapScreen() {
                 31,
                 '#8B0000', // 31+: dark red
               ],
-              circleRadius: [
+              'circle-radius': [
                 'step',
                 ['get', 'storeys'],
-                7, // 1-10
+                7,  // 1-10
                 11,
-                9, // 11-20
+                9,  // 11-20
                 21,
                 11, // 21-30
                 31,
                 13, // 31+
               ],
-              circleStrokeWidth: 1.5,
-              circleStrokeColor: '#fff',
+              'circle-stroke-width': 1.5,
+              'circle-stroke-color': '#ffffff',
             }}
           />
-        </ShapeSource>
-      </MapView>
+        </GeoJSONSource>
+      </Map>
 
       {/* Error banner */}
       {error && (
@@ -320,7 +311,7 @@ export default function MapScreen() {
         </View>
       )}
 
-      {/* Loading indicator */}
+      {/* Loading overlay */}
       {loading && (
         <View style={styles.loadingOverlay}>
           <ActivityIndicator size="large" color="#FFFFFF" />
