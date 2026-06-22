@@ -13,17 +13,17 @@ import {
   Layer,
   type MapRef,
   type CameraRef,
-  type ViewStateChangeEvent,
 } from '@maplibre/maplibre-react-native';
 import { useLocation } from '../hooks/useLocation';
 import { fetchNearbyBlocks, fetchBlocksInBounds } from '../services/blocks';
 import type { Block, SortMode, BoundsRect } from '../types';
 import BlockDetailSheet from '../components/BlockDetailSheet';
 
-// MapLibre demotiles — the only free style that doesn't hide our pins.
-// For a proper map: sign up at map-tiler.com (free tier, no card) →
-// create a style → paste your style URL here. Takes 2 minutes.
-const MAP_STYLE = 'https://demotiles.maplibre.org/style.json';
+// Liberty style with 3D buildings (fill-extrusion) removed.
+// Fill-extrusion uses depth buffering which covers 2D circle layers.
+// Text labels (symbol) also removed — no font server needed.
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const MAP_STYLE = require('../../assets/map-style.json');
 const RADIUS_PRESETS = [1000, 3000, 5000];
 
 // Default Singapore bounds for initial fetch before map camera settles
