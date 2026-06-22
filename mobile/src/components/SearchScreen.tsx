@@ -9,10 +9,9 @@ import {
   ScrollView,
   ActivityIndicator,
   FlatList,
-  SafeAreaView,
 } from 'react-native';
 import { supabase } from '../config/supabase';
-import type { Block } from '../types';
+import type { Block, ClimbLog } from '../types';
 
 interface SearchScreenProps {
   visible: boolean;
@@ -22,6 +21,7 @@ interface SearchScreenProps {
   starredBlockIds: Set<string>;
   onToggleStar: (block: Block) => void;
   isDark?: boolean;
+  climbHistory?: ClimbLog[];
 }
 
 function getTier(storeys: number) {
@@ -39,12 +39,14 @@ export default function SearchScreen({
   starredBlockIds,
   onToggleStar,
   isDark = false,
+  climbHistory = [],
 }: SearchScreenProps) {
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const [searchResults, setSearchResults] = useState<Block[]>([]);
   const [searching, setSearching] = useState(false);
   const [starredBlocks, setStarredBlocks] = useState<Block[]>([]);
+  const [showAllRecent, setShowAllRecent] = useState(false);
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchRequestRef = useRef(0);
 
@@ -115,6 +117,7 @@ export default function SearchScreen({
       setSearchResults([]);
       setDebouncedQuery('');
       setSearching(false);
+      setShowAllRecent(false);
     }
   }, [visible]);
 
@@ -171,16 +174,28 @@ export default function SearchScreen({
 
   const hasQuery = query.trim().length > 0;
 
+  const totalClimbs = climbHistory.length;
+  const totalFloors = climbHistory.reduce((sum, c) => sum + c.storeys, 0);
+
   return (
     <Modal
       visible={visible}
       animationType="slide"
-      presentationStyle="fullScreen"
+      transparent={true}
       onRequestClose={onClose}
     >
-      <SafeAreaView style={[styles.safeArea, isDark && { backgroundColor: '#111827' }]}>
-        <View style={[styles.container, { paddingTop: 52 }, isDark && { backgroundColor: '#111827' }]}>
-          {/* Search bar */}
+      <View style={styles.overlay}>
+        {/* Backdrop - top 8%, tappable to dismiss */}
+        <TouchableOpacity style={styles.backdropArea} activeOpacity={1} onPress={onClose} />
+
+        {/* Sheet - bottom 92% with rounded top corners */}
+        <View style={[styles.sheetContainer, isDark && { backgroundColor: '#111827' }]}>
+          {/* Drag handle */}
+          <TouchableOpacity style={styles.dragHandleRow} activeOpacity={0.7} onPress={onClose}>
+            <View style={styles.dragHandle} />
+          </TouchableOpacity>
+
+          {/* Search bar - no cancel */}
           <View style={[styles.searchBarContainer, isDark && { borderBottomColor: '#374151' }]}>
             <View style={[styles.searchInputWrapper, isDark && { backgroundColor: '#1F2937' }]}>
               <TextInput
@@ -194,73 +209,111 @@ export default function SearchScreen({
                 returnKeyType="search"
               />
             </View>
-            <TouchableOpacity onPress={onClose} style={styles.cancelButton}>
-              <Text style={styles.cancelText}>Cancel</Text>
-            </TouchableOpacity>
           </View>
 
           {/* Content area */}
-          {hasQuery ? (
-            searching && searchResults.length === 0 ? (
-              <View style={styles.centerContent}>
-                <ActivityIndicator size="large" color="#2563EB" />
-              </View>
-            ) : searchResults.length > 0 ? (
-              <FlatList
-                data={searchResults}
-                keyExtractor={(item) => item.block_id}
-                renderItem={({ item }) => renderBlockRow(item)}
-                ItemSeparatorComponent={() => <Separator isDark={isDark} />}
-                keyboardShouldPersistTaps="handled"
-                contentContainerStyle={styles.listContent}
-              />
-            ) : (
-              !searching && (
+          <View style={styles.contentArea}>
+            {hasQuery ? (
+              searching && searchResults.length === 0 ? (
                 <View style={styles.centerContent}>
-                  <Text style={[styles.emptyText, isDark && { color: '#D1D5DB' }]}>No results found</Text>
+                  <ActivityIndicator size="large" color="#2563EB" />
                 </View>
+              ) : searchResults.length > 0 ? (
+                <FlatList
+                  data={searchResults}
+                  keyExtractor={(item) => item.block_id}
+                  renderItem={({ item }) => renderBlockRow(item)}
+                  ItemSeparatorComponent={() => <Separator isDark={isDark} />}
+                  keyboardShouldPersistTaps="handled"
+                  contentContainerStyle={styles.listContent}
+                />
+              ) : (
+                !searching && (
+                  <View style={styles.centerContent}>
+                    <Text style={[styles.emptyText, isDark && { color: '#D1D5DB' }]}>No results found</Text>
+                  </View>
+                )
               )
-            )
-          ) : (
-            <ScrollView
-              keyboardShouldPersistTaps="handled"
-              contentContainerStyle={styles.scrollContent}
-            >
-              {/* Recent section */}
-              <View style={styles.section}>
-                <Text style={[styles.sectionTitle, isDark && { color: '#D1D5DB' }]}>Recent</Text>
-                {recentBlocks.length > 0 ? (
-                  recentBlocks.slice(0, 10).map((block, i, arr) => (
-                    <View key={block.block_id}>
-                      {renderBlockRow(block)}
-                      {i < arr.length - 1 && <Separator isDark={isDark} />}
-                    </View>
-                  ))
-                ) : (
-                  <Text style={[styles.emptyText, isDark && { color: '#D1D5DB' }]}>No recent blocks</Text>
-                )}
-              </View>
+            ) : (
+              <ScrollView
+                keyboardShouldPersistTaps="handled"
+                contentContainerStyle={styles.scrollContent}
+              >
+                {/* Starred section FIRST */}
+                <View style={styles.section}>
+                  <Text style={[styles.sectionTitle, isDark && { color: '#D1D5DB' }]}>Starred</Text>
+                  {starredBlocks.length > 0 ? (
+                    starredBlocks.map((block, i, arr) => (
+                      <View key={block.block_id}>
+                        {renderBlockRow(block)}
+                        {i < arr.length - 1 && <Separator isDark={isDark} />}
+                      </View>
+                    ))
+                  ) : (
+                    <Text style={[styles.emptyText, isDark && { color: '#D1D5DB' }]}>
+                      Star blocks to save them here.
+                    </Text>
+                  )}
+                </View>
 
-              {/* Starred section */}
-              <View style={styles.section}>
-                <Text style={[styles.sectionTitle, isDark && { color: '#D1D5DB' }]}>Starred</Text>
-                {starredBlocks.length > 0 ? (
-                  starredBlocks.map((block, i, arr) => (
-                    <View key={block.block_id}>
-                      {renderBlockRow(block)}
-                      {i < arr.length - 1 && <Separator isDark={isDark} />}
-                    </View>
-                  ))
-                ) : (
-                  <Text style={[styles.emptyText, isDark && { color: '#D1D5DB' }]}>
-                    Star blocks to save them here.
-                  </Text>
-                )}
-              </View>
-            </ScrollView>
-          )}
+                {/* Recent section SECOND - shows 3 with See more */}
+                <View style={styles.section}>
+                  <Text style={[styles.sectionTitle, isDark && { color: '#D1D5DB' }]}>Recent</Text>
+                  {recentBlocks.length > 0 ? (
+                    <>
+                      {(showAllRecent ? recentBlocks : recentBlocks.slice(0, 3)).map((block, i, arr) => (
+                        <View key={block.block_id}>
+                          {renderBlockRow(block)}
+                          {i < arr.length - 1 && <Separator isDark={isDark} />}
+                        </View>
+                      ))}
+                      {recentBlocks.length > 3 && (
+                        <TouchableOpacity
+                          style={styles.seeMoreButton}
+                          onPress={() => setShowAllRecent(!showAllRecent)}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={[styles.seeMoreText, isDark && { color: '#60A5FA' }]}>
+                            {showAllRecent ? 'Show less' : `See more (${recentBlocks.length - 3} more)`}
+                          </Text>
+                        </TouchableOpacity>
+                      )}
+                    </>
+                  ) : (
+                    <Text style={[styles.emptyText, isDark && { color: '#D1D5DB' }]}>No recent blocks</Text>
+                  )}
+                </View>
+
+                {/* My Climbs section */}
+                <View style={styles.section}>
+                  <Text style={[styles.sectionTitle, isDark && { color: '#D1D5DB' }]}>My Climbs</Text>
+                  {climbHistory.length > 0 ? (
+                    <>
+                      {totalFloors > 0 && (
+                        <Text style={[styles.climbStats, isDark && { color: '#D1D5DB' }]}>
+                          {totalClimbs} climbs · {totalFloors} floors · ~{Math.round(totalFloors * 2.8)}m
+                        </Text>
+                      )}
+                      {climbHistory.slice(0, 5).map((climb, i) => (
+                        <View key={i} style={styles.climbRow}>
+                          <Text style={[styles.climbAddr, isDark && { color: '#F9FAFB' }]} numberOfLines={1}>
+                            Blk {climb.blk_no} {climb.street}
+                          </Text>
+                          <Text style={styles.climbFloors}>{climb.storeys} fl</Text>
+                        </View>
+                      ))}
+                    </>
+                  ) : (
+                    <Text style={[styles.emptyText, isDark && { color: '#D1D5DB' }]}>
+                      Log a climb to see it here.
+                    </Text>
+                  )}
+                </View>
+              </ScrollView>
+            )}
+          </View>
         </View>
-      </SafeAreaView>
+      </View>
     </Modal>
   );
 }
@@ -270,19 +323,39 @@ function Separator({ isDark }: { isDark?: boolean }) {
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
+  overlay: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'transparent',
   },
-  container: {
-    flex: 1,
+  backdropArea: {
+    height: '8%',
+    backgroundColor: 'transparent',
+  },
+  sheetContainer: {
+    height: '92%',
     backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    overflow: 'hidden',
+  },
+  contentArea: {
+    flex: 1,
+  },
+  dragHandleRow: {
+    alignItems: 'center',
+    paddingVertical: 10,
+  },
+  dragHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#D1D5DB',
   },
   searchBarContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingTop: 8,
+    paddingTop: 0,
     paddingBottom: 8,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: '#E5E7EB',
@@ -299,15 +372,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#111827',
     padding: 0,
-  },
-  cancelButton: {
-    marginLeft: 12,
-    paddingVertical: 8,
-  },
-  cancelText: {
-    fontSize: 16,
-    color: '#2563EB',
-    fontWeight: '500',
   },
   section: {
     paddingTop: 20,
@@ -393,5 +457,41 @@ const styles = StyleSheet.create({
     color: '#9CA3AF',
     textAlign: 'center',
     paddingVertical: 20,
+  },
+  climbStats: {
+    fontSize: 13,
+    color: '#6B7280',
+    fontWeight: '500',
+    marginBottom: 8,
+  },
+  climbRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#E5E7EB',
+  },
+  climbAddr: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#111827',
+    flex: 1,
+    marginRight: 8,
+  },
+  climbFloors: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#10B981',
+  },
+  seeMoreButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+  },
+  seeMoreText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#2563EB',
   },
 });

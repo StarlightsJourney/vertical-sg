@@ -19,3 +19,11 @@ export interface BoundsRect {
 }
 
 export type SortMode = 'storeys' | 'distance';
+
+export interface ClimbLog {
+  block_id: string;
+  blk_no: string;
+  street: string;
+  storeys: number;
+  climbedAt: string; // ISO date string
+}

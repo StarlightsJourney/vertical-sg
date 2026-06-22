@@ -7,7 +7,7 @@ import {
   TouchableOpacity,
 } from 'react-native';
 import {
-  Map,
+  Map as MapView,
   Camera,
   GeoJSONSource,
   Layer,
@@ -17,7 +17,7 @@ import {
 } from '@maplibre/maplibre-react-native';
 import { useLocation } from '../hooks/useLocation';
 import { fetchBlocksInBounds } from '../services/blocks';
-import type { Block, BoundsRect } from '../types';
+import type { Block, BoundsRect, ClimbLog } from '../types';
 import BlockDetailSheet from '../components/BlockDetailSheet';
 import SearchScreen from '../components/SearchScreen';
 import storage from '../utils/storage';
@@ -51,7 +51,8 @@ const HEIGHT_TIERS = [
   { label: '1–10', color: '#4A90D9' },
   { label: '11–20', color: '#FF9500' },
   { label: '21–30', color: '#FF3B30' },
-  { label: '31+', color: '#8B0000' },
+  { label: '31–39', color: '#8B0000' },
+  { label: '40+', color: '#7C3AED' },
 ] as const;
 
 export default function MapScreen() {
@@ -72,6 +73,9 @@ export default function MapScreen() {
   const [searchVisible, setSearchVisible] = useState(false);
   const [recentBlocks, setRecentBlocks] = useState<Block[]>([]);
   const [starredIds, setStarredIds] = useState<Set<string>>(new Set());
+  const [climbCounts, setClimbCounts] = useState<Map<string, number>>(new Map());
+  const [climbHistory, setClimbHistory] = useState<ClimbLog[]>([]);
+  const [tapY, setTapY] = useState<number>(0);
 
   // Auto-detect day/night based on local time
   const [isDark, setIsDark] = useState(() => {
@@ -118,6 +122,26 @@ export default function MapScreen() {
       }],
     };
   }, [location.latitude, location.longitude, location.loading]);
+
+  const climbedGeojson = useMemo((): GeoJSON.FeatureCollection | null => {
+    if (climbCounts.size === 0) return null;
+    const climbed = blocks.filter((b) => b.lat != null && b.lng != null && climbCounts.has(b.block_id));
+    if (climbed.length === 0) return null;
+    return {
+      type: 'FeatureCollection',
+      features: climbed.map((b) => ({
+        type: 'Feature',
+        geometry: {
+          type: 'Point',
+          coordinates: [b.lng!, b.lat!] as [number, number],
+        },
+        properties: {
+          block_id: b.block_id,
+          count: climbCounts.get(b.block_id),
+        },
+      })),
+    };
+  }, [blocks, climbCounts]);
 
   // Fetch blocks within visible map bounds
   const fetchBounds = useCallback(
@@ -189,6 +213,7 @@ export default function MapScreen() {
       );
       if (block) {
         setSelectedBlock(block);
+        setTapY(point[1]);
         setRecentBlocks((prev) => {
           const filtered = prev.filter((b) => b.block_id !== block.block_id);
           return [block, ...filtered].slice(0, 10);
@@ -210,6 +235,7 @@ export default function MapScreen() {
   const handleCloseDetail = useCallback(() => {
     setSelectedBlock(null);
     setSelectedBlockDist(null);
+    setTapY(0);
   }, []);
 
   const handleToggleStar = useCallback((block: Block) => {
@@ -219,6 +245,25 @@ export default function MapScreen() {
       else next.add(block.block_id);
       storage.setItem('starred_blocks', JSON.stringify([...next]));
       return next;
+    });
+  }, []);
+
+  const handleLogClimb = useCallback((block: Block) => {
+    storage.addClimb({
+      block_id: block.block_id,
+      blk_no: block.blk_no,
+      street: block.street,
+      storeys: block.storeys,
+      climbedAt: new Date().toISOString(),
+    }).then(() => {
+      setClimbCounts((prev) => {
+        const next = new Map(prev);
+        next.set(block.block_id, (next.get(block.block_id) || 0) + 1);
+        return next;
+      });
+      // Refresh climb history
+      storage.getClimbHistory().then(setClimbHistory);
+      setSelectedBlock(null); // dismiss the card after logging
     });
   }, []);
 
@@ -269,6 +314,18 @@ export default function MapScreen() {
     });
   }, []);
 
+  // Load climb history on mount
+  useEffect(() => {
+    storage.getClimbHistory().then((history) => {
+      setClimbHistory(history);
+      const counts = new Map<string, number>();
+      history.forEach((c) => {
+        counts.set(c.block_id, (counts.get(c.block_id) || 0) + 1);
+      });
+      setClimbCounts(counts);
+    });
+  }, []);
+
   // Check time every 60 seconds for day/night auto-switching
   useEffect(() => {
     const timer = setInterval(() => {
@@ -280,7 +337,7 @@ export default function MapScreen() {
 
   return (
     <View style={styles.container}>
-      <Map
+      <MapView
         ref={mapRef}
         style={styles.map}
         mapStyle={isDark ? DARK_STYLE : LIGHT_STYLE}
@@ -344,7 +401,9 @@ export default function MapScreen() {
                 21,
                 '#FF3B30', // 21-30: red
                 31,
-                '#8B0000', // 31+: dark red
+                '#8B0000', // 31-39: dark red
+                40,
+                '#7C3AED', // 40+: purple
               ],
               'circle-radius': [
                 'step',
@@ -355,7 +414,9 @@ export default function MapScreen() {
                 21,
                 10,  // 21-30
                 31,
-                13,  // 31+
+                13,  // 31-39
+                40,
+                16,  // 40+
               ],
               'circle-stroke-width': 1.5,
               'circle-stroke-color': '#ffffff',
@@ -363,7 +424,20 @@ export default function MapScreen() {
             }}
           />
         </GeoJSONSource>
-      </Map>
+
+        {climbedGeojson && (
+          <GeoJSONSource id="climbed" data={climbedGeojson}>
+            <Layer id="climbed-badge" source="climbed" type="circle"
+              paint={{
+                'circle-radius': 6,
+                'circle-color': '#10B981',
+                'circle-stroke-width': 2,
+                'circle-stroke-color': '#FFFFFF',
+              }}
+            />
+          </GeoJSONSource>
+        )}
+      </MapView>
 
       {/* Error banner */}
       {error && (
@@ -434,6 +508,8 @@ export default function MapScreen() {
         block={selectedBlock}
         distanceKm={selectedBlockDist}
         onClose={handleCloseDetail}
+        onLogClimb={handleLogClimb}
+        tapY={tapY}
       />
 
       {/* Search screen */}
@@ -445,6 +521,7 @@ export default function MapScreen() {
         starredBlockIds={starredIds}
         onToggleStar={handleToggleStar}
         isDark={isDark}
+        climbHistory={climbHistory}
       />
     </View>
   );

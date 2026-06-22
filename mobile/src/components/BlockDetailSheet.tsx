@@ -6,16 +6,19 @@ interface Props {
   block: Block | null;
   distanceKm: number | null;
   onClose: () => void;
+  onLogClimb?: (block: Block) => void;
+  tapY?: number;
 }
 
 function getTier(storeys: number) {
   if (storeys <= 10) return { label: 'Low-rise', color: '#4A90D9' };
   if (storeys <= 20) return { label: 'Mid-rise', color: '#FF9500' };
   if (storeys <= 30) return { label: 'High-rise', color: '#FF3B30' };
-  return { label: 'Sky-high', color: '#8B0000' };
+  if (storeys <= 39) return { label: 'Sky-high', color: '#8B0000' };
+  return { label: 'Super-tall', color: '#7C3AED', bg: '#F5F3FF' };
 }
 
-export default function BlockDetailSheet({ block, distanceKm, onClose }: Props) {
+export default function BlockDetailSheet({ block, distanceKm, onClose, onLogClimb, tapY }: Props) {
   if (!block) return null;
 
   const tier = getTier(block.storeys);
@@ -26,13 +29,22 @@ export default function BlockDetailSheet({ block, distanceKm, onClose }: Props) 
     }
   };
 
+  const handleLogClimb = () => {
+    onLogClimb?.(block);
+  };
+
   return (
     <View style={styles.container}>
       {/* Invisible backdrop — tap to dismiss */}
       <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={onClose} />
 
-      {/* Card — centered vertically */}
-      <View style={styles.cardWrapper}>
+      {/* Card — positioned near the tapped pin */}
+      <View style={[
+        styles.cardWrapper,
+        tapY != null && tapY > 0
+          ? { justifyContent: 'flex-start', paddingTop: Math.max(60, tapY - 180) }
+          : { justifyContent: 'center' },
+      ]}>
       <TouchableOpacity style={styles.card} activeOpacity={0.9} onPress={handlePress}>
         {/* Colored header strip */}
         <View style={[styles.header, { backgroundColor: tier.color }]}>
@@ -67,6 +79,16 @@ export default function BlockDetailSheet({ block, distanceKm, onClose }: Props) 
             <Text style={styles.infoLabel}>Tier</Text>
           </View>
         </View>
+
+        {/* Log a Climb button */}
+        <TouchableOpacity
+          style={[styles.logBtn, { backgroundColor: tier.color }]}
+          onPress={handleLogClimb}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.logBtnText}>Log a Climb</Text>
+          <Text style={styles.logBtnSub}>+{block.storeys} floors</Text>
+        </TouchableOpacity>
 
         {/* Directions hint */}
         <View style={styles.hint}>
@@ -198,6 +220,26 @@ const styles = StyleSheet.create({
     color: '#9CA3AF',
     fontWeight: '500',
     marginRight: 4,
+  },
+  logBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginHorizontal: 16,
+    marginTop: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+  },
+  logBtnText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  logBtnSub: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: 'rgba(255,255,255,0.85)',
   },
   hintArrow: {
     fontSize: 16,
