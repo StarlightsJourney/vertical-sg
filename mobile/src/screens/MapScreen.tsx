@@ -20,8 +20,8 @@ import { fetchNearbyBlocks, fetchBlocksInBounds } from '../services/blocks';
 import type { Block, SortMode, BoundsRect } from '../types';
 import BlockDetailSheet from '../components/BlockDetailSheet';
 
-// OpenFreeMap Liberty — free, no API key, full OSM map with labels & roads
-const MAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
+// MapLibre Streets — free demo style, no external font dependencies
+const MAP_STYLE = 'https://demotiles.maplibre.org/style.json';
 const RADIUS_PRESETS = [1000, 3000, 5000];
 
 // Default Singapore bounds for initial fetch before map camera settles
