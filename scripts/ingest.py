@@ -10,7 +10,7 @@ Usage:
     pip install -r scripts/requirements.txt
     python scripts/ingest.py
 
-Environment variables (from ../../.env.local):
+Environment variables (from ../.env.local):
     SUPABASE_URL              (required)
     SUPABASE_SERVICE_ROLE_KEY (required)
     ONEMAP_EMAIL              (required if ONEMAP_TOKEN not set)
@@ -36,7 +36,7 @@ from dotenv import load_dotenv
 # ---------------------------------------------------------------------------
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-ENV_PATH = os.path.join(SCRIPT_DIR, "..", "..", ".env.local")
+ENV_PATH = os.path.join(SCRIPT_DIR, "..", ".env.local")
 load_dotenv(ENV_PATH)
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
@@ -140,12 +140,58 @@ def address_key(blk_no: str, street: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def pull_dataset(resource_id: str, max_rows: int = 20000) -> list[dict]:
-    """Fetch *all* records from a data.gov.sg CKAN resource (single page)."""
-    url = f"{DATA_GOV_URL}?resource_id={resource_id}&limit={max_rows}"
-    resp = requests.get(url, timeout=30)
-    resp.raise_for_status()
-    return resp.json()["result"]["records"]
+def pull_dataset(resource_id: str, page_size: int = 500) -> list[dict]:
+    """Fetch all records from a data.gov.sg CKAN resource using pagination.
+
+    Respects rate limits: 1-second delay between pages, retries on 429/5xx.
+    """
+    all_records: list[dict] = []
+    offset = 0
+    max_retries = 3
+
+    print(f"  Fetching (page size={page_size})...")
+
+    while True:
+        url = f"{DATA_GOV_URL}?resource_id={resource_id}&limit={page_size}&offset={offset}"
+
+        for attempt in range(max_retries):
+            try:
+                resp = requests.get(url, timeout=30)
+
+                if resp.status_code == 429:
+                    wait = 5 * (attempt + 1)
+                    print(f"  Rate limited — waiting {wait}s...")
+                    time.sleep(wait)
+                    continue
+
+                resp.raise_for_status()
+                break
+            except requests.exceptions.RequestException as e:
+                if attempt < max_retries - 1:
+                    wait = 2 * (attempt + 1)
+                    print(f"  Request failed ({e}) — retrying in {wait}s...")
+                    time.sleep(wait)
+                else:
+                    raise
+
+        result = resp.json()["result"]
+        records = result["records"]
+        total = result.get("total", 0)
+
+        if not records:
+            break
+
+        all_records.extend(records)
+        offset += page_size
+        print(f"  ... {len(all_records):,} / {total:,} records")
+
+        if offset >= total:
+            break
+
+        # Be polite to the API
+        time.sleep(1)
+
+    return all_records
 
 
 # ---------------------------------------------------------------------------
@@ -363,7 +409,7 @@ def log_unmatched(supabase, records: list[dict]) -> int:
             "max_floor_lvl": r.get("_storeys"),
             "year_completed": _safe_int(r.get("year_completed")),
             "total_dwelling_units": _safe_int(r.get("total_dwelling_units")),
-            "reason": "All geocoding passes failed: postal -> building dataset -> fuzzy -> OneMap",
+            "reason": "OneMap geocoding returned no result",
         })
 
     total = 0
@@ -441,92 +487,35 @@ def main() -> None:
     for r in residential:
         r["_geocoded"] = False
 
-    # ── Step 3: Cascading Geocode / Join ───────────────────────────────────
-    print("\n--- Step 3: Cascading Geocode/Join ---")
+    # ── Step 3: OneMap Geocoding ─────────────────────────────────────────
+    # The HDB Existing Building polygon dataset is not accessible via the
+    # data.gov.sg CKAN datastore API (resource_show returns empty).  We use
+    # OneMap Search for all geocoding — rate-limited to ~240 calls/min to
+    # stay safely under the 300/min cap.
+    print("\n--- Step 3: OneMap Geocoding ---")
 
-    # Obtain OneMap token once (needed in Pass 1 and OneMap fallback)
     token = get_onemap_token()
 
-    # -- Pass 1: match by postal code via OneMap ----------------------------
-    print("\n  Pass 1: Matching by postal code ...")
-    pass1 = 0
-    for r in residential:
-        if r["_geocoded"]:
-            continue
-        postal = (
-            r.get("postal")
-            or r.get("postal_code")
-            or r.get("postcode")
-            or ""
-        )
-        postal = str(postal).strip()
-        if postal and postal not in ("None", ""):
-            result = geocode_onemap_search(f"Singapore {postal}", token)
-            if result:
-                r["_lat"], r["_lng"] = result
-                r["_geocoded"] = True
-                pass1 += 1
-            time.sleep(ONEMAP_DELAY_S)
-    counts["pass1"] = pass1
-    print(f"  Pass 1 matched: {pass1}")
+    ungeocoded = [r for r in residential if not r["_geocoded"]]
+    total = len(ungeocoded)
+    matched = 0
 
-    # -- Pass 2: strict match against HDB Existing Building dataset ---------
-    print("\n  Pass 2: Matching against HDB Existing Building dataset ...")
-    try:
-        building_records = pull_dataset(HDB_BUILDING_RESOURCE_ID)
-        building_index = build_building_index(building_records)
-        print(f"  Building dataset: {len(building_records)} records, "
-              f"{len(building_index)} indexed")
-    except Exception as exc:
-        print(f"  WARNING: could not fetch or index building dataset: {exc}")
-        building_index = {}
-
-    pass2 = 0
-    for r in residential:
-        if r["_geocoded"]:
-            continue
-        coord = building_index.get(r["_addr_key"])
-        if coord:
-            r["_lat"], r["_lng"] = coord
-            r["_geocoded"] = True
-            pass2 += 1
-    counts["pass2"] = pass2
-    print(f"  Pass 2 matched: {pass2}")
-
-    # -- Pass 3: fuzzy match on street name ---------------------------------
-    print("\n  Pass 3: Fuzzy matching on street name ...")
-    known_streets = get_known_streets(building_index)
-    pass3 = 0
-    for r in residential:
-        if r["_geocoded"]:
-            continue
-        fuzzy = fuzzy_match_street(r["_std_street"], known_streets)
-        if fuzzy:
-            # Try to find a building index entry for (blk_no, fuzzy_matched_street)
-            candidate_key = f"{r['_std_blk'].lower()}||{fuzzy}"
-            coord = building_index.get(candidate_key)
-            if coord:
-                r["_lat"], r["_lng"] = coord
-                r["_geocoded"] = True
-                pass3 += 1
-    counts["pass3"] = pass3
-    print(f"  Pass 3 matched: {pass3}")
-
-    # -- OneMap fallback ----------------------------------------------------
-    fallback_candidates = [r for r in residential if not r["_geocoded"]]
-    print(f"\n  OneMap fallback: {len(fallback_candidates)} records to geocode")
-
-    pass_fb = 0
-    for idx, r in enumerate(fallback_candidates):
+    for idx, r in enumerate(ungeocoded):
         address = f"{r['_std_blk']} {r['_std_street']}, Singapore"
         result = geocode_onemap_search(address, token)
         if result:
             r["_lat"], r["_lng"] = result
             r["_geocoded"] = True
-            pass_fb += 1
+            matched += 1
+
+        # Progress every 100 records or at the end
+        if (idx + 1) % 100 == 0 or idx == total - 1:
+            print(f"  ... {idx + 1:,} / {total:,}  ({matched} matched)")
+
         time.sleep(ONEMAP_DELAY_S)
-    counts["fallback"] = pass_fb
-    print(f"  OneMap fallback matched: {pass_fb}")
+
+    counts["OneMap_matched"] = matched
+    print(f"  OneMap matched: {matched} / {total}")
 
     # Final tally
     geocoded = [r for r in residential if r["_geocoded"]]
@@ -575,10 +564,7 @@ def main() -> None:
     print("=" * 60)
     print(f"  Total records pulled:           {counts['total']}")
     print(f"  Residential (filtered):         {counts['residential']}")
-    print(f"  Geocoded — Pass 1 (postal):     {counts.get('pass1', 0)}")
-    print(f"  Geocoded — Pass 2 (building):   {counts.get('pass2', 0)}")
-    print(f"  Geocoded — Pass 3 (fuzzy):      {counts.get('pass3', 0)}")
-    print(f"  Geocoded — OneMap fallback:     {counts.get('fallback', 0)}")
+    print(f"  Geocoded — OneMap:              {counts.get('OneMap_matched', 0)}")
     print(f"  Total geocoded:                 {counts['geocoded']}")
     print(f"  Unmatched (lat/lng = NULL):     {counts['unmatched']}")
     print(f"Finished at: {datetime.now().isoformat()}")
