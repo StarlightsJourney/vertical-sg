@@ -35,7 +35,9 @@ const WATER_COOLERS_RAW: Array<{ name: string; lat: number; lng: number; status:
 
 const WATER_COOLER_GEOJSON: GeoJSON.FeatureCollection = {
   type: 'FeatureCollection',
-  features: WATER_COOLERS_RAW.map((wc) => ({
+  features: WATER_COOLERS_RAW
+    .filter((wc) => wc.lat != null && wc.lng != null && !isNaN(wc.lat) && !isNaN(wc.lng))
+    .map((wc) => ({
     type: 'Feature',
     geometry: { type: 'Point', coordinates: [wc.lng, wc.lat] as [number, number] },
     properties: { name: wc.name, status: wc.status, water_type: wc.status, lat: wc.lat, lng: wc.lng, level: wc.level, temperature: wc.temperature, operator: wc.operator },
@@ -75,6 +77,8 @@ const FILTER_OPTIONS = [
   { value: 40, label: '40+' },
   { value: 0, label: 'All' },
 ] as const;
+
+const FILTER_COLORS: Record<number, string> = { 21: '#FF9500', 31: '#FF3B30', 40: '#7C3AED', 0: '#6B7280' };
 
 export default function MapScreen() {
   const location = useLocation();
@@ -471,35 +475,27 @@ export default function MapScreen() {
           />
         </GeoJSONSource>
 
-        {/* Water cooler markers — bullseye: white outer ring + colored inner dot */}
+        {/* Water cooler icon markers — diamond symbols */}
         <GeoJSONSource id="water-coolers" data={WATER_COOLER_GEOJSON}>
-          {/* White outer ring (makes water coolers distinct from building pins) */}
           <Layer
-            id="wc-outer"
+            id="wc-icons"
             source="water-coolers"
-            type="circle"
+            type="symbol"
             filter={['has', 'water_type']}
-            paint={{
-              'circle-radius': 12,
-              'circle-color': '#FFFFFF',
-              'circle-opacity': 1,
-              'circle-stroke-width': 0,
+            layout={{
+              'text-field': '◆',
+              'text-size': 16,
+              'text-allow-overlap': true,
+              'text-ignore-placement': true,
             }}
-          />
-          {/* Colored inner dot */}
-          <Layer
-            id="wc-inner"
-            source="water-coolers"
-            type="circle"
-            filter={['has', 'water_type']}
             paint={{
-              'circle-radius': 8,
-              'circle-color': ['match', ['get', 'water_type'],
+              'text-color': ['match', ['get', 'water_type'],
                 'verified', '#06B6D4',
                 'unverified', '#EC4899',
                 'ticketed', '#F59E0B',
                 '#06B6D4'],
-              'circle-opacity': 1,
+              'text-halo-color': '#FFFFFF',
+              'text-halo-width': 2,
             }}
           />
         </GeoJSONSource>
@@ -521,7 +517,7 @@ export default function MapScreen() {
 
       {/* Single cycling filter toggle at top-left */}
       <TouchableOpacity
-        style={[styles.filterToggle, { backgroundColor: minFilter === 0 ? '#6B7280' : '#8B0000' }]}
+        style={[styles.filterToggle, { backgroundColor: FILTER_COLORS[minFilter] || '#6B7280' }]}
         onPress={() => {
           const next = (currentFilterIdx + 1) % FILTER_OPTIONS.length;
           setMinFilter(FILTER_OPTIONS[next].value);
@@ -553,7 +549,16 @@ export default function MapScreen() {
           <Text style={styles.searchPlaceholder}>Search blocks...</Text>
         </TouchableOpacity>
 
-        {/* Location button */}
+        {/* Alert/report button — PLUS icon, distinct from location */}
+        <TouchableOpacity
+          style={styles.alertBtn}
+          onPress={() => setAlertVisible(true)}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.alertBtnIcon}>+</Text>
+        </TouchableOpacity>
+
+        {/* Location button — BLUE, separate */}
         <TouchableOpacity
           style={styles.locBtn}
           onPress={() => {
@@ -568,15 +573,6 @@ export default function MapScreen() {
           <Text style={styles.locIcon}>⊕</Text>
         </TouchableOpacity>
       </View>
-
-      {/* Alert/Report button — above bottom bar */}
-      <TouchableOpacity
-        style={[styles.alertBtn, { backgroundColor: isDark ? '#333' : '#FFFFFF' }]}
-        onPress={() => setAlertVisible(true)}
-        activeOpacity={0.8}
-      >
-        <Text style={styles.alertBtnText}>✚</Text>
-      </TouchableOpacity>
 
       {/* Block Detail Sheet overlay */}
       <BlockDetailSheet
@@ -791,25 +787,20 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 
-  // Alert button — floating above bottom bar
+  // Alert button — in bottom bar, amber to distinguish from blue location button
   alertBtn: {
-    position: 'absolute',
-    bottom: 68,
-    right: 16,
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: '#F59E0B',
     justifyContent: 'center',
     alignItems: 'center',
-    zIndex: 20,
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 4,
+    marginRight: 8,
   },
-  alertBtnText: {
-    fontSize: 18,
+  alertBtnIcon: {
+    fontSize: 22,
+    color: '#FFFFFF',
+    fontWeight: '600',
   },
 
   // Alert modal

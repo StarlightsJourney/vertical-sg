@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Platform, Image } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import * as Linking from 'expo-linking';
 import type { Block } from '../types';
 
@@ -54,23 +54,13 @@ export default function BlockDetailSheet({ block, distanceKm, onClose, onLogClim
           : { top: '30%' },
       ]}>
         <View style={styles.card}>
-          {/* Satellite banner at the top */}
-          {block.lat != null && block.lng != null && (
-            <View>
-              <Image
-                source={{ uri: `https://maps.googleapis.com/maps/api/staticmap?center=${block.lat},${block.lng}&zoom=18&size=320x120&maptype=satellite` }}
-                style={styles.thumbBanner}
-                resizeMode="cover"
-              />
-              {/* Colored header strip overlays on the image */}
-              <View style={[styles.headerStripOverlay, { backgroundColor: tier.color }]} />
+          {/* Colored banner — replaces satellite image */}
+          <View style={[styles.thumbBanner, { backgroundColor: tier.color }]}>
+            <View style={styles.thumbOverlay}>
+              <Text style={styles.thumbStoreys}>{block.storeys} floors</Text>
+              <Text style={styles.thumbHeight}>{block.est_height_m}m</Text>
             </View>
-          )}
-
-          {/* Colored header strip — when no satellite image */}
-          {block.lat == null && block.lng == null && (
-            <View style={[styles.headerStrip, { backgroundColor: tier.color }]} />
-          )}
+          </View>
 
           {/* Content */}
           <View style={styles.content}>
@@ -166,9 +156,29 @@ const styles = StyleSheet.create({
   },
   thumbBanner: {
     width: '100%',
-    height: 100,
+    height: 80,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  thumbOverlay: {
+    backgroundColor: 'rgba(0,0,0,0.3)',
+    paddingVertical: 8,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  thumbStoreys: {
+    color: '#FFFFFF',
+    fontSize: 22,
+    fontWeight: '800',
+  },
+  thumbHeight: {
+    color: 'rgba(255,255,255,0.8)',
+    fontSize: 13,
+    fontWeight: '600',
+    marginTop: 2,
   },
   content: { padding: 14 },
   topRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
