@@ -1,4 +1,4 @@
-# StairTrain — MVP Build Plan
+# Vertical — MVP Build Plan
 
 **Purpose of this doc:** handoff spec for an AI coding agent (DeepSeek) to implement. Each phase is scoped to be buildable independently. Locked decisions are marked ✅ — do not re-litigate these. Open questions for future phases are marked ❓.
 
@@ -12,7 +12,7 @@
 |---|---|---|
 | Mobile framework | React Native + Expo | Single codebase, both platforms |
 | Backend / DB | Supabase (Postgres + PostGIS) | Also provides storage + auth for later phases — don't provision separate services |
-| Map rendering | Mapbox | Use `@rnmapbox/maps` for React Native |
+| Map rendering | MapLibre | Use `@maplibre/maplibre-react-native` for React Native |
 | Routing / directions | None built — deep link out to Google Maps / Citymapper | `https://www.google.com/maps/dir/?api=1&destination={lat},{lng}` — no API key needed, this is just opening another app |
 | Geocoding (one-time, ingestion only) | OneMap API | Free, Singapore-specific. See auth pattern below |
 | Auth (MVP) | None | No user accounts in MVP. OneMap's API auth (machine-to-machine, for the ingestion script) is unrelated to user login — do not conflate these |
@@ -33,9 +33,9 @@
 
 OneMap splits its APIs into two tiers — only the second one is relevant to this project:
 
-| Tier | APIs | Auth | Rate limit | Used by StairTrain? |
+| Tier | APIs | Auth | Rate limit | Used by Vertical? |
 |---|---|---|---|---|
-| No-auth tier | Basemaps, Mini Map, Advanced Mini Map, Static Map | None | None stated | **No** — Mapbox is the locked map-rendering choice; OneMap's basemap is not used |
+| No-auth tier | Basemaps, Mini Map, Advanced Mini Map, Static Map | None | None stated | **No** — MapLibre is the locked map-rendering choice; OneMap's basemap is not used |
 | Token tier | Search, Coordinate Converters, **Reverse Geocode**, Themes, Routing, Planning Area, Population Query | Token required, renew every 3 days | **300 calls/min** | **Yes** — Phase 0 geocoding fallback uses Search and/or Coordinate Converters |
 
 **Rate limit handling (Phase 0 ingestion script):** when geocoding the unmatched/fallback batch, do not fire requests concurrently/unthrottled. Batch at a safe margin under the limit (e.g. ~250/min) with a short delay between calls, rather than relying on catching 429s after the fact. With ~13.3K total blocks and most expected to resolve via the dataset-to-dataset join (Step 3, passes 1–2), the OneMap fallback volume (pass 3 + true fallback) should be a small fraction of that — but don't assume the size of that fallback list until the join is actually run once.
@@ -131,7 +131,7 @@ create index blocks_geom_idx on blocks using gist (geom);
 
 ### Screens
 1. **Map view** (default screen)
-   - Mapbox map centered on user's current location (request location permission on launch).
+   - MapLibre map centered on user's current location (request location permission on launch).
    - Pins for blocks within visible map bounds, pulled from Supabase.
    - Pin styling: vary by height tier (e.g. color or size scaled to storeys) so tall blocks are visually obvious at a glance.
    - Tap pin → bottom sheet/modal with block detail.
@@ -193,5 +193,5 @@ A person can open the app, see their location, see HDB block pins around them si
 
 - Exact radius defaults for "nearby" search (5km was used as an example above, not a confirmed product decision).
 - Whether `bldg_contract_town` from the source data is sufficient for a "browse by town" feature, or whether a separate towns/regions table is needed.
-- Pin clustering strategy at low zoom levels (13K+ blocks will need clustering — Mapbox supports this natively, but cluster radius/behavior isn't decided).
+- Pin clustering strategy at low zoom levels (13K+ blocks will need clustering — MapLibre supports this natively, but cluster radius/behavior isn't decided).
 - Legal review of the "publicly accessible staircase" framing before Phase 3 — flagged, not resolved.

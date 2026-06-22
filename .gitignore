@@ -48,3 +48,7 @@ logs/
 *.apk
 *.aab
 *.ipa
+
+# Expo
+.expo/
+expo-env.d.ts

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-StairTrain — Phase 0: Data Ingestion Pipeline
+Vertical — Phase 0: Data Ingestion Pipeline
 
 Pulls HDB block data from data.gov.sg, geocodes it via cascading passes
 (postal code -> HDB Existing Building polygon dataset -> fuzzy match ->
@@ -20,7 +20,6 @@ Environment variables (from ../.env.local):
 
 from __future__ import annotations
 
-import difflib
 import json
 import os
 import re
@@ -54,7 +53,6 @@ if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
 # ---------------------------------------------------------------------------
 
 HDB_PROPERTY_RESOURCE_ID = "d_17f5382f26140b1fdae0ba2ef6239d2f"
-HDB_BUILDING_RESOURCE_ID = "d_16b157c52ed637edd6ba1232e026258d"
 DATA_GOV_URL = "https://data.gov.sg/api/action/datastore_search"
 ONEMAP_AUTH_URL = "https://www.onemap.gov.sg/api/auth/post/getToken"
 ONEMAP_SEARCH_URL = "https://www.onemap.gov.sg/api/common/elastic/search"
@@ -158,16 +156,6 @@ def standardize_address(blk_no: str, street: str) -> tuple[str, str]:
     blk = standardize_blk_suffix(blk)
     street = standardize_street(street)
     return blk, street
-
-
-def address_key(blk_no: str, street: str) -> str:
-    """Build a normalised, lowercased lookup key for matching.
-
-    Separator ``||`` (unlikely to appear in real data) avoids ambiguity
-    when reconstructing blk vs street parts.
-    """
-    b, s = standardize_address(blk_no, street)
-    return f"{b}||{s.lower()}"
 
 
 # ---------------------------------------------------------------------------
@@ -281,88 +269,6 @@ def geocode_onemap_search(query: str, token: str) -> tuple[float, float] | None:
     except (requests.RequestException, KeyError, ValueError, TypeError):
         pass
     return None
-
-
-# ---------------------------------------------------------------------------
-# Step 3 — HDB Existing Building Dataset Index
-# ---------------------------------------------------------------------------
-
-
-def _centroid_from_geojson(geom) -> tuple[float, float] | None:
-    """Compute the centroid of a GeoJSON Polygon or MultiPolygon geometry."""
-    try:
-        if isinstance(geom, str):
-            geom = json.loads(geom)
-        coords = geom.get("coordinates", [])
-        if geom["type"] == "Polygon":
-            ring = coords[0]
-            lat = sum(p[1] for p in ring) / len(ring)
-            lng = sum(p[0] for p in ring) / len(ring)
-            return lat, lng
-        if geom["type"] == "MultiPolygon":
-            pts: list[tuple[float, float]] = []
-            for poly in coords:
-                for ring in poly:
-                    pts.extend((p[1], p[0]) for p in ring)
-            if pts:
-                lat = sum(p[0] for p in pts) / len(pts)
-                lng = sum(p[1] for p in pts) / len(pts)
-                return lat, lng
-    except (json.JSONDecodeError, KeyError, IndexError, TypeError):
-        pass
-    return None
-
-
-def build_building_index(records: list[dict]) -> dict[str, tuple[float, float]]:
-    """Build ``address_key -> (lat, lng)`` from the HDB Existing Building dataset.
-
-    Priority: GeoJSON geometry centroid > explicit lat/lng fields.
-    """
-    index: dict[str, tuple[float, float]] = {}
-    for rec in records:
-        blk = rec.get("blk_no", "") or ""
-        street = rec.get("street", "") or ""
-        key = address_key(blk, street)
-        if key in index:
-            continue  # first-encountered wins
-
-        # Try geometry (GeoJSON polygon)
-        centroid = _centroid_from_geojson(rec.get("geometry"))
-        if centroid:
-            index[key] = centroid
-            continue
-
-        # Fallback to flat lat/lng columns
-        try:
-            if rec.get("lat") and rec.get("lng"):
-                index[key] = (float(rec["lat"]), float(rec["lng"]))
-        except (ValueError, TypeError):
-            continue
-
-    return index
-
-
-def get_known_streets(index: dict[str, tuple[float, float]]) -> set[str]:
-    """Extract the set of normalised street names from a building index."""
-    streets: set[str] = set()
-    for key in index:
-        parts = key.split("||", 1)
-        if len(parts) > 1 and parts[1]:
-            streets.add(parts[1])
-    return streets
-
-
-# ---------------------------------------------------------------------------
-# Step 3 — Fuzzy Matching
-# ---------------------------------------------------------------------------
-
-
-def fuzzy_match_street(
-    street: str, known_streets: set[str], cutoff: float = 0.8
-) -> str | None:
-    """Return the closest known street name (or None) using difflib."""
-    matches = difflib.get_close_matches(street.lower(), known_streets, n=1, cutoff=cutoff)
-    return matches[0] if matches else None
 
 
 # ---------------------------------------------------------------------------
@@ -482,7 +388,7 @@ def _safe_int(val) -> int | None:
 
 def main() -> None:
     print("=" * 60)
-    print("StairTrain — Phase 0 Data Ingestion")
+    print("Vertical — Phase 0 Data Ingestion")
     print(f"Started at: {datetime.now().isoformat()}")
     print("=" * 60)
 
@@ -502,25 +408,21 @@ def main() -> None:
     print(f"  Pulled {counts['total']} rows, "
           f"{counts['residential']} residential")
 
-    # Compute est_height_m = max_floor_lvl * 2.8
+    # Compute derived fields and standardize addresses
+    print("\n--- Step 2: Address Standardization ---")
+
     for r in residential:
         storeys = _safe_int(r.get("max_floor_lvl"))
         r["_storeys"] = storeys
         r["_est_height"] = round(storeys * FLOOR_HEIGHT_M, 1) if storeys else None
 
-    # ── Step 2: Address Standardization ────────────────────────────────────
-    print("\n--- Step 2: Address Standardization ---")
-
-    for r in residential:
         blk = (r.get("blk_no") or "").strip()
         st = (r.get("street") or "").strip()
         r["_std_blk"], r["_std_street"] = standardize_address(blk, st)
-        r["_addr_key"] = address_key(blk, st)
-    print(f"  Standardized {len(residential)} addresses")
 
-    # Mark every record as not-yet-geocoded
-    for r in residential:
         r["_geocoded"] = False
+
+    print(f"  Standardized {len(residential)} addresses")
 
     # ── Step 3: OneMap Geocoding ─────────────────────────────────────────
     # The HDB Existing Building polygon dataset is not accessible via the
@@ -531,11 +433,10 @@ def main() -> None:
 
     token = get_onemap_token()
 
-    ungeocoded = [r for r in residential if not r["_geocoded"]]
-    total = len(ungeocoded)
+    total = len(residential)
     matched = 0
 
-    for idx, r in enumerate(ungeocoded):
+    for idx, r in enumerate(residential):
         address = f"{r['_std_blk']} {r['_std_street']}"
         result = geocode_onemap_search(address, token)
         if result:

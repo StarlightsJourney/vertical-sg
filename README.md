@@ -2,7 +2,7 @@
 
 **Mobile app that maps Singapore HDB blocks by height, so you can find tall blocks nearby to train stair-climbing on.**
 
-Built with React Native + Expo, Mapbox, and Supabase (PostGIS).
+Built with React Native + Expo, MapLibre (OpenFreeMap tiles), and Supabase (PostGIS).
 
 ---
 
@@ -42,7 +42,6 @@ vertical/
 - **Node.js** 18+
 - **Python** 3.9+ (for ingestion script only)
 - **Supabase** project (free tier works)
-- **Mapbox** account (free tier: 50K map loads/month)
 - **OneMap** account (free — register at [onemap.gov.sg](https://www.onemap.gov.sg))
 
 ### 1. Clone & install
@@ -72,7 +71,6 @@ ONEMAP_PASSWORD=your_password
 ```env
 EXPO_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 EXPO_PUBLIC_SUPABASE_ANON_KEY=eyJ...     # anon public key — safe for client
-EXPO_PUBLIC_MAPBOX_TOKEN=pk.eyJ...       # Mapbox public access token
 ```
 
 ### 3. Supabase — run the migration
@@ -116,7 +114,7 @@ Scan the QR code with Expo Go (iOS/Android), or press `a` for Android emulator /
 |---|---|---|
 | Mobile framework | React Native + Expo | Single codebase, both platforms |
 | Backend | Supabase (Postgres + PostGIS) | Built-in PostGIS, auth for Phase 2, free tier sufficient |
-| Map rendering | Mapbox (`@rnmapbox/maps`) | Best RN map lib, free tier 50K loads/mo |
+| Map rendering | MapLibre (`@maplibre/maplibre-react-native`) | Open-source, no API key, free tile styles |
 | Directions | Deep-link to Google Maps | No API key, no routing logic to maintain |
 | Geocoding | OneMap API (free, SG-specific) | Multi-pass: postal code → polygon join → fuzzy match → OneMap fallback |
 | Auth (MVP) | None | Read-only app, no user accounts needed |

@@ -13,4 +13,9 @@ export interface Block {
   distance_m?: number; // Only present in nearby queries
 }
 
+export interface BoundsRect {
+  sw: [number, number];
+  ne: [number, number];
+}
+
 export type SortMode = 'storeys' | 'distance';

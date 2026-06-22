@@ -18,7 +18,7 @@
 --   max_lng      float — East longitude of the bounding box
 --   max_lat      float — North latitude of the bounding box
 --   sort_by      text  — Sort order: 'storeys' (default, tallest first) or
---                        'distance' (random-ish, defaults to tallest-first)
+--                        'distance' (no reference point; falls back to tallest-first)
 --   result_limit  int   — Max rows returned (default 200, clamped to ≤ 500)
 --
 -- Returns:
@@ -51,9 +51,10 @@ stable
 as $$
 declare
   bbox geometry;
+  capped_limit int;
 begin
   -- Prevent accidentally querying all 13K blocks at once
-  result_limit := least(result_limit, 500);
+  capped_limit := least(result_limit, 500);
 
   -- Build the bounding-box polygon (SRID 4326)
   bbox := st_makeenvelope(min_lng, min_lat, max_lng, max_lat, 4326);
@@ -73,11 +74,11 @@ begin
     b.lng
   from blocks b
   where b.geom is not null
-    and st_intersects(b.geom::geometry, bbox)
+    and st_intersects(b.geom, bbox::geography)
   order by
     case when sort_by = 'storeys'  then b.storeys end desc nulls last,
     case when sort_by = 'distance' then b.storeys end desc nulls last
-  limit result_limit;
+  limit capped_limit;
 end;
 $$;
 
@@ -119,7 +120,7 @@ begin
   select count(*) into cnt
   from blocks
   where geom is not null
-    and st_intersects(geom::geometry, bbox);
+    and st_intersects(geom, bbox::geography);
 
   return cnt;
 end;

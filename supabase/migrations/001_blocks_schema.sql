@@ -1,5 +1,5 @@
 -- =============================================================================
--- Migration 001: Blocks Schema for StairTrain
+-- Migration 001: Blocks Schema for Vertical
 -- Singapore HDB blocks mapping app — stores residential block data with
 -- PostGIS geography for spatial queries (nearby search by height/distance).
 -- =============================================================================
@@ -61,7 +61,7 @@ comment on column blocks.geom is 'PostGIS geography point derived from lat/lng; 
 alter table blocks enable row level security;
 
 -- Allow public read access (anon + authenticated) — the app is read-only in MVP
-create policy "Public read access"
+create policy if not exists "Public read access"
   on blocks
   for select
   using (true);
@@ -235,4 +235,4 @@ create trigger trg_blocks_set_updated_at
   execute function blocks_set_updated_at();
 
 comment on trigger trg_blocks_set_geom on blocks is 'Auto-derives geom from lat/lng on insert or when lat/lng change';
-comment on trigger trg_blocks_set_updated_at on blocks is 'Auto-sets updated_at on any row modification';
+comment on trigger trg_blocks_set_updated_at on blocks is 'Auto-sets updated_at on any UPDATE of a block row';

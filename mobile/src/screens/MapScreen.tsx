@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -13,10 +13,11 @@ import {
   Layer,
   type MapRef,
   type CameraRef,
+  type ViewStateChangeEvent,
 } from '@maplibre/maplibre-react-native';
 import { useLocation } from '../hooks/useLocation';
 import { fetchNearbyBlocks, fetchBlocksInBounds } from '../services/blocks';
-import type { Block, SortMode } from '../types';
+import type { Block, SortMode, BoundsRect } from '../types';
 import BlockDetailSheet from '../components/BlockDetailSheet';
 
 // OpenFreeMap Liberty — free, no API key, full OSM map with labels & roads
@@ -24,7 +25,7 @@ const MAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
 const RADIUS_PRESETS = [1000, 3000, 5000];
 
 // Default Singapore bounds for initial fetch before map camera settles
-const SG_BOUNDS = { sw: [103.6, 1.2] as [number, number], ne: [104.0, 1.48] as [number, number] };
+const SG_BOUNDS: BoundsRect = { sw: [103.6, 1.2], ne: [104.0, 1.48] };
 
 export default function MapScreen() {
   const location = useLocation();
@@ -34,7 +35,7 @@ export default function MapScreen() {
   const sortByRef = useRef<SortMode>('storeys');
   const blocksRef = useRef<Block[]>([]);
   const zoomRef = useRef(13);
-  const boundsRef = useRef<{ sw: [number, number]; ne: [number, number] } | null>(null);
+  const boundsRef = useRef<BoundsRect | null>(null);
 
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [selectedBlock, setSelectedBlock] = useState<Block | null>(null);
@@ -96,7 +97,7 @@ export default function MapScreen() {
   // Fetch blocks within visible map bounds (used when "Tallest" sort is active)
   const fetchBounds = useCallback(
     async (
-      b: { sw: [number, number]; ne: [number, number] },
+      b: BoundsRect,
       sort: SortMode,
     ) => {
       setLoading(true);
@@ -123,10 +124,10 @@ export default function MapScreen() {
 
   // Debounced handler for map region changes: track bounds/zoom, fetch blocks
   const handleRegionDidChange = useCallback(
-    (event: any) => {
+    (event: { nativeEvent: ViewStateChangeEvent }) => {
       const ev = event.nativeEvent ?? event;
-      const boundsArr = ev.bounds as [number, number, number, number] | undefined; // [west, south, east, north]
-      const zoom = ev.zoom as number | undefined;
+      const boundsArr = ev.bounds;
+      const zoom = ev.zoom;
 
       if (boundsArr) {
         boundsRef.current = {
@@ -154,8 +155,8 @@ export default function MapScreen() {
   );
 
   // Handle tap on map: clusters zoom in, individual points show detail sheet
-  const handleMapPress = useCallback(async (event: any) => {
-    const point = event.nativeEvent?.point as [number, number] | undefined;
+  const handleMapPress = useCallback(async (event: { nativeEvent: { point: [number, number]; features?: GeoJSON.Feature[] } }) => {
+    const point = event.nativeEvent?.point;
     if (!point) return;
 
     const features = await mapRef.current?.queryRenderedFeatures(point);
