@@ -12,6 +12,7 @@ import {
   Map as MapView,
   Camera,
   GeoJSONSource,
+  Images,
   Layer,
   UserLocation,
   type MapRef,
@@ -22,6 +23,7 @@ import { fetchBlocksInBounds } from '../services/blocks';
 import type { Block, BoundsRect, ClimbLog } from '../types';
 import BlockDetailSheet from '../components/BlockDetailSheet';
 import SearchScreen from '../components/SearchScreen';
+import { Ionicons } from '@expo/vector-icons';
 import storage from '../utils/storage';
 
 // Light (default) and dark map styles for day/night auto-switching
@@ -409,6 +411,9 @@ export default function MapScreen() {
 
         <UserLocation />
 
+        {/* Register custom water droplet icon with SDF mode for color tinting */}
+        <Images images={{ 'water-drop': { source: require('../../assets/water-drop.png'), sdf: true } }} />
+
         {userLocationGeojson && (
           <GeoJSONSource id="user-location" data={userLocationGeojson}>
             {/* Outer pulsing ring */}
@@ -475,7 +480,7 @@ export default function MapScreen() {
           />
         </GeoJSONSource>
 
-        {/* Water cooler markers — droplet emoji text layer */}
+        {/* Water cooler markers — SDF droplet icon, tinted by water_type */}
         <GeoJSONSource id="water-coolers" data={WATER_COOLER_GEOJSON}>
           <Layer
             id="wc-droplet"
@@ -483,19 +488,19 @@ export default function MapScreen() {
             filter={['has', 'water_type']}
             type="symbol"
             layout={{
-              'text-field': '💧',
-              'text-size': 22,
-              'text-allow-overlap': true,
-              'text-ignore-placement': true,
+              'icon-image': 'water-drop',
+              'icon-size': 0.7,
+              'icon-allow-overlap': true,
+              'icon-ignore-placement': true,
             }}
             paint={{
-              'text-color': ['match', ['get', 'water_type'],
+              'icon-color': ['match', ['get', 'water_type'],
                 'verified', '#06B6D4',
                 'unverified', '#EC4899',
                 'ticketed', '#F59E0B',
                 '#06B6D4'],
-              'text-halo-color': '#FFFFFF',
-              'text-halo-width': 2,
+              'icon-halo-color': '#FFFFFF',
+              'icon-halo-width': 2,
             }}
           />
         </GeoJSONSource>
@@ -545,7 +550,7 @@ export default function MapScreen() {
           onPress={() => setSearchVisible(true)}
           activeOpacity={0.8}
         >
-          <Text style={styles.searchIcon}>⌕</Text>
+          <Ionicons name="search" size={18} color="#9CA3AF" style={{ marginRight: 8 }} />
           <Text style={styles.searchPlaceholder}>Search blocks...</Text>
         </TouchableOpacity>
 
@@ -555,7 +560,7 @@ export default function MapScreen() {
           onPress={() => setAlertVisible(true)}
           activeOpacity={0.7}
         >
-          <Text style={styles.alertBtnIcon}>+</Text>
+          <Ionicons name="add-circle" size={22} color="#FFFFFF" />
         </TouchableOpacity>
 
         {/* Location button — BLUE, separate */}
@@ -570,7 +575,7 @@ export default function MapScreen() {
           }}
           activeOpacity={0.7}
         >
-          <Text style={styles.locIcon}>▲</Text>
+          <Ionicons name="locate" size={22} color="#FFFFFF" />
         </TouchableOpacity>
       </View>
 
@@ -742,11 +747,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     marginRight: 10,
   },
-  searchIcon: {
-    fontSize: 18,
-    color: '#9CA3AF',
-    marginRight: 8,
-  },
   searchPlaceholder: {
     fontSize: 15,
     color: '#9CA3AF',
@@ -759,11 +759,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#2563EB',
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  locIcon: {
-    fontSize: 20,
-    color: '#FFFFFF',
-    fontWeight: '300',
   },
 
   // Height legend
@@ -807,11 +802,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 8,
-  },
-  alertBtnIcon: {
-    fontSize: 22,
-    color: '#FFFFFF',
-    fontWeight: '600',
   },
 
   // Alert/report modal — centered icon grid
