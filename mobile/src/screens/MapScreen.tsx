@@ -86,7 +86,6 @@ export default function MapScreen() {
   const [error, setError] = useState<string | null>(null);
   const [minFilter, setMinFilter] = useState(21);
   const [pinRadius, setPinRadius] = useState(8);
-  const [zoom, setZoom] = useState(13);
   const [pulsePhase, setPulsePhase] = useState(0);
   const [searchVisible, setSearchVisible] = useState(false);
   const [alertVisible, setAlertVisible] = useState(false);
@@ -191,7 +190,6 @@ export default function MapScreen() {
       }
       if (typeof zoom === 'number') {
         zoomRef.current = zoom;
-        setZoom(zoom);
         // Update pin radius based on zoom level — all same size at same zoom
         if (zoom < 12) setPinRadius(4);
         else if (zoom < 13) setPinRadius(6);
@@ -400,21 +398,21 @@ export default function MapScreen() {
         />
 
         {/* Water cooler markers — Ionicons rendered as Marker components */}
-        {zoom >= 14 && WATER_COOLERS_RAW.filter(wc => wc.lat && wc.lng).map((wc, i) => (
+        {WATER_COOLERS_RAW.filter(wc => wc.lat && wc.lng).map((wc, i) => (
           <Marker
             key={`wc-${i}`}
             lngLat={[wc.lng, wc.lat]}
             anchor="center"
           >
             <View style={{
-              width: 20, height: 20, borderRadius: 10,
+              width: 28, height: 28, borderRadius: 14,
               backgroundColor: '#FFFFFF',
               justifyContent: 'center', alignItems: 'center',
-              elevation: 2,
+              elevation: 3,
             }}>
               <Ionicons
                 name="water-outline"
-                size={14}
+                size={18}
                 color={
                   wc.status === 'verified' ? '#06B6D4' :
                   wc.status === 'unverified' ? '#EC4899' : '#F59E0B'
@@ -621,12 +619,12 @@ export default function MapScreen() {
             <Text style={[styles.alertGridTitle, isDark && { color: '#F9FAFB' }]}>Report nearby...</Text>
             <View style={styles.alertGridItems}>
               {[
-                { icon: '💧', label: 'Water Cooler', color: '#06B6D4' },
-                { icon: '🚻', label: 'Toilet', color: '#8B5CF6' },
-                { icon: '🏪', label: 'Food / Shop', color: '#F59E0B' },
-                { icon: '⚠', label: 'Hazard', color: '#EF4444' },
-                { icon: '⛔', label: 'Closed Access', color: '#6B7280' },
-                { icon: '📌', label: 'Other', color: '#3B82F6' },
+                { icon: 'water-outline', label: 'Water Cooler', color: '#06B6D4' },
+                { icon: 'accessibility-outline', label: 'Toilet', color: '#8B5CF6' },
+                { icon: 'cafe-outline', label: 'Food / Shop', color: '#F59E0B' },
+                { icon: 'warning-outline', label: 'Hazard', color: '#EF4444' },
+                { icon: 'lock-closed-outline', label: 'Closed Access', color: '#6B7280' },
+                { icon: 'ellipsis-horizontal', label: 'Other', color: '#3B82F6' },
               ].map((item) => (
                 <TouchableOpacity
                   key={item.label}
@@ -646,7 +644,7 @@ export default function MapScreen() {
                     Alert.alert('Reported', `${item.label} reported at this location. Pending verification.`);
                   }}
                 >
-                  <Text style={[styles.alertGridIcon, { color: item.color }]}>{item.icon}</Text>
+                  <Ionicons name={item.icon as any} size={26} color={item.color} />
                   <Text style={[styles.alertGridLabel, isDark && { color: '#D1D5DB' }]}>{item.label}</Text>
                 </TouchableOpacity>
               ))}
