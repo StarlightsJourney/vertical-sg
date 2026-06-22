@@ -475,27 +475,36 @@ export default function MapScreen() {
           />
         </GeoJSONSource>
 
-        {/* Water cooler markers — bullet characters for reliable MapLibre rendering */}
+        {/* Water cooler markers — bullseye/donut markers (white ring + colored center) */}
         <GeoJSONSource id="water-coolers" data={WATER_COOLER_GEOJSON}>
+          {/* Water cooler: large white outer ring */}
           <Layer
-            id="wc-icons"
+            id="wc-outer"
             source="water-coolers"
-            type="symbol"
             filter={['has', 'water_type']}
-            layout={{
-              'text-field': '●',
-              'text-size': 24,
-              'text-allow-overlap': true,
-              'text-ignore-placement': true,
-            }}
+            type="circle"
             paint={{
-              'text-color': ['match', ['get', 'water_type'],
+              'circle-radius': 11,
+              'circle-color': '#FFFFFF',
+              'circle-opacity': 1,
+              'circle-stroke-width': 0,
+            }}
+          />
+          {/* Water cooler: smaller colored inner dot with gap */}
+          <Layer
+            id="wc-inner"
+            source="water-coolers"
+            filter={['has', 'water_type']}
+            type="circle"
+            paint={{
+              'circle-radius': 6,
+              'circle-color': ['match', ['get', 'water_type'],
                 'verified', '#06B6D4',
                 'unverified', '#EC4899',
                 'ticketed', '#F59E0B',
                 '#06B6D4'],
-              'text-halo-color': '#FFFFFF',
-              'text-halo-width': 3,
+              'circle-opacity': 1,
+              'circle-stroke-width': 0,
             }}
           />
         </GeoJSONSource>
@@ -570,7 +579,7 @@ export default function MapScreen() {
           }}
           activeOpacity={0.7}
         >
-          <Text style={styles.locIcon}>◎</Text>
+          <Text style={styles.locIcon}>⌖</Text>
         </TouchableOpacity>
       </View>
 
@@ -619,20 +628,20 @@ export default function MapScreen() {
       {/* Alert/Report modal — centered icon grid */}
       <Modal visible={alertVisible} transparent animationType="fade" onRequestClose={() => setAlertVisible(false)}>
         <TouchableOpacity style={styles.alertBackdrop} onPress={() => setAlertVisible(false)} activeOpacity={1}>
-          <View style={styles.alertGrid}>
-            <Text style={styles.alertGridTitle}>Report nearby...</Text>
+          <View style={[styles.alertGrid, isDark && { backgroundColor: '#1F2937' }]}>
+            <Text style={[styles.alertGridTitle, isDark && { color: '#F9FAFB' }]}>Report nearby...</Text>
             <View style={styles.alertGridItems}>
               {[
-                { icon: '💧', label: 'Water Cooler' },
-                { icon: '🚽', label: 'Toilet' },
-                { icon: '🛒', label: 'Food / Shop' },
-                { icon: '⚠️', label: 'Hazard' },
-                { icon: '🚧', label: 'Closed Access' },
-                { icon: '📌', label: 'Other' },
+                { icon: '💧', label: 'Water Cooler', color: '#06B6D4' },
+                { icon: '🚻', label: 'Toilet', color: '#8B5CF6' },
+                { icon: '🏪', label: 'Food / Shop', color: '#F59E0B' },
+                { icon: '⚠', label: 'Hazard', color: '#EF4444' },
+                { icon: '⛔', label: 'Closed Access', color: '#6B7280' },
+                { icon: '📌', label: 'Other', color: '#3B82F6' },
               ].map((item) => (
                 <TouchableOpacity
                   key={item.label}
-                  style={styles.alertGridItem}
+                  style={[styles.alertGridItem, { backgroundColor: item.color + (isDark ? '1F' : '15') }]}
                   onPress={async () => {
                     const existing = await storage.getItem('reports');
                     const existingReports: Array<{ type: string; lat: number; lng: number; at: string; status: string }> = existing ? JSON.parse(existing) : [];
@@ -648,8 +657,8 @@ export default function MapScreen() {
                     Alert.alert('Reported', `${item.label} reported at this location. Pending verification.`);
                   }}
                 >
-                  <Text style={styles.alertGridIcon}>{item.icon}</Text>
-                  <Text style={styles.alertGridLabel}>{item.label}</Text>
+                  <Text style={[styles.alertGridIcon, { color: item.color }]}>{item.icon}</Text>
+                  <Text style={[styles.alertGridLabel, isDark && { color: '#D1D5DB' }]}>{item.label}</Text>
                 </TouchableOpacity>
               ))}
             </View>
@@ -849,10 +858,11 @@ const styles = StyleSheet.create({
   alertGridItem: {
     width: 80,
     alignItems: 'center',
-    paddingVertical: 8,
+    paddingVertical: 10,
+    borderRadius: 12,
   },
   alertGridIcon: {
-    fontSize: 32,
+    fontSize: 26,
     marginBottom: 6,
   },
   alertGridLabel: {
