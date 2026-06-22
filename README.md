@@ -22,20 +22,40 @@ vertical/
 │   └── requirements.txt
 ├── mobile/                  # React Native + Expo app
 │   ├── assets/
-│   │   └── map-style.json   # MapLibre Liberty style (no fonts, 3D buildings stripped)
+│   │   ├── map-style.json        # Light OpenFreeMap style (Liberty schema, no 3D buildings)
+│   │   ├── map-style-dark.json   # Dark variant for night mode
+│   │   ├── water-coolers.json    # ~175 water cooler locations across SG
+│   │   └── water-drop.png        # Fallback marker icon
 │   └── src/
-│       ├── config/          # Supabase client init
-│       ├── types/           # TypeScript types (Block, SortMode, BoundsRect)
-│       ├── services/        # Supabase query functions (nearby_blocks, blocks_in_bounds RPCs)
-│       ├── hooks/           # useLocation hook (GPS permission + position)
-│       ├── screens/         # Screen components
-│       │   └── MapScreen.tsx
-│       └── components/      # Reusable UI components
-│           └── BlockDetailSheet.tsx
+│       ├── config/               # Supabase client init
+│       ├── types/                # TypeScript types (Block, ClimbLog, BoundsRect, SortMode)
+│       ├── services/             # Supabase RPC calls (nearby_blocks, blocks_in_bounds)
+│       ├── hooks/                # useLocation hook (GPS permission + Singapore fallback)
+│       ├── utils/
+│       │   └── storage.ts        # In-memory storage (climb history, stars, reports)
+│       ├── screens/
+│       │   └── MapScreen.tsx     # Main map: pins, water cooler markers, filter, report modal
+│       └── components/
+│           ├── BlockDetailSheet.tsx  # Floating glass card for block details + climb logging
+│           └── SearchScreen.tsx      # Search with filter chips, starred, recent, My Climbs
 ├── .env.example             # Template — copy to .env.local
 ├── .env.local               # Your real credentials (git-ignored)
 └── .gitignore
 ```
+
+Built features include:
+- **Map pins** colored by height tier (blue 1-10, orange 11-20, red 21-30, dark red 31-39, purple 40+) with zoom-based sizing and gold stroke for climbed blocks.
+- **Cycling filter toggle** — tap to cycle 21+ → 31+ → 40+ → All, pins re-filter instantly.
+- **Water cooler markers** — individual `<Marker>` components using Ionicons (`water-outline`) with verified/unverified/ticketed status colors. Tap shows a floating info card.
+- **Search screen** — full-height modal with debounced address search, filter chips (40+/31+/21+/All), starred blocks, recent blocks (3 with "See more"), and My Climbs history with stats.
+- **Floating glass card** — translucent card positioned near the tapped pin showing storeys, height, distance, address, quantity selector for climbs, and a directions link.
+- **Climb logging** — `+`/`-` quantity selector with local storage persistence. My Climbs section shows total climbs/floors/meters.
+- **Report/alert system** — modal with 6 amenity categories (Water Cooler, Toilet, Food/Shop, Hazard, Closed Access, Other), saved to local storage.
+- **Day/night auto-switching** — switches between light and dark map styles based on local time (7pm-6am). Dark style needs visual fixes.
+- **Singapore bounds restriction** — camera locked to Singapore island via `maxBounds` and `minZoom`.
+- **My Location button** — re-centers map on user's current GPS position.
+- **Height legend** — colored dots at top-right showing the 5 tier colors.
+- **Pin scaling by zoom** — pins grow larger as you zoom in (4px at zoom <12 up to 14px at zoom 15+).
 
 ---
 
@@ -142,9 +162,9 @@ See [Expo Development Builds](https://docs.expo.dev/develop/development-builds/i
 | Phase | Scope | Status |
 |---|---|---|
 | **0** | Data ingestion pipeline | ✅ Built |
-| **1** | MVP app (browse map, see heights, get directions) | ✅ Built |
+| **1** | MVP app (browse map, filter/search, star blocks, climb logging, water cooler markers, report/alert system) | ✅ Built |
 | **2** | Crowdsourced verification & condition reports | ❓ Scoped, not built |
-| **3** | Climb logging, amenities, advanced moderation | ❓ Unscoped |
+| **3** | Advanced moderation, server-synced climbs, community amenities | ❓ Unscoped |
 
 ---
 

@@ -128,26 +128,56 @@ create index blocks_geom_idx on blocks using gist (geom);
 
 ## Phase 1 — MVP App (read-only browse)
 
-**Scope: browse a map of HDB blocks, see height, filter by tallest/nearest. No accounts, no submissions, no routing logic — deep link out for directions.**
+**Scope: browse a map of HDB blocks, filter by storeys, search/star blocks, log climbs, see water coolers, report amenities. No accounts, no photo submissions, no routing logic — deep link out for directions.**
 
 ### Screens
 1. **Map view** (default screen)
-   - MapLibre map centered on user's current location (request location permission on launch).
-   - Blocks within visible map bounds are pulled from Supabase via the `blocks_in_bounds` RPC.
-   - **Individual markers** (no clustering) — pins are coloured circles, sized by storey count tier (blue 1-10, orange 11-20, red 21-30, dark red 31+).
-   - Map bounds are restricted to Singapore — user cannot pan outside the island.
-   - Tap pin → bottom sheet/modal with block detail.
-2. **Block detail (modal/sheet)**
-   - Address (`blk_no` + `street`), town, storey count, estimated height in metres, "estimated" badge (height_source field — always "estimated" in MVP since verification is Phase 2).
-   - Button: "Directions" → deep link to Google Maps using block's lat/lng. If lat/lng is NULL (unmatched block), hide this button or show "Location unavailable."
-3. **Filter / sort controls**
-   - Toggle or sort: "Tallest" vs "Nearest."
-   - "Tallest": query blocks within the visible map bounds, order by `storeys DESC` (or tallest-first if distance is not available).
-   - "Nearest": query blocks within a radius (adjustable: 1km / 3km / 5km), order by distance ascending.
-   - Use PostGIS `blocks_in_bounds` RPC (for pan/zoom) and `nearby_blocks` RPC (for radius-based sort).
-   - **Height legend** displayed on the map showing the colour tier mapping.
-   - **My Location button** re-centres the camera on the user's current position.
-4. **21+ filter toggle** — optional filter to show only blocks with 21+ storeys (hides shorter blocks).
+   - MapLibre map centered on user's current location (request location permission on launch, falls back to Singapore centre).
+   - Blocks within visible map bounds are pulled from Supabase via the `blocks_in_bounds` RPC (200-row limit per request).
+   - **Individual circle layer markers** (no clustering) — pins are coloured circles by storey count tier (blue 1-10, orange 11-20, red 21-30, dark red 31-39, purple 40+). Pin size scales with zoom level (4px at zoom &lt;12 up to 14px at zoom 15+).
+   - Climbed blocks render with a gold stroke (`#F59E0B`, 3px) around the pin.
+   - Map bounds restricted to Singapore via `maxBounds` — user cannot pan outside the island (`[103.5, 1.15, 104.1, 1.5]`). Min zoom 10.
+   - Day/night auto-switching based on local time (7pm-6am = dark mode). Switches between `map-style.json` (light) and `map-style-dark.json`. Dark style UI needs visual fixes.
+   - Tap pin → floating glass card (see below).
+   - Tap water cooler marker → floating info card with name and status.
+
+2. **Water cooler markers** (individual `<Marker>` components via MapLibre)
+   - ~175 water cooler locations from a bundled `water-coolers.json` file.
+   - Each marker renders an Ionicons `water-outline` icon inside a white circle with elevation shadow.
+   - Status color: verified = cyan (`#06B6D4`), unverified = pink (`#EC4899`), ticketed = amber (`#F59E0B`).
+   - Uses `@expo/vector-icons/Ionicons` — no custom marker images needed.
+
+3. **Floating glass card** (replaces bottom sheet)
+   - Translucent card (`rgba(255,255,255,0.92)`) with rounded corners and shadow, positioned near the tapped pin.
+   - Shows: storey count (large number colored by tier + "floors" label), address (`Blk X {street}`), town, estimated height in metres, distance from user (km or m), directions arrow (deep-link to Google Maps).
+   - Quantity selector (`-`/`+`, range 1+) for climb count.
+   - **Log Climb** button (green) — logs `climbQty` climbs to local storage, increments the block's climb counter, refreshes climb history.
+   - Tapping backdrop dismisses the card.
+
+4. **Search screen** (full-height modal, 85% of screen, drag handle to dismiss)
+   - Debounced address search (300ms delay) against Supabase `blocks` via `ilike` on `blk_no` and `street`, ordered by `storeys DESC`, 20-result limit.
+   - Filter chips: 40+ / 31+ / 21+ / All — client-side filter on search results.
+   - Three sections when idle (no search query):
+     - **Starred** — blocks the user has saved (star icon toggles filled/unfilled, persisted in local storage).
+     - **Recent** — last 10 viewed blocks, shows 3 with "See more (N more)" expandable link.
+     - **My Climbs** — climb history with aggregate stats ("N climbs  N floors  ~Nm"), last 5 climb rows showing address, relative time, and floor count (tappable to navigate to block).
+   - Tapping a row selects the block, closes search, flies camera to its location.
+
+5. **Filter controls**
+   - Single cycling filter toggle at top-left: tap cycles 21+ (red) → 31+ (dark red) → 40+ (purple) → All (gray).
+   - Applied client-side to the map's GeoJSON source — only blocks at or above the threshold are rendered.
+   - **Height legend** at top-right shows all 5 tier colors with labels.
+
+6. **Report/alert system** (centered icon grid modal)
+   - Triggered by an amber `+` button in the bottom bar.
+   - 6 amenity/report categories: Water Cooler, Toilet, Food/Shop, Hazard, Closed Access, Other — each with an Ionicons icon and category color.
+   - Tapping a category saves a report to local storage `{type, lat, lng, timestamp, status: 'pending'}` and shows a confirmation `Alert`.
+   - Reports persist in memory for the session.
+
+7. **Bottom bar** (persistent, translucent glass effect)
+   - Search input (tappable, opens SearchScreen)
+   - Alert/report button (amber `+` icon)
+   - My Location button (blue `locate` icon, re-centers map on GPS position)
 
 ### Example queries (Supabase RPC or direct query)
 ```sql
@@ -162,14 +192,13 @@ limit 50;
 
 ### Explicitly out of scope for Phase 1
 - User accounts / login
-- Condition reports (ventilation, dust, photos)
-- Amenity layer (water points, nearby floors/seating)
-- Climb session logging
+- Condition reports with photos (current reporting is text-only, local-only)
+- Server-synced climb history (currently in-memory only)
 - In-app routing/pathfinding (always deep link out)
 - Push notifications
 
 ### Definition of done for Phase 1
-A person can open the app, see their location, see HDB block pins around them sized/colored by height, tap one to see exact storey count and estimated height, and tap "Directions" to open Google Maps to walk there. That's it — ship at that point.
+A person can open the app, see HDB block pins colored by height, filter by minimum storeys, tap to see details and log climbs, search by address, star blocks, view My Climbs history, see water coolers, and report amenities.
 
 ---
 

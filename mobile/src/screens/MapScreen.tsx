@@ -191,11 +191,11 @@ export default function MapScreen() {
       if (typeof zoom === 'number') {
         zoomRef.current = zoom;
         // Update pin radius based on zoom level — all same size at same zoom
-        if (zoom < 12) setPinRadius(4);
-        else if (zoom < 13) setPinRadius(6);
-        else if (zoom < 14) setPinRadius(8);
-        else if (zoom < 15) setPinRadius(11);
-        else setPinRadius(14);
+        if (zoom < 12) setPinRadius(3);
+        else if (zoom < 13) setPinRadius(5);
+        else if (zoom < 14) setPinRadius(7);
+        else if (zoom < 15) setPinRadius(9);
+        else setPinRadius(11);
       }
 
       // Debounce: wait 300ms after last camera movement
@@ -398,21 +398,32 @@ export default function MapScreen() {
         />
 
         {/* Water cooler markers — Ionicons rendered as Marker components */}
-        {WATER_COOLERS_RAW.filter(wc => wc.lat && wc.lng).map((wc, i) => (
+        {WATER_COOLERS_RAW.filter(wc => wc.lat && wc.lng).map((wc, i) => {
+          const wcScale = Math.max(0.5, Math.min(1.2, pinRadius / 8));
+          return (
           <Marker
             key={`wc-${i}`}
             lngLat={[wc.lng, wc.lat]}
             anchor="center"
+            onPress={() => setSelectedWaterCooler({
+              name: wc.name,
+              type: wc.status,
+              lat: wc.lat,
+              lng: wc.lng,
+            })}
           >
             <View style={{
-              width: 28, height: 28, borderRadius: 14,
+              width: Math.round(28 * wcScale),
+              height: Math.round(28 * wcScale),
+              borderRadius: Math.round(14 * wcScale),
               backgroundColor: '#FFFFFF',
-              justifyContent: 'center', alignItems: 'center',
+              justifyContent: 'center',
+              alignItems: 'center',
               elevation: 3,
             }}>
               <Ionicons
                 name="water-outline"
-                size={18}
+                size={Math.round(18 * wcScale)}
                 color={
                   wc.status === 'verified' ? '#06B6D4' :
                   wc.status === 'unverified' ? '#EC4899' : '#F59E0B'
@@ -420,7 +431,7 @@ export default function MapScreen() {
               />
             </View>
           </Marker>
-        ))}
+        )})}
 
         {userLocationGeojson && (
           <GeoJSONSource id="user-location" data={userLocationGeojson}>
@@ -596,6 +607,11 @@ export default function MapScreen() {
                selectedWaterCooler.type === 'unverified' ? '? Unverified' : 'Ticketed'}
             </Text>
             <Text style={{ fontSize: 13, fontWeight: '700', color: '#111827', marginTop: 2 }}>Water Cooler</Text>
+            {selectedWaterCooler.name && (
+              <Text style={{ fontSize: 10, color: '#6B7280', marginTop: 4, textAlign: 'center' }} numberOfLines={2}>
+                {selectedWaterCooler.name}
+              </Text>
+            )}
           </View>
         </View>
       )}
