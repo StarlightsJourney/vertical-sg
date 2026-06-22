@@ -475,36 +475,27 @@ export default function MapScreen() {
           />
         </GeoJSONSource>
 
-        {/* Water cooler markers — bullseye/donut markers (white ring + colored center) */}
+        {/* Water cooler markers — droplet emoji text layer */}
         <GeoJSONSource id="water-coolers" data={WATER_COOLER_GEOJSON}>
-          {/* Water cooler: large white outer ring */}
           <Layer
-            id="wc-outer"
+            id="wc-droplet"
             source="water-coolers"
             filter={['has', 'water_type']}
-            type="circle"
-            paint={{
-              'circle-radius': 11,
-              'circle-color': '#FFFFFF',
-              'circle-opacity': 1,
-              'circle-stroke-width': 0,
+            type="symbol"
+            layout={{
+              'text-field': '💧',
+              'text-size': 22,
+              'text-allow-overlap': true,
+              'text-ignore-placement': true,
             }}
-          />
-          {/* Water cooler: smaller colored inner dot with gap */}
-          <Layer
-            id="wc-inner"
-            source="water-coolers"
-            filter={['has', 'water_type']}
-            type="circle"
             paint={{
-              'circle-radius': 6,
-              'circle-color': ['match', ['get', 'water_type'],
+              'text-color': ['match', ['get', 'water_type'],
                 'verified', '#06B6D4',
                 'unverified', '#EC4899',
                 'ticketed', '#F59E0B',
                 '#06B6D4'],
-              'circle-opacity': 1,
-              'circle-stroke-width': 0,
+              'text-halo-color': '#FFFFFF',
+              'text-halo-width': 2,
             }}
           />
         </GeoJSONSource>
@@ -579,7 +570,7 @@ export default function MapScreen() {
           }}
           activeOpacity={0.7}
         >
-          <Text style={styles.locIcon}>⌖</Text>
+          <Text style={styles.locIcon}>▲</Text>
         </TouchableOpacity>
       </View>
 
