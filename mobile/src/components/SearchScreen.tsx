@@ -21,6 +21,7 @@ interface SearchScreenProps {
   recentBlocks: Block[];
   starredBlockIds: Set<string>;
   onToggleStar: (block: Block) => void;
+  isDark?: boolean;
 }
 
 function getTier(storeys: number) {
@@ -37,6 +38,7 @@ export default function SearchScreen({
   recentBlocks,
   starredBlockIds,
   onToggleStar,
+  isDark = false,
 }: SearchScreenProps) {
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
@@ -137,17 +139,17 @@ export default function SearchScreen({
         >
           <View style={[styles.tierDot, { backgroundColor: tier.color }]} />
           <View style={styles.rowContent}>
-            <Text style={styles.rowAddress} numberOfLines={1}>
+            <Text style={[styles.rowAddress, isDark && { color: '#F9FAFB' }]} numberOfLines={1}>
               Blk {block.blk_no} {block.street}
             </Text>
             {block.town && (
-              <Text style={styles.rowTown} numberOfLines={1}>
+              <Text style={[styles.rowTown, isDark && { color: '#9CA3AF' }]} numberOfLines={1}>
                 {block.town}
               </Text>
             )}
           </View>
           <View style={styles.rowRight}>
-            <Text style={styles.rowStoreys}>{block.storeys}</Text>
+            <Text style={[styles.rowStoreys, isDark && { color: '#F9FAFB' }]}>{block.storeys}</Text>
             <Text style={styles.rowStoreysLabel}>fl</Text>
           </View>
           <TouchableOpacity
@@ -176,13 +178,13 @@ export default function SearchScreen({
       presentationStyle="fullScreen"
       onRequestClose={onClose}
     >
-      <SafeAreaView style={styles.safeArea}>
-        <View style={styles.container}>
+      <SafeAreaView style={[styles.safeArea, isDark && { backgroundColor: '#111827' }]}>
+        <View style={[styles.container, { paddingTop: 52 }, isDark && { backgroundColor: '#111827' }]}>
           {/* Search bar */}
-          <View style={styles.searchBarContainer}>
-            <View style={styles.searchInputWrapper}>
+          <View style={[styles.searchBarContainer, isDark && { borderBottomColor: '#374151' }]}>
+            <View style={[styles.searchInputWrapper, isDark && { backgroundColor: '#1F2937' }]}>
               <TextInput
-                style={styles.searchInput}
+                style={[styles.searchInput, isDark && { color: '#F9FAFB' }]}
                 placeholder="Search HDB blocks..."
                 placeholderTextColor="#9CA3AF"
                 value={query}
@@ -208,14 +210,14 @@ export default function SearchScreen({
                 data={searchResults}
                 keyExtractor={(item) => item.block_id}
                 renderItem={({ item }) => renderBlockRow(item)}
-                ItemSeparatorComponent={Separator}
+                ItemSeparatorComponent={() => <Separator isDark={isDark} />}
                 keyboardShouldPersistTaps="handled"
                 contentContainerStyle={styles.listContent}
               />
             ) : (
               !searching && (
                 <View style={styles.centerContent}>
-                  <Text style={styles.emptyText}>No results found</Text>
+                  <Text style={[styles.emptyText, isDark && { color: '#D1D5DB' }]}>No results found</Text>
                 </View>
               )
             )
@@ -226,31 +228,31 @@ export default function SearchScreen({
             >
               {/* Recent section */}
               <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Recent</Text>
+                <Text style={[styles.sectionTitle, isDark && { color: '#D1D5DB' }]}>Recent</Text>
                 {recentBlocks.length > 0 ? (
                   recentBlocks.slice(0, 10).map((block, i, arr) => (
                     <View key={block.block_id}>
                       {renderBlockRow(block)}
-                      {i < arr.length - 1 && <Separator />}
+                      {i < arr.length - 1 && <Separator isDark={isDark} />}
                     </View>
                   ))
                 ) : (
-                  <Text style={styles.emptyText}>No recent blocks</Text>
+                  <Text style={[styles.emptyText, isDark && { color: '#D1D5DB' }]}>No recent blocks</Text>
                 )}
               </View>
 
               {/* Starred section */}
               <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Starred</Text>
+                <Text style={[styles.sectionTitle, isDark && { color: '#D1D5DB' }]}>Starred</Text>
                 {starredBlocks.length > 0 ? (
                   starredBlocks.map((block, i, arr) => (
                     <View key={block.block_id}>
                       {renderBlockRow(block)}
-                      {i < arr.length - 1 && <Separator />}
+                      {i < arr.length - 1 && <Separator isDark={isDark} />}
                     </View>
                   ))
                 ) : (
-                  <Text style={styles.emptyText}>
+                  <Text style={[styles.emptyText, isDark && { color: '#D1D5DB' }]}>
                     Star blocks to save them here.
                   </Text>
                 )}
@@ -263,8 +265,8 @@ export default function SearchScreen({
   );
 }
 
-function Separator() {
-  return <View style={styles.separator} />;
+function Separator({ isDark }: { isDark?: boolean }) {
+  return <View style={[styles.separator, isDark ? { backgroundColor: '#374151' } : undefined]} />;
 }
 
 const styles = StyleSheet.create({

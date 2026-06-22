@@ -31,7 +31,8 @@ export default function BlockDetailSheet({ block, distanceKm, onClose }: Props) 
       {/* Invisible backdrop — tap to dismiss */}
       <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={onClose} />
 
-      {/* Floating card */}
+      {/* Card — centered vertically */}
+      <View style={styles.cardWrapper}>
       <TouchableOpacity style={styles.card} activeOpacity={0.9} onPress={handlePress}>
         {/* Colored header strip */}
         <View style={[styles.header, { backgroundColor: tier.color }]}>
@@ -73,6 +74,7 @@ export default function BlockDetailSheet({ block, distanceKm, onClose }: Props) 
           <Text style={styles.hintArrow}>›</Text>
         </View>
       </TouchableOpacity>
+      </View>
     </View>
   );
 }
@@ -90,10 +92,7 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFill,
   },
   card: {
-    position: 'absolute',
-    top: 60,
-    left: 16,
-    right: 16,
+    width: '100%',
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     overflow: 'hidden',
@@ -108,6 +107,12 @@ const styles = StyleSheet.create({
         elevation: 12,
       },
     }),
+  },
+  cardWrapper: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 16,
   },
   header: {
     flexDirection: 'row',

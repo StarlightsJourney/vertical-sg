@@ -285,6 +285,7 @@ export default function MapScreen() {
         style={styles.map}
         mapStyle={isDark ? DARK_STYLE : LIGHT_STYLE}
         logo={false}
+        compass={false}
         onPress={handleMapPress}
         onRegionDidChange={handleRegionDidChange}
       >
@@ -305,10 +306,10 @@ export default function MapScreen() {
             <Layer id="user-location-ring" source="user-location" type="circle"
               paint={{
                 'circle-radius': 18,
-                'circle-color': '#3B82F6',
+                'circle-color': '#14B8A6',
                 'circle-opacity': 0.25,
                 'circle-stroke-width': 2,
-                'circle-stroke-color': '#3B82F6',
+                'circle-stroke-color': '#14B8A6',
                 'circle-stroke-opacity': 0.5,
               }}
             />
@@ -316,7 +317,7 @@ export default function MapScreen() {
             <Layer id="user-location-dot" source="user-location" type="circle"
               paint={{
                 'circle-radius': 8,
-                'circle-color': '#3B82F6',
+                'circle-color': '#14B8A6',
                 'circle-stroke-width': 3,
                 'circle-stroke-color': '#FFFFFF',
               }}
@@ -443,6 +444,7 @@ export default function MapScreen() {
         recentBlocks={recentBlocks}
         starredBlockIds={starredIds}
         onToggleStar={handleToggleStar}
+        isDark={isDark}
       />
     </View>
   );
@@ -457,7 +459,7 @@ const styles = StyleSheet.create({
   },
   errorBanner: {
     position: 'absolute',
-    top: 60,
+    top: 52,
     left: 16,
     right: 16,
     backgroundColor: 'rgba(255, 59, 48, 0.9)',
@@ -484,7 +486,7 @@ const styles = StyleSheet.create({
   },
   filterToggle: {
     position: 'absolute',
-    top: 12,
+    top: 52,
     left: 16,
     paddingVertical: 8,
     paddingHorizontal: 14,
@@ -556,7 +558,7 @@ const styles = StyleSheet.create({
   // Height legend
   legend: {
     position: 'absolute',
-    top: 12,
+    top: 52,
     right: 16,
     flexDirection: 'row',
     borderRadius: 20,
