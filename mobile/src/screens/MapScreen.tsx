@@ -20,11 +20,11 @@ import { fetchBlocksInBounds } from '../services/blocks';
 import type { Block, BoundsRect } from '../types';
 import BlockDetailSheet from '../components/BlockDetailSheet';
 
-// Liberty style with 3D buildings (fill-extrusion) removed.
-// Fill-extrusion uses depth buffering which covers 2D circle layers.
-// Text labels (symbol) also removed — no font server needed.
+// Light (default) and dark map styles for day/night auto-switching
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const MAP_STYLE = require('../../assets/map-style.json');
+const LIGHT_STYLE = require('../../assets/map-style.json');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const DARK_STYLE = require('../../assets/map-style-dark.json');
 
 // Default Singapore bounds for initial fetch before map camera settles
 const SG_BOUNDS: BoundsRect = { sw: [103.6, 1.2], ne: [104.0, 1.48] };
@@ -67,6 +67,12 @@ export default function MapScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tallOnly, setTallOnly] = useState(true);
+
+  // Auto-detect day/night based on local time
+  const [isDark, setIsDark] = useState(() => {
+    const hour = new Date().getHours();
+    return hour < 6 || hour >= 19; // dark mode 7pm-6am
+  });
 
   // Sync ref with state
   blocksRef.current = blocks;
@@ -220,12 +226,21 @@ export default function MapScreen() {
     };
   }, []);
 
+  // Check time every 60 seconds for day/night auto-switching
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const hour = new Date().getHours();
+      setIsDark(hour < 6 || hour >= 19);
+    }, 60000);
+    return () => clearInterval(timer);
+  }, []);
+
   return (
     <View style={styles.container}>
       <Map
         ref={mapRef}
         style={styles.map}
-        mapStyle={MAP_STYLE}
+        mapStyle={isDark ? DARK_STYLE : LIGHT_STYLE}
         logo={false}
         onPress={handleMapPress}
         onRegionDidChange={handleRegionDidChange}
@@ -322,7 +337,7 @@ export default function MapScreen() {
 
       {/* My Location button */}
       <TouchableOpacity
-        style={styles.myLocationBtn}
+        style={[styles.myLocationBtn, { backgroundColor: isDark ? '#333' : '#FFFFFF' }]}
         onPress={() => {
           cameraRef.current?.easeTo({
             center: cameraCenter,
@@ -332,23 +347,23 @@ export default function MapScreen() {
         }}
         activeOpacity={0.8}
       >
-        <Text style={styles.myLocationBtnText}>◎</Text>
+        <Text style={[styles.myLocationBtnText, { color: isDark ? '#60A5FA' : '#2563EB' }]}>◎</Text>
       </TouchableOpacity>
 
       {/* Height legend */}
-      <View style={styles.legend}>
-        <Text style={styles.legendTitle}>Height</Text>
+      <View style={[styles.legend, { backgroundColor: isDark ? 'rgba(30,30,30,0.92)' : 'rgba(255,255,255,0.92)' }]}>
+        <Text style={[styles.legendTitle, { color: isDark ? '#9CA3AF' : '#6B7280' }]}>Height</Text>
         {HEIGHT_TIERS.map((t) => (
           <View key={t.label} style={styles.legendRow}>
             <View style={[styles.legendDot, { backgroundColor: t.color }]} />
-            <Text style={styles.legendLabel}>{t.label} floors</Text>
+            <Text style={[styles.legendLabel, { color: isDark ? '#E5E7EB' : '#374151' }]}>{t.label} floors</Text>
           </View>
         ))}
       </View>
 
       {/* 21+ floors toggle */}
       <TouchableOpacity
-        style={[styles.filterToggle, { backgroundColor: tallOnly ? '#8B0000' : 'rgba(0,0,0,0.7)' }]}
+        style={[styles.filterToggle, { backgroundColor: tallOnly ? '#8B0000' : (isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.7)') }]}
         onPress={() => setTallOnly(!tallOnly)}
         activeOpacity={0.8}
       >
@@ -362,7 +377,6 @@ export default function MapScreen() {
         block={selectedBlock}
         distanceKm={selectedBlockDist}
         onClose={handleCloseDetail}
-        visible={selectedBlock !== null}
       />
     </View>
   );
