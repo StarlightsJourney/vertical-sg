@@ -22,8 +22,7 @@ import type { Block, BoundsRect } from '../types';
 import BlockDetailSheet from '../components/BlockDetailSheet';
 import SearchScreen from '../components/SearchScreen';
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const MAP_STYLE = require('../../assets/map-style.json');
+const MAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
 
 // Default Singapore bounds for initial fetch before map camera settles
 const SG_BOUNDS: BoundsRect = { sw: [103.6, 1.2], ne: [104.0, 1.48] };
