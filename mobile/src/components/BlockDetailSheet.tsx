@@ -12,17 +12,19 @@ import type { Block } from '../types';
 
 const SCREEN_HEIGHT = Dimensions.get('window').height;
 const MAX_SHEET_HEIGHT = SCREEN_HEIGHT * 0.42;
-// Extra padding for Android navigation bar
-const BOTTOM_INSET = Platform.OS === 'android' ? 24 : 0;
+// Extra padding for Android gesture navigation bar
+const BOTTOM_INSET = Platform.OS === 'android' ? 56 : 0;
 
 interface BlockDetailSheetProps {
   block: Block | null;
+  distanceKm: number | null;
   onClose: () => void;
   visible: boolean;
 }
 
 export default function BlockDetailSheet({
   block,
+  distanceKm,
   onClose,
   visible,
 }: BlockDetailSheetProps) {
@@ -91,6 +93,16 @@ export default function BlockDetailSheet({
 
             {/* Detail rows */}
             <View style={styles.details}>
+              {distanceKm != null && (
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>Distance</Text>
+                  <Text style={styles.detailValue}>
+                    {distanceKm < 1
+                      ? `${Math.round(distanceKm * 1000)}m`
+                      : `${distanceKm.toFixed(1)}km`}
+                  </Text>
+                </View>
+              )}
               {block.year_completed && (
                 <View style={styles.detailRow}>
                   <Text style={styles.detailLabel}>Year built</Text>

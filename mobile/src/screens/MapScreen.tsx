@@ -29,6 +29,29 @@ const RADIUS_PRESETS = [1000, 3000, 5000];
 // Default Singapore bounds for initial fetch before map camera settles
 const SG_BOUNDS: BoundsRect = { sw: [103.6, 1.2], ne: [104.0, 1.48] };
 
+/** Haversine distance in km between two lat/lng points. */
+function haversineKm(
+  lat1: number, lng1: number,
+  lat2: number, lng2: number,
+): number {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+const HEIGHT_TIERS = [
+  { label: '1–10', color: '#4A90D9' },
+  { label: '11–20', color: '#FF9500' },
+  { label: '21–30', color: '#FF3B30' },
+  { label: '31+', color: '#8B0000' },
+] as const;
+
 export default function MapScreen() {
   const location = useLocation();
   const mapRef = useRef<MapRef>(null);
@@ -41,6 +64,7 @@ export default function MapScreen() {
 
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [selectedBlock, setSelectedBlock] = useState<Block | null>(null);
+  const [selectedBlockDist, setSelectedBlockDist] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<SortMode>('storeys');
@@ -169,12 +193,25 @@ export default function MapScreen() {
       const block = blocksRef.current.find(
         (b) => b.block_id === props.block_id,
       );
-      if (block) setSelectedBlock(block);
+      if (block) {
+        setSelectedBlock(block);
+        // Compute distance from user location
+        if (block.lat != null && block.lng != null && location.latitude) {
+          const km = haversineKm(
+            location.latitude, location.longitude,
+            block.lat, block.lng,
+          );
+          setSelectedBlockDist(km);
+        } else {
+          setSelectedBlockDist(null);
+        }
+      }
     }
-  }, []);
+  }, [location.latitude, location.longitude]);
 
   const handleCloseDetail = useCallback(() => {
     setSelectedBlock(null);
+    setSelectedBlockDist(null);
   }, []);
 
   // Camera initial position [lng, lat]
@@ -247,17 +284,17 @@ export default function MapScreen() {
               'circle-radius': [
                 'step',
                 ['get', 'storeys'],
-                8,   // 1-10
+                10,  // 1-10
                 11,
-                10,  // 11-20
+                12,  // 11-20
                 21,
-                12,  // 21-30
+                15,  // 21-30
                 31,
-                15,  // 31+
+                18,  // 31+
               ],
-              'circle-stroke-width': 1.5,
+              'circle-stroke-width': 2,
               'circle-stroke-color': '#ffffff',
-              'circle-opacity': 0.85,
+              'circle-opacity': 0.9,
             }}
           />
         </GeoJSONSource>
@@ -276,6 +313,32 @@ export default function MapScreen() {
           <ActivityIndicator size="large" color="#FFFFFF" />
         </View>
       )}
+
+      {/* My Location button */}
+      <TouchableOpacity
+        style={styles.myLocationBtn}
+        onPress={() => {
+          cameraRef.current?.easeTo({
+            center: cameraCenter,
+            zoom: 15,
+            duration: 500,
+          });
+        }}
+        activeOpacity={0.8}
+      >
+        <Text style={styles.myLocationBtnText}>◎</Text>
+      </TouchableOpacity>
+
+      {/* Height legend */}
+      <View style={styles.legend}>
+        <Text style={styles.legendTitle}>Height</Text>
+        {HEIGHT_TIERS.map((t) => (
+          <View key={t.label} style={styles.legendRow}>
+            <View style={[styles.legendDot, { backgroundColor: t.color }]} />
+            <Text style={styles.legendLabel}>{t.label} floors</Text>
+          </View>
+        ))}
+      </View>
 
       {/* Controls bar */}
       <View style={styles.controlsContainer}>
@@ -342,6 +405,7 @@ export default function MapScreen() {
       {/* Block Detail Sheet overlay */}
       <BlockDetailSheet
         block={selectedBlock}
+        distanceKm={selectedBlockDist}
         onClose={handleCloseDetail}
         visible={selectedBlock !== null}
       />
@@ -448,5 +512,69 @@ const styles = StyleSheet.create({
   },
   radiusButtonTextActive: {
     color: '#FFFFFF',
+  },
+
+  // My Location button
+  myLocationBtn: {
+    position: 'absolute',
+    top: 60,
+    right: 16,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#FFFFFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 10,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+  },
+  myLocationBtnText: {
+    fontSize: 20,
+    color: '#2563EB',
+  },
+
+  // Height legend
+  legend: {
+    position: 'absolute',
+    top: 110,
+    right: 16,
+    backgroundColor: 'rgba(255,255,255,0.92)',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    zIndex: 10,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 4,
+  },
+  legendTitle: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#6B7280',
+    marginBottom: 6,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  legendRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  legendDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginRight: 8,
+  },
+  legendLabel: {
+    fontSize: 12,
+    color: '#374151',
+    fontWeight: '500',
   },
 });
