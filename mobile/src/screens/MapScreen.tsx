@@ -6,6 +6,7 @@ import {
   ActivityIndicator,
   TouchableOpacity,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   Map,
   Camera,
@@ -19,6 +20,7 @@ import { useLocation } from '../hooks/useLocation';
 import { fetchBlocksInBounds } from '../services/blocks';
 import type { Block, BoundsRect } from '../types';
 import BlockDetailSheet from '../components/BlockDetailSheet';
+import SearchScreen from '../components/SearchScreen';
 
 // Light (default) and dark map styles for day/night auto-switching
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -67,6 +69,9 @@ export default function MapScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tallOnly, setTallOnly] = useState(true);
+  const [searchVisible, setSearchVisible] = useState(false);
+  const [recentBlocks, setRecentBlocks] = useState<Block[]>([]);
+  const [starredIds, setStarredIds] = useState<Set<string>>(new Set());
 
   // Auto-detect day/night based on local time
   const [isDark, setIsDark] = useState(() => {
@@ -184,6 +189,11 @@ export default function MapScreen() {
       );
       if (block) {
         setSelectedBlock(block);
+        // Add to recents
+        setRecentBlocks((prev) => {
+          const filtered = prev.filter((b) => b.block_id !== block.block_id);
+          return [block, ...filtered].slice(0, 10);
+        });
         // Compute distance from user location
         if (block.lat != null && block.lng != null && location.latitude) {
           const km = haversineKm(
@@ -202,6 +212,45 @@ export default function MapScreen() {
     setSelectedBlock(null);
     setSelectedBlockDist(null);
   }, []);
+
+  const handleToggleStar = useCallback(async (block: Block) => {
+    setStarredIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(block.block_id)) {
+        next.delete(block.block_id);
+      } else {
+        next.add(block.block_id);
+      }
+      AsyncStorage.setItem('starred_blocks', JSON.stringify([...next]));
+      return next;
+    });
+  }, []);
+
+  const handleSelectSearchBlock = useCallback((block: Block) => {
+    setSearchVisible(false);
+    setSelectedBlock(block);
+    // Fly to the block
+    if (block.lat != null && block.lng != null) {
+      cameraRef.current?.flyTo({
+        center: [block.lng, block.lat],
+        zoom: 16,
+        duration: 800,
+      });
+    }
+    // Add to recents
+    setRecentBlocks((prev) => {
+      const filtered = prev.filter((b) => b.block_id !== block.block_id);
+      return [block, ...filtered].slice(0, 10);
+    });
+    // Compute distance
+    if (block.lat != null && block.lng != null && location.latitude) {
+      const km = haversineKm(
+        location.latitude, location.longitude,
+        block.lat, block.lng,
+      );
+      setSelectedBlockDist(km);
+    }
+  }, [location.latitude, location.longitude]);
 
   // Camera initial position [lng, lat]
   const cameraCenter: [number, number] = [
@@ -233,6 +282,18 @@ export default function MapScreen() {
       setIsDark(hour < 6 || hour >= 19);
     }, 60000);
     return () => clearInterval(timer);
+  }, []);
+
+  // Load starred blocks from AsyncStorage on mount
+  useEffect(() => {
+    AsyncStorage.getItem('starred_blocks').then((val) => {
+      if (val) {
+        try {
+          const ids: string[] = JSON.parse(val);
+          setStarredIds(new Set(ids));
+        } catch {}
+      }
+    });
   }, []);
 
   return (
@@ -350,6 +411,15 @@ export default function MapScreen() {
         <Text style={[styles.myLocationBtnText, { color: isDark ? '#60A5FA' : '#2563EB' }]}>◎</Text>
       </TouchableOpacity>
 
+      {/* Search button */}
+      <TouchableOpacity
+        style={styles.searchBtn}
+        onPress={() => setSearchVisible(true)}
+        activeOpacity={0.8}
+      >
+        <Text style={styles.searchBtnText}>🔍</Text>
+      </TouchableOpacity>
+
       {/* Height legend */}
       <View style={[styles.legend, { backgroundColor: isDark ? 'rgba(30,30,30,0.92)' : 'rgba(255,255,255,0.92)' }]}>
         <Text style={[styles.legendTitle, { color: isDark ? '#9CA3AF' : '#6B7280' }]}>Height</Text>
@@ -377,6 +447,15 @@ export default function MapScreen() {
         block={selectedBlock}
         distanceKm={selectedBlockDist}
         onClose={handleCloseDetail}
+      />
+
+      <SearchScreen
+        visible={searchVisible}
+        onClose={() => setSearchVisible(false)}
+        onSelectBlock={handleSelectSearchBlock}
+        recentBlocks={recentBlocks}
+        starredBlockIds={starredIds}
+        onToggleStar={handleToggleStar}
       />
     </View>
   );
@@ -418,7 +497,7 @@ const styles = StyleSheet.create({
   },
   filterToggle: {
     position: 'absolute',
-    top: 214,
+    top: 284,
     right: 16,
     paddingVertical: 8,
     paddingHorizontal: 14,
@@ -434,8 +513,8 @@ const styles = StyleSheet.create({
   // My Location button
   myLocationBtn: {
     position: 'absolute',
-    top: 60,
-    right: 16,
+    bottom: 40,
+    left: 16,
     width: 40,
     height: 40,
     borderRadius: 20,
@@ -454,10 +533,32 @@ const styles = StyleSheet.create({
     color: '#2563EB',
   },
 
+  // Search button
+  searchBtn: {
+    position: 'absolute',
+    bottom: 40,
+    right: 16,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#FFFFFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 10,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+  },
+  searchBtnText: {
+    fontSize: 20,
+  },
+
   // Height legend
   legend: {
     position: 'absolute',
-    top: 110,
+    top: 180,
     right: 16,
     backgroundColor: 'rgba(255,255,255,0.92)',
     borderRadius: 12,
