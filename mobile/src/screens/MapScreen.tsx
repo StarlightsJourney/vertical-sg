@@ -19,8 +19,8 @@ import { fetchNearbyBlocks, fetchBlocksInBounds } from '../services/blocks';
 import type { Block, SortMode } from '../types';
 import BlockDetailSheet from '../components/BlockDetailSheet';
 
-// Free vector tile style (no API key needed — MapLibre is open source)
-const MAP_STYLE = 'https://demotiles.maplibre.org/style.json';
+// OpenFreeMap Liberty — free, no API key, full OSM map with labels & roads
+const MAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
 const RADIUS_PRESETS = [1000, 3000, 5000];
 
 // Default Singapore bounds for initial fetch before map camera settles
