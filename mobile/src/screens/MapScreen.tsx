@@ -156,27 +156,16 @@ export default function MapScreen() {
     [fetchBounds],
   );
 
-  // Handle tap on map: clusters zoom in, individual points show detail sheet
-  const handleMapPress = useCallback(async (event: { nativeEvent: { point: [number, number]; features?: GeoJSON.Feature[] } }) => {
+  // Handle tap on map: show block detail sheet for tapped pin
+  const handleMapPress = useCallback(async (event: any) => {
     const point = event.nativeEvent?.point;
     if (!point) return;
 
     const features = await mapRef.current?.queryRenderedFeatures(point);
     if (!features || features.length === 0) return;
 
-    const feature = features[0];
-    const props = feature.properties ?? {};
-
-    if (props.cluster) {
-      // Tapped a cluster — zoom in by 2 levels
-      const coords = (feature.geometry as GeoJSON.Point).coordinates;
-      cameraRef.current?.easeTo({
-        center: coords as [number, number],
-        zoom: zoomRef.current + 2,
-        duration: 300,
-      });
-    } else if (props.block_id) {
-      // Tapped an individual block — show detail sheet
+    const props = features[0].properties ?? {};
+    if (props.block_id) {
       const block = blocksRef.current.find(
         (b) => b.block_id === props.block_id,
       );
@@ -237,46 +226,12 @@ export default function MapScreen() {
         <GeoJSONSource
           id="blocks"
           data={geojson}
-          cluster
-          clusterRadius={50}
-          clusterMaxZoom={14}
         >
-          {/* Cluster background circles */}
+          {/* Individual block pins — coloured circles by height tier */}
           <Layer
-            id="clusters-bg"
+            id="block-pins"
             source="blocks"
             type="circle"
-            filter={['has', 'point_count']}
-            paint={{
-              'circle-color': '#2563EB',
-              'circle-radius': 18,
-              'circle-opacity': 0.9,
-              'circle-stroke-width': 2,
-              'circle-stroke-color': '#ffffff',
-            }}
-          />
-
-          {/* Cluster count labels */}
-          <Layer
-            id="clusters"
-            source="blocks"
-            type="symbol"
-            filter={['has', 'point_count']}
-            layout={{
-              'text-field': ['get', 'point_count'],
-              'text-size': 14,
-              'text-ignore-placement': true,
-              'text-allow-overlap': true,
-            }}
-            paint={{ 'text-color': '#ffffff' }}
-          />
-
-          {/* Individual block points — coloured circles by height tier */}
-          <Layer
-            id="unclustered-points"
-            source="blocks"
-            type="circle"
-            filter={['!', ['has', 'point_count']]}
             paint={{
               'circle-color': [
                 'step',
@@ -292,16 +247,17 @@ export default function MapScreen() {
               'circle-radius': [
                 'step',
                 ['get', 'storeys'],
-                7,  // 1-10
+                8,   // 1-10
                 11,
-                9,  // 11-20
+                10,  // 11-20
                 21,
-                11, // 21-30
+                12,  // 21-30
                 31,
-                13, // 31+
+                15,  // 31+
               ],
               'circle-stroke-width': 1.5,
               'circle-stroke-color': '#ffffff',
+              'circle-opacity': 0.85,
             }}
           />
         </GeoJSONSource>
