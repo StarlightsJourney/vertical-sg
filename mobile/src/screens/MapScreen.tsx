@@ -20,10 +20,10 @@ import { fetchNearbyBlocks, fetchBlocksInBounds } from '../services/blocks';
 import type { Block, SortMode, BoundsRect } from '../types';
 import BlockDetailSheet from '../components/BlockDetailSheet';
 
-// MapLibre demotiles — works reliably, shows pins correctly.
-// To upgrade to a proper map: sign up for MapTiler (free tier, map-tiler.com)
-// and replace this URL with your MapTiler style URL.
-const MAP_STYLE = 'https://demotiles.maplibre.org/style.json';
+// OpenFreeMap Liberty — full OSM map with land, water, roads, buildings.
+// Font glyph errors in logs are cosmetic (no street names) — map surfaces
+// and block pins both render correctly.
+const MAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
 const RADIUS_PRESETS = [1000, 3000, 5000];
 
 // Default Singapore bounds for initial fetch before map camera settles
