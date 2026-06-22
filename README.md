@@ -2,7 +2,7 @@
 
 **Mobile app that maps Singapore HDB blocks by height, so you can find tall blocks nearby to train stair-climbing on.**
 
-Built with React Native + Expo, MapLibre (OpenFreeMap tiles), and Supabase (PostGIS).
+Built with React Native + Expo, MapLibre (local Liberty style), and Supabase (PostGIS).
 
 ---
 
@@ -14,15 +14,19 @@ vertical/
 │   └── vertical_mvp_plan.md # Full MVP spec (read this first)
 ├── supabase/
 │   └── migrations/          # SQL migrations (run in Supabase SQL editor)
-│       └── 001_blocks_schema.sql
+│       ├── 001_blocks_schema.sql
+│       ├── 002_blocks_in_bounds.sql
+│       └── 003_increase_limits.sql
 ├── scripts/                 # Data ingestion (one-off / annual)
 │   ├── ingest.py            # Pull HDB data → geocode → upsert into Supabase
 │   └── requirements.txt
 ├── mobile/                  # React Native + Expo app
+│   ├── assets/
+│   │   └── map-style.json   # MapLibre Liberty style (no fonts, 3D buildings stripped)
 │   └── src/
 │       ├── config/          # Supabase client init
-│       ├── types/           # TypeScript types (Block, SortMode)
-│       ├── services/        # Supabase query functions (nearby_blocks RPC)
+│       ├── types/           # TypeScript types (Block, SortMode, BoundsRect)
+│       ├── services/        # Supabase query functions (nearby_blocks, blocks_in_bounds RPCs)
 │       ├── hooks/           # useLocation hook (GPS permission + position)
 │       ├── screens/         # Screen components
 │       │   └── MapScreen.tsx
@@ -61,10 +65,13 @@ npm install
 ```env
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=eyJ...        # service_role secret — NEVER put in the app
-ONEMAP_EMAIL=your_email@example.com
-ONEMAP_PASSWORD=your_password
-# OR use a token directly:
-# ONEMAP_TOKEN=your_jwt_token
+
+# Recommended: direct API token (see .env.example for how to generate one)
+ONEMAP_TOKEN=your_jwt_token_here
+
+# Alternative: email + password (script auto-fetches a JWT each run)
+# ONEMAP_EMAIL=your_email@example.com
+# ONEMAP_PASSWORD=your_password
 ```
 
 **Mobile `.env.local`** (for the Expo app):
@@ -77,10 +84,10 @@ EXPO_PUBLIC_SUPABASE_ANON_KEY=eyJ...     # anon public key — safe for client
 
 1. Open your Supabase project dashboard
 2. Go to **SQL Editor**
-3. Paste the contents of `supabase/migrations/001_blocks_schema.sql`
-4. Click **Run**
-
-This creates the `blocks` table, `unmatched_hdb_blocks` table, PostGIS indexes, and the `nearby_blocks` RPC function.
+3. Run the migrations in order from `supabase/migrations/`:
+   - `001_blocks_schema.sql` — creates tables, indexes, and `nearby_blocks` RPC
+   - `002_blocks_in_bounds.sql` — creates `blocks_in_bounds` RPC for map pan/zoom
+   - `003_increase_limits.sql` — increases result caps for dense areas
 
 ### 4. Run data ingestion
 
@@ -92,19 +99,28 @@ python ingest.py
 
 The script will:
 - Pull ~13K HDB residential blocks from data.gov.sg
-- Standardize addresses and geocode via multi-pass join
+- Standardize addresses and geocode via OneMap Search API
 - Upsert into your Supabase `blocks` table
 
 Expected runtime: a few minutes (rate-limited to respect OneMap's 300 calls/min limit).
 
 ### 5. Launch the app
 
+This app uses MapLibre native rendering, which requires a **development build** (Expo Go does not support native modules).
+
 ```bash
 cd mobile
 npx expo start
 ```
 
-Scan the QR code with Expo Go (iOS/Android), or press `a` for Android emulator / `i` for iOS simulator.
+Then press `a` for Android emulator / `i` for iOS simulator, or run a development build on your device:
+
+```bash
+# Build + install on connected device/emulator
+npx expo run:android   # or npx expo run:ios
+```
+
+See [Expo Development Builds](https://docs.expo.dev/develop/development-builds/introduction/) for more details.
 
 ---
 
@@ -114,9 +130,9 @@ Scan the QR code with Expo Go (iOS/Android), or press `a` for Android emulator /
 |---|---|---|
 | Mobile framework | React Native + Expo | Single codebase, both platforms |
 | Backend | Supabase (Postgres + PostGIS) | Built-in PostGIS, auth for Phase 2, free tier sufficient |
-| Map rendering | MapLibre (`@maplibre/maplibre-react-native`) | Open-source, no API key, free tile styles |
+| Map rendering | MapLibre (`@maplibre/maplibre-react-native`) | Local Liberty style (no fonts needed, 3D buildings stripped) — no API key required |
 | Directions | Deep-link to Google Maps | No API key, no routing logic to maintain |
-| Geocoding | OneMap API (free, SG-specific) | Multi-pass: postal code → polygon join → fuzzy match → OneMap fallback |
+| Geocoding | OneMap API (free, SG-specific) | Single-pass OneMap Search API — all geocoding goes through OneMap |
 | Auth (MVP) | None | Read-only app, no user accounts needed |
 
 ---
@@ -125,8 +141,8 @@ Scan the QR code with Expo Go (iOS/Android), or press `a` for Android emulator /
 
 | Phase | Scope | Status |
 |---|---|---|
-| **0** | Data ingestion pipeline | ✅ Script built |
-| **1** | MVP app (browse map, see heights, get directions) | ✅ Core screens built |
+| **0** | Data ingestion pipeline | ✅ Built |
+| **1** | MVP app (browse map, see heights, get directions) | ✅ Built |
 | **2** | Crowdsourced verification & condition reports | ❓ Scoped, not built |
 | **3** | Climb logging, amenities, advanced moderation | ❓ Unscoped |
 
@@ -134,12 +150,12 @@ Scan the QR code with Expo Go (iOS/Android), or press `a` for Android emulator /
 
 ## Contributing
 
-Work happens on feature branches off `main`. Branch naming: `phase-N-description` or `fix/short-description`.
+Work happens on feature branches off `main`. Branch naming: `fix/short-description` or `feature/short-description`.
 
 ```bash
-git checkout -b phase-1-pin-clustering
+git checkout -b fix/descriptive-name
 # ... make changes ...
-git push -u origin phase-1-pin-clustering
+git push -u origin fix/descriptive-name
 ```
 
 ---

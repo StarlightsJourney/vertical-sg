@@ -16,8 +16,8 @@ import {
   type CameraRef,
 } from '@maplibre/maplibre-react-native';
 import { useLocation } from '../hooks/useLocation';
-import { fetchNearbyBlocks, fetchBlocksInBounds } from '../services/blocks';
-import type { Block, SortMode, BoundsRect } from '../types';
+import { fetchBlocksInBounds } from '../services/blocks';
+import type { Block, BoundsRect } from '../types';
 import BlockDetailSheet from '../components/BlockDetailSheet';
 
 // Liberty style with 3D buildings (fill-extrusion) removed.
@@ -25,7 +25,6 @@ import BlockDetailSheet from '../components/BlockDetailSheet';
 // Text labels (symbol) also removed — no font server needed.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const MAP_STYLE = require('../../assets/map-style.json');
-const RADIUS_PRESETS = [1000, 3000, 5000];
 
 // Default Singapore bounds for initial fetch before map camera settles
 const SG_BOUNDS: BoundsRect = { sw: [103.6, 1.2], ne: [104.0, 1.48] };
@@ -58,7 +57,6 @@ export default function MapScreen() {
   const mapRef = useRef<MapRef>(null);
   const cameraRef = useRef<CameraRef>(null);
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const sortByRef = useRef<SortMode>('storeys');
   const blocksRef = useRef<Block[]>([]);
   const zoomRef = useRef(13);
   const boundsRef = useRef<BoundsRect | null>(null);
@@ -68,11 +66,9 @@ export default function MapScreen() {
   const [selectedBlockDist, setSelectedBlockDist] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [sortBy, setSortBy] = useState<SortMode>('storeys');
-  const [radius, setRadius] = useState(5000);
+  const [tallOnly, setTallOnly] = useState(true);
 
-  // Sync refs with state
-  sortByRef.current = sortBy;
+  // Sync ref with state
   blocksRef.current = blocks;
 
   // Build GeoJSON FeatureCollection from blocks for the map source
@@ -80,6 +76,7 @@ export default function MapScreen() {
     type: 'FeatureCollection',
     features: blocks
       .filter((b) => b.lat != null && b.lng != null)
+      .filter((b) => !tallOnly || (b.storeys != null && b.storeys >= 21))
       .map((b) => ({
         type: 'Feature',
         geometry: {
@@ -97,35 +94,24 @@ export default function MapScreen() {
           total_dwelling_units: b.total_dwelling_units,
         },
       })),
-  }), [blocks]);
+  }), [blocks, tallOnly]);
 
-  // Fetch nearby blocks (used when "Nearest" sort is active)
-  const fetchNearby = useCallback(async () => {
-    if (location.loading) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await fetchNearbyBlocks({
-        lat: location.latitude,
-        lng: location.longitude,
-        radius,
-        sortBy,
-      });
-      setBlocks(data);
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : 'Failed to load blocks',
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, [location.latitude, location.longitude, location.loading, radius, sortBy]);
+  const userLocationGeojson = useMemo((): GeoJSON.FeatureCollection | null => {
+    if (location.loading || !location.latitude) return null;
+    return {
+      type: 'FeatureCollection',
+      features: [{
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [location.longitude, location.latitude] },
+        properties: {},
+      }],
+    };
+  }, [location.latitude, location.longitude, location.loading]);
 
-  // Fetch blocks within visible map bounds (used when "Tallest" sort is active)
+  // Fetch blocks within visible map bounds
   const fetchBounds = useCallback(
     async (
       b: BoundsRect,
-      sort: SortMode,
     ) => {
       setLoading(true);
       setError(null);
@@ -135,7 +121,7 @@ export default function MapScreen() {
           minLng: b.sw[0],
           maxLat: b.ne[1],
           maxLng: b.ne[0],
-          sortBy: sort,
+          sortBy: 'storeys',
         });
         setBlocks(data);
       } catch (err) {
@@ -166,15 +152,11 @@ export default function MapScreen() {
         zoomRef.current = zoom;
       }
 
-      // Don't fetch in "Nearest" mode
-      if (sortByRef.current === 'distance') return;
-
       // Debounce: wait 300ms after last camera movement
       if (debounceTimer.current) clearTimeout(debounceTimer.current);
       debounceTimer.current = setTimeout(() => {
-        if (sortByRef.current === 'distance') return;
         if (boundsRef.current) {
-          fetchBounds(boundsRef.current, sortByRef.current);
+          fetchBounds(boundsRef.current);
         }
       }, 300);
     },
@@ -221,21 +203,15 @@ export default function MapScreen() {
     location.latitude,
   ];
 
-  // Fetch data when sort mode, radius, or location availability changes
+  // Fetch blocks when location is ready
   useEffect(() => {
     if (location.loading) return;
-
-    if (sortBy === 'distance') {
-      fetchNearby();
+    if (boundsRef.current) {
+      fetchBounds(boundsRef.current);
     } else {
-      // Fetch bounds using current bounds or fall back to default SG bounds
-      if (boundsRef.current) {
-        fetchBounds(boundsRef.current, sortBy);
-      } else {
-        fetchBounds(SG_BOUNDS, sortBy);
-      }
+      fetchBounds(SG_BOUNDS);
     }
-  }, [sortBy, radius, location.loading, fetchNearby, fetchBounds]);
+  }, [location.loading, fetchBounds]);
 
   // Cleanup debounce on unmount
   useEffect(() => {
@@ -258,10 +234,37 @@ export default function MapScreen() {
           ref={cameraRef}
           center={cameraCenter}
           zoom={13}
+          minZoom={10}
+          maxBounds={[103.5, 1.15, 104.1, 1.5]}
           duration={500}
         />
 
         <UserLocation />
+
+        {userLocationGeojson && (
+          <GeoJSONSource id="user-location" data={userLocationGeojson}>
+            {/* Outer pulsing ring */}
+            <Layer id="user-location-ring" source="user-location" type="circle"
+              paint={{
+                'circle-radius': 18,
+                'circle-color': '#3B82F6',
+                'circle-opacity': 0.25,
+                'circle-stroke-width': 2,
+                'circle-stroke-color': '#3B82F6',
+                'circle-stroke-opacity': 0.5,
+              }}
+            />
+            {/* Inner dot */}
+            <Layer id="user-location-dot" source="user-location" type="circle"
+              paint={{
+                'circle-radius': 8,
+                'circle-color': '#3B82F6',
+                'circle-stroke-width': 3,
+                'circle-stroke-color': '#FFFFFF',
+              }}
+            />
+          </GeoJSONSource>
+        )}
 
         <GeoJSONSource
           id="blocks"
@@ -343,67 +346,16 @@ export default function MapScreen() {
         ))}
       </View>
 
-      {/* Controls bar */}
-      <View style={styles.controlsContainer}>
-        <View style={styles.controlsRow}>
-          <View style={styles.sortGroup}>
-            <TouchableOpacity
-              style={[
-                styles.sortButton,
-                sortBy === 'storeys' && styles.sortButtonActive,
-              ]}
-              onPress={() => setSortBy('storeys')}
-            >
-              <Text
-                style={[
-                  styles.sortButtonText,
-                  sortBy === 'storeys' && styles.sortButtonTextActive,
-                ]}
-              >
-                Tallest
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[
-                styles.sortButton,
-                sortBy === 'distance' && styles.sortButtonActive,
-              ]}
-              onPress={() => setSortBy('distance')}
-            >
-              <Text
-                style={[
-                  styles.sortButtonText,
-                  sortBy === 'distance' && styles.sortButtonTextActive,
-                ]}
-              >
-                Nearest
-              </Text>
-            </TouchableOpacity>
-          </View>
-          <Text style={styles.radiusLabel}>{radius / 1000}km</Text>
-        </View>
-        <View style={styles.radiusRow}>
-          {RADIUS_PRESETS.map((r) => (
-            <TouchableOpacity
-              key={r}
-              style={[
-                styles.radiusButton,
-                radius === r && styles.radiusButtonActive,
-              ]}
-              onPress={() => setRadius(r)}
-            >
-              <Text
-                style={[
-                  styles.radiusButtonText,
-                  radius === r && styles.radiusButtonTextActive,
-                ]}
-              >
-                {r / 1000}km
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      </View>
+      {/* 21+ floors toggle */}
+      <TouchableOpacity
+        style={[styles.filterToggle, { backgroundColor: tallOnly ? '#8B0000' : 'rgba(0,0,0,0.7)' }]}
+        onPress={() => setTallOnly(!tallOnly)}
+        activeOpacity={0.8}
+      >
+        <Text style={styles.filterToggleText}>
+          {tallOnly ? '21+ only' : 'All blocks'}
+        </Text>
+      </TouchableOpacity>
 
       {/* Block Detail Sheet overlay */}
       <BlockDetailSheet
@@ -450,71 +402,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     zIndex: 10,
   },
-  controlsContainer: {
+  filterToggle: {
     position: 'absolute',
-    bottom: 40,
-    left: 16,
+    top: 214,
     right: 16,
-    backgroundColor: 'rgba(0, 0, 0, 0.75)',
-    borderRadius: 16,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 20,
     zIndex: 10,
   },
-  controlsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  sortGroup: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  sortButton: {
-    paddingVertical: 6,
-    paddingHorizontal: 16,
-    borderRadius: 20,
-    marginRight: 8,
-  },
-  sortButtonActive: {
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-  },
-  sortButtonText: {
-    color: '#AAAAAA',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  sortButtonTextActive: {
+  filterToggleText: {
     color: '#FFFFFF',
-  },
-  radiusLabel: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '700',
-    marginLeft: 'auto',
-  },
-  radiusRow: {
-    flexDirection: 'row',
-  },
-  radiusButton: {
-    paddingVertical: 4,
-    paddingHorizontal: 12,
-    borderRadius: 12,
-    marginRight: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.3)',
-  },
-  radiusButtonActive: {
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    borderColor: '#FFFFFF',
-  },
-  radiusButtonText: {
-    color: '#CCCCCC',
     fontSize: 12,
-    fontWeight: '500',
-  },
-  radiusButtonTextActive: {
-    color: '#FFFFFF',
+    fontWeight: '700',
   },
 
   // My Location button

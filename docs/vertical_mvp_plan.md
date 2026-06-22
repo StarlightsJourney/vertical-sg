@@ -24,8 +24,8 @@
 | Dataset | ID | Provides | Does NOT provide |
 |---|---|---|---|
 | HDB Property Information | `d_17f5382f26140b1fdae0ba2ef6239d2f` | `blk_no`, `street`, `max_floor_lvl`, `year_completed`, `residential` (Y/N), `commercial`, `market_hawker`, `multistorey_carpark`, `precinct_pavilion`, `bldg_contract_town`, `total_dwelling_units` | Coordinates |
-| HDB Existing Building | `d_16b157c52ed637edd6ba1232e026258d` | GeoJSON polygons (block footprints) — usable for centroid coordinates | Storey/height data |
-| OneMap Geocoder API | — | Fallback geocoding by address when the above two don't join cleanly | — |
+| HDB Existing Building | `d_16b157c52ed637edd6ba1232e026258d` | ❌ **Inaccessible** — the data.gov.sg CKAN datastore API returns empty results for this resource (`resource_show` confirms the dataset exists but the datastore endpoint does not serve it). Intended to provide GeoJSON polygon centroids. | Storey/height data, any coordinates |
+| OneMap Geocoder API | — | Primary geocoding source — resolves all addresses via Search API | No storey/height data |
 
 **API access:** `GET https://data.gov.sg/api/action/datastore_search?resource_id={id}` — no auth required for basic read access. Confirmed working, 13.3K rows in Property Information dataset as of last check.
 
@@ -36,9 +36,9 @@ OneMap splits its APIs into two tiers — only the second one is relevant to thi
 | Tier | APIs | Auth | Rate limit | Used by Vertical? |
 |---|---|---|---|---|
 | No-auth tier | Basemaps, Mini Map, Advanced Mini Map, Static Map | None | None stated | **No** — MapLibre is the locked map-rendering choice; OneMap's basemap is not used |
-| Token tier | Search, Coordinate Converters, **Reverse Geocode**, Themes, Routing, Planning Area, Population Query | Token required, renew every 3 days | **300 calls/min** | **Yes** — Phase 0 geocoding fallback uses Search and/or Coordinate Converters |
+| Token tier | Search, Coordinate Converters, **Reverse Geocode**, Themes, Routing, Planning Area, Population Query | Token required, renew every 3 days | **300 calls/min** | **Yes** — all geocoding in Phase 0 uses the Search API |
 
-**Rate limit handling (Phase 0 ingestion script):** when geocoding the unmatched/fallback batch, do not fire requests concurrently/unthrottled. Batch at a safe margin under the limit (e.g. ~250/min) with a short delay between calls, rather than relying on catching 429s after the fact. With ~13.3K total blocks and most expected to resolve via the dataset-to-dataset join (Step 3, passes 1–2), the OneMap fallback volume (pass 3 + true fallback) should be a small fraction of that — but don't assume the size of that fallback list until the join is actually run once.
+**Rate limit handling (Phase 0 ingestion script):** fire requests with a 250ms delay between calls (~240/min), well under the 300/min cap. With ~13.3K total blocks, the full run processes at this throttled rate in a few minutes. The HDB Existing Building polygon dataset (which would have eliminated the need for per-address geocoding) is inaccessible via the CKAN datastore API, so every residential block goes through OneMap Search.
 
 **Token lifecycle:** tokens expire exactly 3 days (259,200s) after issuance — confirmed against a real OneMap JWT (`iat`/`exp` fields). Do not cache or persist tokens across runs; the ingestion script re-authenticates fresh on every execution (see Step 5 below). Never commit tokens or `.env` files to version control, and never paste live tokens into chat, docs, or issue trackers — treat any exposed token as compromised and regenerate it.
 
@@ -67,13 +67,13 @@ Build a standardizer helper applied to every `blk_no` + `street` pair before mat
 - **Standardize suffix letters**: `1a` / `1 A` → `1A` (uppercase, no space)
 - **Street abbreviation dictionary** (regex map), minimum coverage: `ST.` → `SAINT`, `BT` → `BUKIT`, `S'GOON` → `SERANGOON`, `JLN` → `JALAN`. Expand this list as join failures reveal more cases.
 
-### Step 3: Cascading geocode/join (multi-pass, in order) ✅
-1. **Primary pass** — match by postal code, if present in source data. Most accurate, building-level.
-2. **Secondary pass** — strict match on standardized `blk_no + street_name` against OneMap or the HDB Existing Building polygon dataset.
-3. **Tertiary pass** — fuzzy match (Levenshtein or similar) on street name to catch typos/variants not caught by the abbreviation dictionary.
+### Step 3: OneMap Geocoding (single pass) ✅
+1.  **OneMap Search API** — send the standardized address (`blk_no + street`) to OneMap's elastic search endpoint. Rate-limited to ~240 calls/min to stay safely under the 300/min cap.
+
+Note: The HDB Existing Building polygon dataset (`d_16b157c52ed637edd6ba1232e026258d`) was originally intended for a multi-pass join, but its data.gov.sg CKAN datastore endpoint returns empty results (resource_show confirms the dataset exists but the datastore API does not serve it). All geocoding now goes through OneMap as a single pass.
 
 ### Step 4: Handle unmatched records ✅
-If all three passes fail:
+If the OneMap geocode returns no result:
 - **Do not drop the record.** Insert it into `blocks` regardless — `max_floor_lvl`, `total_dwelling_units`, `year_completed` must be preserved even without coordinates.
 - **Do not impute approximate coordinates** (e.g. street- or town-center fallback). A 40-storey block incorrectly placed at a town centroid can stack on top of an unrelated 4-storey block and corrupt any spatial query (nearby search, density maps).
 - **Set `lat`/`lng` to NULL.**
@@ -81,8 +81,9 @@ If all three passes fail:
 
 ### Step 5: OneMap auth pattern ✅
 Keep this isolated to the ingestion script — it is unrelated to user-facing auth.
-- Store OneMap credentials in a local `.env` file (never commit this).
-- On script start, POST to OneMap's auth endpoint to fetch a temporary token (~3 day validity).
+- Store the OneMap API token (or email/password) in a local `.env` file (never commit this).
+- **Recommended:** set `ONEMAP_TOKEN` directly in `.env.local` — avoids storing credentials.
+- **Alternative:** `ONEMAP_EMAIL` + `ONEMAP_PASSWORD` — the script POSTs to OneMap's auth endpoint on each run to fetch a temporary token (~3 day validity).
 - Pass the token in headers for subsequent geocoding requests within that run.
 - No token refresh/persistence logic needed — re-authenticate each time the script runs.
 
@@ -113,7 +114,7 @@ create table unmatched_hdb_blocks (
   max_floor_lvl int,
   year_completed int,
   total_dwelling_units int,
-  reason text, -- which pass failed / why
+  reason text, -- why geocoding failed (e.g. "OneMap returned no result")
   logged_at timestamp default now()
 );
 ```
@@ -132,17 +133,21 @@ create index blocks_geom_idx on blocks using gist (geom);
 ### Screens
 1. **Map view** (default screen)
    - MapLibre map centered on user's current location (request location permission on launch).
-   - Pins for blocks within visible map bounds, pulled from Supabase.
-   - Pin styling: vary by height tier (e.g. color or size scaled to storeys) so tall blocks are visually obvious at a glance.
+   - Blocks within visible map bounds are pulled from Supabase via the `blocks_in_bounds` RPC.
+   - **Individual markers** (no clustering) — pins are coloured circles, sized by storey count tier (blue 1-10, orange 11-20, red 21-30, dark red 31+).
+   - Map bounds are restricted to Singapore — user cannot pan outside the island.
    - Tap pin → bottom sheet/modal with block detail.
 2. **Block detail (modal/sheet)**
    - Address (`blk_no` + `street`), town, storey count, estimated height in metres, "estimated" badge (height_source field — always "estimated" in MVP since verification is Phase 2).
    - Button: "Directions" → deep link to Google Maps using block's lat/lng. If lat/lng is NULL (unmatched block), hide this button or show "Location unavailable."
 3. **Filter / sort controls**
-   - Toggle or sort: "Tallest near me" vs "Nearest to me."
-   - "Tallest near me": query blocks within a radius (e.g. 5km, adjustable), order by `storeys DESC`.
-   - "Nearest to me": same radius query, order by distance ascending.
-   - Use PostGIS `ST_DWithin` / `ST_Distance` against the `geom` column for both.
+   - Toggle or sort: "Tallest" vs "Nearest."
+   - "Tallest": query blocks within the visible map bounds, order by `storeys DESC` (or tallest-first if distance is not available).
+   - "Nearest": query blocks within a radius (adjustable: 1km / 3km / 5km), order by distance ascending.
+   - Use PostGIS `blocks_in_bounds` RPC (for pan/zoom) and `nearby_blocks` RPC (for radius-based sort).
+   - **Height legend** displayed on the map showing the colour tier mapping.
+   - **My Location button** re-centres the camera on the user's current position.
+4. **21+ filter toggle** — optional filter to show only blocks with 21+ storeys (hides shorter blocks).
 
 ### Example queries (Supabase RPC or direct query)
 ```sql
@@ -193,5 +198,5 @@ A person can open the app, see their location, see HDB block pins around them si
 
 - Exact radius defaults for "nearby" search (5km was used as an example above, not a confirmed product decision).
 - Whether `bldg_contract_town` from the source data is sufficient for a "browse by town" feature, or whether a separate towns/regions table is needed.
-- Pin clustering strategy at low zoom levels (13K+ blocks will need clustering — MapLibre supports this natively, but cluster radius/behavior isn't decided).
+- ~~Pin clustering strategy at low zoom levels (13K+ blocks will need clustering — MapLibre supports this natively, but cluster radius/behavior isn't decided).~~ ✅ **Resolved** — removed clustering in favor of individual markers. Pins are fetched per-bounds via `blocks_in_bounds` RPC with a 500/1000-row cap, so only visible blocks render at any zoom level.
 - Legal review of the "publicly accessible staircase" framing before Phase 3 — flagged, not resolved.
