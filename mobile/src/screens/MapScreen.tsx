@@ -20,9 +20,9 @@ import { fetchNearbyBlocks, fetchBlocksInBounds } from '../services/blocks';
 import type { Block, SortMode, BoundsRect } from '../types';
 import BlockDetailSheet from '../components/BlockDetailSheet';
 
-// OpenFreeMap Liberty — fixed font glyphs (local copy with MapLibre font server)
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const MAP_STYLE = require('../../assets/map-style.json');
+// MapLibre demotiles — basic but reliable, shows pins correctly.
+// Will upgrade to a richer style when we find a reliable free tile provider.
+const MAP_STYLE = 'https://demotiles.maplibre.org/style.json';
 const RADIUS_PRESETS = [1000, 3000, 5000];
 
 // Default Singapore bounds for initial fetch before map camera settles
