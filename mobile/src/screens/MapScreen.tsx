@@ -471,26 +471,35 @@ export default function MapScreen() {
           />
         </GeoJSONSource>
 
-        {/* Water cooler markers — large distinct circles colored by verification status */}
+        {/* Water cooler markers — bullseye: white outer ring + colored inner dot */}
         <GeoJSONSource id="water-coolers" data={WATER_COOLER_GEOJSON}>
+          {/* White outer ring (makes water coolers distinct from building pins) */}
           <Layer
-            id="water-cooler-pins"
+            id="wc-outer"
             source="water-coolers"
             type="circle"
-            minzoom={14}
+            filter={['has', 'water_type']}
             paint={{
-              'circle-radius': 14,
-              'circle-color': [
-                'match',
-                ['get', 'status'],
+              'circle-radius': 12,
+              'circle-color': '#FFFFFF',
+              'circle-opacity': 1,
+              'circle-stroke-width': 0,
+            }}
+          />
+          {/* Colored inner dot */}
+          <Layer
+            id="wc-inner"
+            source="water-coolers"
+            type="circle"
+            filter={['has', 'water_type']}
+            paint={{
+              'circle-radius': 8,
+              'circle-color': ['match', ['get', 'water_type'],
                 'verified', '#06B6D4',
                 'unverified', '#EC4899',
                 'ticketed', '#F59E0B',
-                '#9E9E9E',
-              ],
-              'circle-opacity': 0.9,
-              'circle-stroke-width': 3,
-              'circle-stroke-color': '#FFFFFF',
+                '#06B6D4'],
+              'circle-opacity': 1,
             }}
           />
         </GeoJSONSource>
@@ -560,13 +569,13 @@ export default function MapScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Alert/Report button — Waze-style flag, above search bar */}
+      {/* Alert/Report button — above bottom bar */}
       <TouchableOpacity
         style={[styles.alertBtn, { backgroundColor: isDark ? '#333' : '#FFFFFF' }]}
         onPress={() => setAlertVisible(true)}
         activeOpacity={0.8}
       >
-        <Text style={styles.alertBtnText}>⚑</Text>
+        <Text style={styles.alertBtnText}>✚</Text>
       </TouchableOpacity>
 
       {/* Block Detail Sheet overlay */}
@@ -578,18 +587,22 @@ export default function MapScreen() {
         tapY={tapY}
       />
 
-      {/* Water cooler info card */}
+      {/* Water cooler info card — positioned near tap */}
       {selectedWaterCooler && (
-        <View style={styles.wcCard}>
-          <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setSelectedWaterCooler(null)} />
-          <View style={styles.wcCardInner}>
-            <Text style={styles.wcIcon}>💧</Text>
-            <View>
+        <View style={[styles.container, { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 20 }]}>
+          <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setSelectedWaterCooler(null)} activeOpacity={1} />
+          <View style={[styles.wcCard, { top: Math.max(60, (tapY || 300) - 100), left: 24, right: 24, position: 'absolute' }]}>
+            <View style={styles.wcCardContent}>
+              <Text style={styles.wcIcon}>💧</Text>
               <Text style={styles.wcTitle}>Water Cooler</Text>
-              <Text style={styles.wcStatus}>
-                {selectedWaterCooler.type === 'verified' ? '✓ Verified' :
-                 selectedWaterCooler.type === 'unverified' ? '? Unverified' : '🎫 Ticketed'}
+              <Text style={[styles.wcStatus, {
+                color: selectedWaterCooler.type === 'verified' ? '#06B6D4' :
+                       selectedWaterCooler.type === 'unverified' ? '#EC4899' : '#F59E0B'
+              }]}>
+                {selectedWaterCooler.type === 'verified' ? 'Verified' :
+                 selectedWaterCooler.type === 'unverified' ? 'Unverified' : 'Ticketed'}
               </Text>
+              {selectedWaterCooler.name && <Text style={styles.wcName}>{selectedWaterCooler.name}</Text>}
             </View>
           </View>
         </View>
@@ -778,17 +791,17 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 
-  // Alert button — floating above search bar
+  // Alert button — floating above bottom bar
   alertBtn: {
     position: 'absolute',
-    bottom: 88,
+    bottom: 68,
     right: 16,
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     justifyContent: 'center',
     alignItems: 'center',
-    zIndex: 10,
+    zIndex: 20,
     elevation: 4,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
@@ -802,7 +815,7 @@ const styles = StyleSheet.create({
   // Alert modal
   alertModal: {
     position: 'absolute',
-    bottom: 140,
+    bottom: 100,
     right: 16,
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
@@ -837,38 +850,20 @@ const styles = StyleSheet.create({
 
   // Water cooler info card
   wcCard: {
-    position: 'absolute',
-    bottom: 160,
-    left: 16,
-    right: 16,
-    zIndex: 20,
-  },
-  wcCardInner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'rgba(255,255,255,0.88)',
     borderRadius: 16,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
     elevation: 8,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
+    shadowOpacity: 0.15,
     shadowRadius: 12,
   },
-  wcIcon: {
-    fontSize: 28,
-    marginRight: 12,
+  wcCardContent: {
+    padding: 14,
+    alignItems: 'center',
   },
-  wcTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#111827',
-  },
-  wcStatus: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: '#6B7280',
-    marginTop: 2,
-  },
+  wcIcon: { fontSize: 28, marginBottom: 6 },
+  wcTitle: { fontSize: 15, fontWeight: '700', color: '#111827' },
+  wcStatus: { fontSize: 13, fontWeight: '600', marginTop: 2 },
+  wcName: { fontSize: 11, color: '#6B7280', marginTop: 4, textAlign: 'center' },
 });
