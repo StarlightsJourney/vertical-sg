@@ -11,7 +11,9 @@ import * as Linking from 'expo-linking';
 import type { Block } from '../types';
 
 const SCREEN_HEIGHT = Dimensions.get('window').height;
-const MAX_SHEET_HEIGHT = SCREEN_HEIGHT * 0.4;
+const MAX_SHEET_HEIGHT = SCREEN_HEIGHT * 0.42;
+// Extra padding for Android navigation bar
+const BOTTOM_INSET = Platform.OS === 'android' ? 24 : 0;
 
 interface BlockDetailSheetProps {
   block: Block | null;
@@ -24,29 +26,27 @@ export default function BlockDetailSheet({
   onClose,
   visible,
 }: BlockDetailSheetProps) {
-  if (!block) {
-    return null;
-  }
+  if (!block) return null;
 
   const hasLocation =
-    block.lat !== null &&
-    block.lat !== undefined &&
-    block.lng !== null &&
-    block.lng !== undefined;
+    block.lat != null &&
+    block.lng != null;
 
   const handleGetDirections = () => {
     if (hasLocation) {
       Linking.openURL(
-        `https://www.google.com/maps/dir/?api=1&destination=${block.lat},${block.lng}`
+        `https://www.google.com/maps/dir/?api=1&destination=${block.lat},${block.lng}`,
       );
     }
   };
+
+  const heightTier = getHeightTier(block.storeys);
 
   return (
     <Modal
       visible={visible}
       animationType="slide"
-      transparent={true}
+      transparent
       onRequestClose={onClose}
     >
       <View style={styles.backdrop}>
@@ -55,62 +55,55 @@ export default function BlockDetailSheet({
           activeOpacity={1}
           onPress={onClose}
         />
-
-        <View style={styles.sheet} pointerEvents="box-none">
+        <View style={styles.sheet}>
           <View style={styles.sheetContent}>
             {/* Drag handle */}
-            <TouchableOpacity
-              style={styles.dragHandleArea}
-              onPress={onClose}
-              activeOpacity={0.7}
-            >
-              <View style={styles.dragHandle} />
-            </TouchableOpacity>
-
-            {/* Close button */}
-            <TouchableOpacity
-              style={styles.closeButton}
-              onPress={onClose}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.closeButtonText}>✕</Text>
-            </TouchableOpacity>
+            <View style={styles.dragHandle} />
 
             {/* Header */}
             <View style={styles.header}>
-              <Text style={styles.address}>
-                Blk {block.blk_no} {block.street}
+              <View style={styles.headerRow}>
+                <View style={styles.headerLeft}>
+                  <Text style={styles.address} numberOfLines={2}>
+                    Blk {block.blk_no} {block.street}
+                  </Text>
+                  {block.town && (
+                    <Text style={styles.town}>{block.town}</Text>
+                  )}
+                </View>
+                <TouchableOpacity
+                  style={styles.closeButton}
+                  onPress={onClose}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.closeButtonText}>✕</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* Height tier indicator */}
+            <View style={[styles.tierBar, { backgroundColor: heightTier.color }]}>
+              <View style={styles.tierDot} />
+              <Text style={styles.tierLabel}>
+                {heightTier.label} · {block.storeys} storeys · {block.est_height_m}m
               </Text>
-              {block.town !== null && (
-                <Text style={styles.town}>{block.town}</Text>
-              )}
             </View>
 
             {/* Detail rows */}
             <View style={styles.details}>
-              <DetailRow
-                icon="🏢"
-                label="Storeys"
-                value={`${block.storeys} floors`}
-              />
-              <DetailRow
-                icon="📏"
-                label="Height"
-                value={`${block.est_height_m}m`}
-              />
-              {block.year_completed !== null && (
-                <DetailRow
-                  icon="📅"
-                  label="Year"
-                  value={`${block.year_completed}`}
-                />
+              {block.year_completed && (
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>Year built</Text>
+                  <Text style={styles.detailValue}>{block.year_completed}</Text>
+                </View>
               )}
-              {block.total_dwelling_units !== null && (
-                <DetailRow
-                  icon="🏘️"
-                  label="Units"
-                  value={`${block.total_dwelling_units}`}
-                />
+              {block.total_dwelling_units && (
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>Dwelling units</Text>
+                  <Text style={styles.detailValue}>
+                    {block.total_dwelling_units.toLocaleString()}
+                  </Text>
+                </View>
               )}
             </View>
 
@@ -132,12 +125,14 @@ export default function BlockDetailSheet({
                       : styles.badgeTextEstimated,
                   ]}
                 >
-                  {block.height_source === 'verified' ? 'Verified' : 'Estimated'}
+                  {block.height_source === 'verified'
+                    ? '✓ Verified height'
+                    : 'Estimated height'}
                 </Text>
               </View>
             </View>
 
-            {/* Directions button or unavailable message */}
+            {/* Directions button */}
             <View style={styles.directionsContainer}>
               {hasLocation ? (
                 <TouchableOpacity
@@ -145,13 +140,12 @@ export default function BlockDetailSheet({
                   onPress={handleGetDirections}
                   activeOpacity={0.8}
                 >
-                  <Text style={styles.directionsButtonText}>
-                    🗺️ Get Directions
-                  </Text>
+                  <Text style={styles.directionsButtonText}>Get Directions</Text>
+                  <Text style={styles.directionsSubtext}>Open in Google Maps</Text>
                 </TouchableOpacity>
               ) : (
                 <Text style={styles.locationUnavailable}>
-                  Location unavailable
+                  Location unavailable for this block
                 </Text>
               )}
             </View>
@@ -162,52 +156,43 @@ export default function BlockDetailSheet({
   );
 }
 
-/** Reusable detail row component */
-function DetailRow({
-  icon,
-  label,
-  value,
-}: {
-  icon: string;
-  label: string;
-  value: string;
-}) {
-  return (
-    <View style={styles.detailRow}>
-      <Text style={styles.detailIcon}>{icon}</Text>
-      <Text style={styles.detailLabel}>{label}</Text>
-      <Text style={styles.detailValue}>{value}</Text>
-    </View>
-  );
+/**
+ * Returns a label and color for a block's height tier.
+ */
+function getHeightTier(storeys: number): { label: string; color: string } {
+  if (storeys <= 10) return { label: 'Low-rise', color: '#4A90D9' };
+  if (storeys <= 20) return { label: 'Mid-rise', color: '#FF9500' };
+  if (storeys <= 30) return { label: 'High-rise', color: '#FF3B30' };
+  return { label: 'Very tall', color: '#8B0000' };
 }
 
 const styles = StyleSheet.create({
-  // ---------- Backdrop ----------
+  // Backdrop
   backdrop: {
     flex: 1,
     justifyContent: 'flex-end',
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    backgroundColor: 'rgba(0, 0, 0, 0.4)',
   },
   backdropTouch: {
     flex: 1,
   },
 
-  // ---------- Sheet ----------
+  // Sheet
   sheet: {
     maxHeight: MAX_SHEET_HEIGHT,
   },
   sheetContent: {
     backgroundColor: '#ffffff',
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    paddingHorizontal: 20,
-    paddingBottom: Platform.OS === 'ios' ? 34 : 24,
-    paddingTop: 8,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingHorizontal: 24,
+    paddingBottom: 24 + BOTTOM_INSET,
+    paddingTop: 12,
     ...Platform.select({
       ios: {
         shadowColor: '#000',
         shadowOffset: { width: 0, height: -4 },
-        shadowOpacity: 0.15,
+        shadowOpacity: 0.12,
         shadowRadius: 12,
       },
       android: {
@@ -216,48 +201,35 @@ const styles = StyleSheet.create({
     }),
   },
 
-  // ---------- Drag handle ----------
-  dragHandleArea: {
-    alignItems: 'center',
-    paddingVertical: 4,
-    marginBottom: 4,
-  },
+  // Drag handle
   dragHandle: {
     width: 36,
     height: 4,
     borderRadius: 2,
     backgroundColor: '#D1D5DB',
-  },
-
-  // ---------- Close button ----------
-  closeButton: {
-    position: 'absolute',
-    top: 8,
-    right: 16,
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#F3F4F6',
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 1,
-  },
-  closeButtonText: {
-    fontSize: 14,
-    color: '#6B7280',
-    fontWeight: '600',
-  },
-
-  // ---------- Header ----------
-  header: {
+    alignSelf: 'center',
     marginBottom: 16,
-    paddingRight: 32,
+  },
+
+  // Header
+  header: {
+    marginBottom: 12,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  headerLeft: {
+    flex: 1,
+    paddingRight: 12,
   },
   address: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: '700',
     color: '#111827',
-    lineHeight: 24,
+    lineHeight: 26,
+    letterSpacing: -0.3,
   },
   town: {
     fontSize: 14,
@@ -266,43 +238,76 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
 
-  // ---------- Details ----------
+  // Close button
+  closeButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#F3F4F6',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  closeButtonText: {
+    fontSize: 14,
+    color: '#6B7280',
+    fontWeight: '600',
+  },
+
+  // Height tier indicator
+  tierBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    marginBottom: 14,
+  },
+  tierDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: 'rgba(255,255,255,0.4)',
+    marginRight: 10,
+  },
+  tierLabel: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+
+  // Details
   details: {
-    marginBottom: 12,
+    marginBottom: 8,
   },
   detailRow: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 6,
-  },
-  detailIcon: {
-    fontSize: 16,
-    width: 28,
-    textAlign: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#F3F4F6',
   },
   detailLabel: {
     fontSize: 14,
-    fontWeight: '400',
     color: '#6B7280',
-    width: 72,
-    marginLeft: 4,
+    fontWeight: '400',
   },
   detailValue: {
     fontSize: 14,
     fontWeight: '600',
     color: '#111827',
-    flex: 1,
   },
 
-  // ---------- Badge ----------
+  // Badge
   badgeRow: {
-    flexDirection: 'row',
     marginBottom: 16,
+    marginTop: 4,
   },
   badge: {
+    alignSelf: 'flex-start',
     paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
   },
   badgeEstimated: {
     backgroundColor: '#FEF3C7',
@@ -321,26 +326,32 @@ const styles = StyleSheet.create({
     color: '#065F46',
   },
 
-  // ---------- Directions ----------
+  // Directions
   directionsContainer: {
     marginTop: 4,
   },
   directionsButton: {
     backgroundColor: '#2563EB',
-    borderRadius: 12,
-    paddingVertical: 14,
+    borderRadius: 14,
+    paddingVertical: 16,
     alignItems: 'center',
     justifyContent: 'center',
   },
   directionsButtonText: {
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '700',
     color: '#ffffff',
+  },
+  directionsSubtext: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.7)',
+    marginTop: 2,
   },
   locationUnavailable: {
     fontSize: 14,
     color: '#9CA3AF',
     textAlign: 'center',
-    paddingVertical: 14,
+    paddingVertical: 16,
+    fontStyle: 'italic',
   },
 });
