@@ -31,6 +31,20 @@ function getTier(storeys: number) {
   return { label: 'Sky-high', color: '#8B0000' };
 }
 
+function formatRelativeTime(iso: string): string {
+  const now = Date.now();
+  const then = new Date(iso).getTime();
+  const diffMs = now - then;
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return 'Just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(iso).toLocaleDateString();
+}
+
 export default function SearchScreen({
   visible,
   onClose,
@@ -47,6 +61,7 @@ export default function SearchScreen({
   const [searching, setSearching] = useState(false);
   const [starredBlocks, setStarredBlocks] = useState<Block[]>([]);
   const [showAllRecent, setShowAllRecent] = useState(false);
+  const [minFilter, setMinFilter] = useState(0);
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchRequestRef = useRef(0);
 
@@ -173,6 +188,7 @@ export default function SearchScreen({
   );
 
   const hasQuery = query.trim().length > 0;
+  const filteredResults = searchResults.filter(b => b.storeys >= minFilter);
 
   const totalClimbs = climbHistory.length;
   const totalFloors = climbHistory.reduce((sum, c) => sum + c.storeys, 0);
@@ -185,10 +201,10 @@ export default function SearchScreen({
       onRequestClose={onClose}
     >
       <View style={styles.overlay}>
-        {/* Backdrop - top 8%, tappable to dismiss */}
+        {/* Backdrop - top 15%, tappable to dismiss */}
         <TouchableOpacity style={styles.backdropArea} activeOpacity={1} onPress={onClose} />
 
-        {/* Sheet - bottom 92% with rounded top corners */}
+        {/* Sheet - bottom 85% with rounded top corners */}
         <View style={[styles.sheetContainer, isDark && { backgroundColor: '#111827' }]}>
           {/* Drag handle */}
           <TouchableOpacity style={styles.dragHandleRow} activeOpacity={0.7} onPress={onClose}>
@@ -211,6 +227,23 @@ export default function SearchScreen({
             </View>
           </View>
 
+          {/* Filter chips - only when searching */}
+          {hasQuery && (
+            <View style={styles.filterChips}>
+              {[{ label: '40+', min: 40 }, { label: '31+', min: 31 }, { label: '21+', min: 21 }, { label: 'All', min: 0 }].map(f => (
+                <TouchableOpacity
+                  key={f.label}
+                  style={[styles.filterChip, minFilter === f.min && styles.filterChipActive]}
+                  onPress={() => setMinFilter(f.min)}
+                >
+                  <Text style={[styles.filterChipText, minFilter === f.min && styles.filterChipTextActive]}>
+                    {f.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+
           {/* Content area */}
           <View style={styles.contentArea}>
             {hasQuery ? (
@@ -218,9 +251,9 @@ export default function SearchScreen({
                 <View style={styles.centerContent}>
                   <ActivityIndicator size="large" color="#2563EB" />
                 </View>
-              ) : searchResults.length > 0 ? (
+              ) : filteredResults.length > 0 ? (
                 <FlatList
-                  data={searchResults}
+                  data={filteredResults}
                   keyExtractor={(item) => item.block_id}
                   renderItem={({ item }) => renderBlockRow(item)}
                   ItemSeparatorComponent={() => <Separator isDark={isDark} />}
@@ -295,12 +328,34 @@ export default function SearchScreen({
                         </Text>
                       )}
                       {climbHistory.slice(0, 5).map((climb, i) => (
-                        <View key={i} style={styles.climbRow}>
-                          <Text style={[styles.climbAddr, isDark && { color: '#F9FAFB' }]} numberOfLines={1}>
-                            Blk {climb.blk_no} {climb.street}
-                          </Text>
+                        <TouchableOpacity
+                          key={i}
+                          style={styles.climbRow}
+                          activeOpacity={0.6}
+                          onPress={() => handleSelectBlock({
+                            block_id: climb.block_id,
+                            blk_no: climb.blk_no,
+                            street: climb.street,
+                            storeys: climb.storeys,
+                            town: null,
+                            est_height_m: 0,
+                            height_source: 'estimated',
+                            year_completed: null,
+                            total_dwelling_units: null,
+                            lat: null,
+                            lng: null,
+                          })}
+                        >
+                          <View style={styles.climbRowLeft}>
+                            <Text style={[styles.climbAddr, isDark && { color: '#F9FAFB' }]} numberOfLines={1}>
+                              Blk {climb.blk_no} {climb.street}
+                            </Text>
+                            <Text style={styles.climbDate}>
+                              {formatRelativeTime(climb.climbedAt)}
+                            </Text>
+                          </View>
                           <Text style={styles.climbFloors}>{climb.storeys} fl</Text>
-                        </View>
+                        </TouchableOpacity>
                       ))}
                     </>
                   ) : (
@@ -328,11 +383,11 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
   },
   backdropArea: {
-    height: '8%',
+    height: '15%',
     backgroundColor: 'transparent',
   },
   sheetContainer: {
-    height: '92%',
+    height: '85%',
     backgroundColor: '#FFFFFF',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
@@ -483,6 +538,39 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     color: '#10B981',
+  },
+  climbDate: {
+    fontSize: 11,
+    color: '#9CA3AF',
+    fontWeight: '500',
+    marginTop: 2,
+  },
+  climbRowLeft: {
+    flex: 1,
+    marginRight: 8,
+  },
+  filterChips: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    gap: 8,
+  },
+  filterChip: {
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    borderRadius: 16,
+    backgroundColor: '#F3F4F6',
+  },
+  filterChipActive: {
+    backgroundColor: '#8B0000',
+  },
+  filterChipText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#6B7280',
+  },
+  filterChipTextActive: {
+    color: '#FFFFFF',
   },
   seeMoreButton: {
     paddingVertical: 10,

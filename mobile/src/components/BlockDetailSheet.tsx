@@ -15,7 +15,17 @@ function getTier(storeys: number) {
   if (storeys <= 20) return { label: 'Mid-rise', color: '#FF9500' };
   if (storeys <= 30) return { label: 'High-rise', color: '#FF3B30' };
   if (storeys <= 39) return { label: 'Sky-high', color: '#8B0000' };
-  return { label: 'Super-tall', color: '#7C3AED', bg: '#F5F3FF' };
+  return { label: 'Super-tall', color: '#7C3AED' };
+}
+
+function formatDistance(km: number | null): string {
+  if (km == null) return '--';
+  return km < 1 ? `${Math.round(km * 1000)}m` : `${km.toFixed(1)}km`;
+}
+
+function formatYear(year: number | null): string {
+  if (year == null) return '--';
+  return String(year);
 }
 
 export default function BlockDetailSheet({ block, distanceKm, onClose, onLogClimb, tapY }: Props) {
@@ -23,7 +33,7 @@ export default function BlockDetailSheet({ block, distanceKm, onClose, onLogClim
 
   const tier = getTier(block.storeys);
 
-  const handlePress = () => {
+  const handleDirections = () => {
     if (block.lat != null && block.lng != null) {
       Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${block.lat},${block.lng}`);
     }
@@ -42,208 +52,114 @@ export default function BlockDetailSheet({ block, distanceKm, onClose, onLogClim
       <View style={[
         styles.cardWrapper,
         tapY != null && tapY > 0
-          ? { justifyContent: 'flex-start', paddingTop: Math.max(60, tapY - 180) }
-          : { justifyContent: 'center' },
+          ? { top: Math.max(80, tapY - 160) }
+          : { top: '30%' },
       ]}>
-      <TouchableOpacity style={styles.card} activeOpacity={0.9} onPress={handlePress}>
-        {/* Colored header strip */}
-        <View style={[styles.header, { backgroundColor: tier.color }]}>
-          <View style={styles.headerContent}>
-            <Text style={styles.headerTitle}>Blk {block.blk_no}</Text>
-            <Text style={styles.headerSubtitle} numberOfLines={1}>{block.street}</Text>
-            {block.town && <Text style={styles.headerTown}>{block.town}</Text>}
-          </View>
-          {/* Storey count badge */}
-          <View style={styles.storeyBadge}>
-            <Text style={styles.storeyValue}>{block.storeys}</Text>
-            <Text style={styles.storeyLabel}>floors</Text>
-          </View>
-        </View>
+        <View style={styles.card}>
+          {/* Colored header strip — 4px */}
+          <View style={[styles.headerStrip, { backgroundColor: tier.color }]} />
 
-        {/* Info row */}
-        <View style={styles.infoRow}>
-          <View style={styles.infoItem}>
-            <Text style={styles.infoValue}>{block.est_height_m}m</Text>
-            <Text style={styles.infoLabel}>Height</Text>
-          </View>
-          {distanceKm != null && (
-            <View style={styles.infoItem}>
-              <Text style={styles.infoValue}>
-                {distanceKm < 1 ? `${Math.round(distanceKm * 1000)}m` : `${distanceKm.toFixed(1)}km`}
-              </Text>
-              <Text style={styles.infoLabel}>Away</Text>
+          {/* Content */}
+          <View style={styles.content}>
+            {/* Row 1: Storeys (big) + address */}
+            <View style={styles.topRow}>
+              <View style={styles.storeyBadge}>
+                <Text style={[styles.storeyValue, { color: tier.color }]}>{block.storeys}</Text>
+                <Text style={styles.storeyLabel}>STOREYS</Text>
+              </View>
+              <View style={styles.addressBlock}>
+                <Text style={styles.address} numberOfLines={1}>Blk {block.blk_no}</Text>
+                <Text style={styles.street} numberOfLines={1}>{block.street}</Text>
+                {block.town && <Text style={styles.town} numberOfLines={1}>{block.town}</Text>}
+              </View>
             </View>
-          )}
-          <View style={styles.infoItem}>
-            <Text style={styles.infoValue}>{tier.label}</Text>
-            <Text style={styles.infoLabel}>Tier</Text>
+
+            {/* Row 2: Quick stats */}
+            <View style={styles.statsRow}>
+              <View style={styles.stat}>
+                <Text style={styles.statValue}>{block.est_height_m}m</Text>
+                <Text style={styles.statLabel}>Height</Text>
+              </View>
+              <View style={styles.stat}>
+                <Text style={styles.statValue}>{formatDistance(distanceKm)}</Text>
+                <Text style={styles.statLabel}>Away</Text>
+              </View>
+              <View style={styles.stat}>
+                <Text style={styles.statValue}>{formatYear(block.year_completed)}</Text>
+                <Text style={styles.statLabel}>Year</Text>
+              </View>
+            </View>
+
+            {/* Actions row */}
+            <View style={styles.actionsRow}>
+              <TouchableOpacity
+                style={styles.logBtn}
+                onPress={handleLogClimb}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.logBtnText}>Log Climb</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.dirBtn}
+                onPress={handleDirections}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.dirBtnText}>Directions</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
-
-        {/* Log a Climb button */}
-        <TouchableOpacity
-          style={[styles.logBtn, { backgroundColor: tier.color }]}
-          onPress={handleLogClimb}
-          activeOpacity={0.8}
-        >
-          <Text style={styles.logBtnText}>Log a Climb</Text>
-          <Text style={styles.logBtnSub}>+{block.storeys} floors</Text>
-        </TouchableOpacity>
-
-        {/* Directions hint */}
-        <View style={styles.hint}>
-          <Text style={styles.hintText}>Tap for directions</Text>
-          <Text style={styles.hintArrow}>›</Text>
-        </View>
-      </TouchableOpacity>
       </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  container: { ...StyleSheet.absoluteFill, zIndex: 20 },
+  backdrop: { ...StyleSheet.absoluteFill },
+  cardWrapper: {
     position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    zIndex: 20,
-  },
-  backdrop: {
-    ...StyleSheet.absoluteFill,
+    left: 24,
+    right: 24,
+    alignItems: 'center',
   },
   card: {
     width: '100%',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.92)',
+    borderRadius: 20,
     overflow: 'hidden',
     ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.2,
-        shadowRadius: 16,
-      },
-      android: {
-        elevation: 12,
-      },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.2, shadowRadius: 16 },
+      android: { elevation: 12 },
     }),
   },
-  cardWrapper: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 16,
-    paddingHorizontal: 16,
-  },
-  headerContent: {
-    flex: 1,
-    marginRight: 12,
-  },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: '#FFFFFF',
-  },
-  headerSubtitle: {
-    fontSize: 13,
-    color: 'rgba(255,255,255,0.85)',
-    marginTop: 2,
-  },
-  headerTown: {
-    fontSize: 11,
-    color: 'rgba(255,255,255,0.6)',
-    marginTop: 2,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
+  headerStrip: { height: 4, width: '100%' },
+  content: { paddingHorizontal: 16, paddingVertical: 14 },
+  topRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
   storeyBadge: {
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    borderRadius: 12,
-    paddingVertical: 8,
-    paddingHorizontal: 14,
+    backgroundColor: 'transparent',
+    marginRight: 12,
     alignItems: 'center',
-    minWidth: 56,
   },
-  storeyValue: {
-    fontSize: 28,
-    fontWeight: '800',
-    color: '#FFFFFF',
-    lineHeight: 30,
-  },
-  storeyLabel: {
-    fontSize: 10,
-    color: 'rgba(255,255,255,0.7)',
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  infoRow: {
-    flexDirection: 'row',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: '#F3F4F6',
-  },
-  infoItem: {
-    marginRight: 28,
-  },
-  infoValue: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#111827',
-  },
-  infoLabel: {
-    fontSize: 11,
-    color: '#9CA3AF',
-    fontWeight: '500',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginTop: 1,
-  },
-  hint: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 10,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: '#F3F4F6',
-  },
-  hintText: {
-    fontSize: 12,
-    color: '#9CA3AF',
-    fontWeight: '500',
-    marginRight: 4,
-  },
+  storeyValue: { fontSize: 34, fontWeight: '800', lineHeight: 36 },
+  storeyLabel: { fontSize: 10, color: '#9CA3AF', marginTop: 1, letterSpacing: 0.5 },
+  addressBlock: { flex: 1 },
+  address: { fontSize: 15, fontWeight: '700', color: '#111827' },
+  street: { fontSize: 13, color: '#6B7280', marginTop: 1 },
+  town: { fontSize: 12, color: '#9CA3AF', marginTop: 1 },
+  statsRow: { flexDirection: 'row', marginBottom: 12 },
+  stat: { marginRight: 20 },
+  statValue: { fontSize: 14, fontWeight: '700', color: '#111827' },
+  statLabel: { fontSize: 10, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 1 },
+  actionsRow: { flexDirection: 'row', gap: 8 },
   logBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginHorizontal: 16,
-    marginTop: 10,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 12,
+    flex: 1, backgroundColor: '#10B981', borderRadius: 12,
+    paddingVertical: 10, alignItems: 'center',
   },
-  logBtnText: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#FFFFFF',
+  logBtnText: { fontSize: 13, fontWeight: '700', color: '#FFF' },
+  dirBtn: {
+    flex: 1, backgroundColor: '#2563EB', borderRadius: 12,
+    paddingVertical: 10, alignItems: 'center',
   },
-  logBtnSub: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: 'rgba(255,255,255,0.85)',
-  },
-  hintArrow: {
-    fontSize: 16,
-    color: '#9CA3AF',
-    fontWeight: '600',
-  },
+  dirBtnText: { fontSize: 13, fontWeight: '700', color: '#FFF' },
 });

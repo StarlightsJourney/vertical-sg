@@ -69,7 +69,9 @@ export default function MapScreen() {
   const [selectedBlockDist, setSelectedBlockDist] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [tallOnly, setTallOnly] = useState(true);
+  const [minStoreys, setMinStoreys] = useState(31);
+  const [pinScale, setPinScale] = useState(1.0);
+  const [pulseOn, setPulseOn] = useState(true);
   const [searchVisible, setSearchVisible] = useState(false);
   const [recentBlocks, setRecentBlocks] = useState<Block[]>([]);
   const [starredIds, setStarredIds] = useState<Set<string>>(new Set());
@@ -91,7 +93,7 @@ export default function MapScreen() {
     type: 'FeatureCollection',
     features: blocks
       .filter((b) => b.lat != null && b.lng != null)
-      .filter((b) => !tallOnly || (b.storeys != null && b.storeys >= 21))
+      .filter((b) => minStoreys === 0 || (b.storeys != null && b.storeys >= minStoreys))
       .map((b) => ({
         type: 'Feature',
         geometry: {
@@ -107,9 +109,10 @@ export default function MapScreen() {
           street: b.street,
           year_completed: b.year_completed,
           total_dwelling_units: b.total_dwelling_units,
+          climbed: climbCounts.has(b.block_id),
         },
       })),
-  }), [blocks, tallOnly]);
+  }), [blocks, minStoreys, climbCounts]);
 
   const userLocationGeojson = useMemo((): GeoJSON.FeatureCollection | null => {
     if (location.loading || !location.latitude) return null;
@@ -122,26 +125,6 @@ export default function MapScreen() {
       }],
     };
   }, [location.latitude, location.longitude, location.loading]);
-
-  const climbedGeojson = useMemo((): GeoJSON.FeatureCollection | null => {
-    if (climbCounts.size === 0) return null;
-    const climbed = blocks.filter((b) => b.lat != null && b.lng != null && climbCounts.has(b.block_id));
-    if (climbed.length === 0) return null;
-    return {
-      type: 'FeatureCollection',
-      features: climbed.map((b) => ({
-        type: 'Feature',
-        geometry: {
-          type: 'Point',
-          coordinates: [b.lng!, b.lat!] as [number, number],
-        },
-        properties: {
-          block_id: b.block_id,
-          count: climbCounts.get(b.block_id),
-        },
-      })),
-    };
-  }, [blocks, climbCounts]);
 
   // Fetch blocks within visible map bounds
   const fetchBounds = useCallback(
@@ -185,6 +168,11 @@ export default function MapScreen() {
       }
       if (typeof zoom === 'number') {
         zoomRef.current = zoom;
+        // Update minStoreys and pinScale based on zoom level
+        if (zoom < 12) { setMinStoreys(999); setPinScale(0.5); }
+        else if (zoom < 13) { setMinStoreys(31); setPinScale(0.7); }
+        else if (zoom < 14) { setMinStoreys(21); setPinScale(0.85); }
+        else { setMinStoreys(0); setPinScale(1.0); }
       }
 
       // Debounce: wait 300ms after last camera movement
@@ -263,7 +251,6 @@ export default function MapScreen() {
       });
       // Refresh climb history
       storage.getClimbHistory().then(setClimbHistory);
-      setSelectedBlock(null); // dismiss the card after logging
     });
   }, []);
 
@@ -335,6 +322,14 @@ export default function MapScreen() {
     return () => clearInterval(timer);
   }, []);
 
+  // Pulse timer for user location ring
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setPulseOn((prev) => !prev);
+    }, 1500);
+    return () => clearInterval(timer);
+  }, []);
+
   return (
     <View style={styles.container}>
       <MapView
@@ -362,9 +357,9 @@ export default function MapScreen() {
             {/* Outer pulsing ring */}
             <Layer id="user-location-ring" source="user-location" type="circle"
               paint={{
-                'circle-radius': 18,
+                'circle-radius': pulseOn ? 18 : 22,
                 'circle-color': '#14B8A6',
-                'circle-opacity': 0.25,
+                'circle-opacity': pulseOn ? 0.3 : 0.1,
                 'circle-stroke-width': 2,
                 'circle-stroke-color': '#14B8A6',
                 'circle-stroke-opacity': 0.5,
@@ -408,35 +403,32 @@ export default function MapScreen() {
               'circle-radius': [
                 'step',
                 ['get', 'storeys'],
-                6,   // 1-10
+                Math.round(4 * pinScale),   // 1-10
                 11,
-                8,   // 11-20
+                Math.round(6 * pinScale),   // 11-20
                 21,
-                10,  // 21-30
+                Math.round(9 * pinScale),   // 21-30
                 31,
-                13,  // 31-39
+                Math.round(12 * pinScale),  // 31-39
                 40,
-                16,  // 40+
+                Math.round(15 * pinScale),  // 40+
               ],
-              'circle-stroke-width': 1.5,
-              'circle-stroke-color': '#ffffff',
+              'circle-stroke-width': [
+                'case',
+                ['get', 'climbed'],
+                3,
+                1.5,
+              ],
+              'circle-stroke-color': [
+                'case',
+                ['get', 'climbed'],
+                '#10B981',
+                '#ffffff',
+              ],
               'circle-opacity': 0.85,
             }}
           />
         </GeoJSONSource>
-
-        {climbedGeojson && (
-          <GeoJSONSource id="climbed" data={climbedGeojson}>
-            <Layer id="climbed-badge" source="climbed" type="circle"
-              paint={{
-                'circle-radius': 6,
-                'circle-color': '#10B981',
-                'circle-stroke-width': 2,
-                'circle-stroke-color': '#FFFFFF',
-              }}
-            />
-          </GeoJSONSource>
-        )}
       </MapView>
 
       {/* Error banner */}
@@ -453,6 +445,12 @@ export default function MapScreen() {
         </View>
       )}
 
+      {/* Zoom prompt when zoomed out too far */}
+      {minStoreys >= 999 && !loading && (
+        <View style={styles.zoomPrompt}>
+          <Text style={styles.zoomPromptText}>Zoom in to see blocks</Text>
+        </View>
+      )}
 
       {/* Height legend */}
       <View style={[styles.legend, { backgroundColor: isDark ? 'rgba(30,30,30,0.88)' : 'rgba(255,255,255,0.88)' }]}>
@@ -463,17 +461,6 @@ export default function MapScreen() {
           </View>
         ))}
       </View>
-
-      {/* Filter toggle */}
-      <TouchableOpacity
-        style={[styles.filterToggle, { backgroundColor: tallOnly ? '#8B0000' : (isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.6)') }]}
-        onPress={() => setTallOnly(!tallOnly)}
-        activeOpacity={0.8}
-      >
-        <Text style={styles.filterToggleText}>
-          {tallOnly ? '21+ floors' : 'All blocks'}
-        </Text>
-      </TouchableOpacity>
 
       {/* Bottom bar */}
       <View style={[styles.bottomBar, { backgroundColor: isDark ? 'rgba(30,30,30,0.95)' : 'rgba(255,255,255,0.95)' }]}>
@@ -561,24 +548,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     zIndex: 10,
   },
-  filterToggle: {
+  zoomPrompt: {
     position: 'absolute',
-    top: 52,
-    left: 16,
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 20,
+    top: '50%',
+    alignSelf: 'center',
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 24,
     zIndex: 10,
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 4,
   },
-  filterToggleText: {
+  zoomPromptText: {
     color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '700',
+    fontSize: 16,
+    fontWeight: '600',
   },
 
   // Bottom bar
