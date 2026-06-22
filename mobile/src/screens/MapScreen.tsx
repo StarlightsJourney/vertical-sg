@@ -23,7 +23,7 @@ import { fetchBlocksInBounds } from '../services/blocks';
 import type { Block, BoundsRect, ClimbLog } from '../types';
 import BlockDetailSheet from '../components/BlockDetailSheet';
 import SearchScreen from '../components/SearchScreen';
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import storage from '../utils/storage';
 
 // Light (default) and dark map styles for day/night auto-switching
