@@ -12,7 +12,6 @@ import {
   Map as MapView,
   Camera,
   GeoJSONSource,
-  Images,
   Layer,
   type MapRef,
   type CameraRef,
@@ -408,8 +407,30 @@ export default function MapScreen() {
           duration={500}
         />
 
-        {/* Register custom water droplet icon */}
-        <Images images={{ 'water-drop': require('../../assets/water-drop.png') }} />
+        {/* Water cooler markers — ★ star symbol, tinted by water_type */}
+        <GeoJSONSource id="water-coolers" data={WATER_COOLER_GEOJSON}>
+          <Layer
+            id="wc-star"
+            source="water-coolers"
+            filter={['has', 'water_type']}
+            type="symbol"
+            layout={{
+              'text-field': '★',
+              'text-size': 20,
+              'text-allow-overlap': true,
+              'text-ignore-placement': true,
+            }}
+            paint={{
+              'text-color': ['match', ['get', 'water_type'],
+                'verified', '#06B6D4',
+                'unverified', '#EC4899',
+                'ticketed', '#F59E0B',
+                '#06B6D4'],
+              'text-halo-color': '#FFFFFF',
+              'text-halo-width': 2,
+            }}
+          />
+        </GeoJSONSource>
 
         {userLocationGeojson && (
           <GeoJSONSource id="user-location" data={userLocationGeojson}>
@@ -580,23 +601,30 @@ export default function MapScreen() {
         tapY={tapY}
       />
 
-      {/* Water cooler info card — positioned near tap */}
+      {/* Water cooler info card — tiny, near tap */}
       {selectedWaterCooler && (
-        <View style={[styles.container, { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 20 }]}>
+        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 20 }}>
           <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setSelectedWaterCooler(null)} activeOpacity={1} />
-          <View style={[styles.wcCard, { top: Math.max(60, (tapY || 300) - 100), left: 24, right: 24, position: 'absolute' }]}>
-            <View style={styles.wcCardContent}>
-              <Text style={styles.wcIcon}>💧</Text>
-              <Text style={styles.wcTitle}>Water Cooler</Text>
-              <Text style={[styles.wcStatus, {
-                color: selectedWaterCooler.type === 'verified' ? '#06B6D4' :
-                       selectedWaterCooler.type === 'unverified' ? '#EC4899' : '#F59E0B'
-              }]}>
-                {selectedWaterCooler.type === 'verified' ? 'Verified' :
-                 selectedWaterCooler.type === 'unverified' ? 'Unverified' : 'Ticketed'}
-              </Text>
-              {selectedWaterCooler.name && <Text style={styles.wcName}>{selectedWaterCooler.name}</Text>}
-            </View>
+          <View style={{
+            position: 'absolute',
+            top: Math.max(60, (tapY || 300) - 80),
+            left: '50%',
+            transform: [{ translateX: -100 }],
+            width: 200,
+            backgroundColor: 'rgba(255,255,255,0.92)',
+            borderRadius: 12,
+            padding: 10,
+            alignItems: 'center',
+            elevation: 6,
+          }}>
+            <Text style={{ fontSize: 11, fontWeight: '600', color:
+              selectedWaterCooler.type === 'verified' ? '#06B6D4' :
+              selectedWaterCooler.type === 'unverified' ? '#EC4899' : '#F59E0B'
+            }}>
+              {selectedWaterCooler.type === 'verified' ? '✓ Verified' :
+               selectedWaterCooler.type === 'unverified' ? '? Unverified' : 'Ticketed'}
+            </Text>
+            <Text style={{ fontSize: 13, fontWeight: '700', color: '#111827', marginTop: 2 }}>Water Cooler</Text>
           </View>
         </View>
       )}
@@ -844,23 +872,4 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontWeight: '500',
   },
-
-  // Water cooler info card
-  wcCard: {
-    backgroundColor: 'rgba(255,255,255,0.88)',
-    borderRadius: 16,
-    elevation: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
-  },
-  wcCardContent: {
-    padding: 14,
-    alignItems: 'center',
-  },
-  wcIcon: { fontSize: 28, marginBottom: 6 },
-  wcTitle: { fontSize: 15, fontWeight: '700', color: '#111827' },
-  wcStatus: { fontSize: 13, fontWeight: '600', marginTop: 2 },
-  wcName: { fontSize: 11, color: '#6B7280', marginTop: 4, textAlign: 'center' },
 });

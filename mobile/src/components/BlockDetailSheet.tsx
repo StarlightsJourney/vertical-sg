@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Platform, Image } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import * as Linking from 'expo-linking';
 import type { Block } from '../types';
 
@@ -29,7 +29,6 @@ export default function BlockDetailSheet({ block, distanceKm, onClose, onLogClim
 
   const tier = getTier(block.storeys);
   const [climbQty, setClimbQty] = useState(1);
-  const [imgFailed, setImgFailed] = useState(false);
 
   const handleDirections = () => {
     if (block.lat != null && block.lng != null) {
@@ -55,30 +54,22 @@ export default function BlockDetailSheet({ block, distanceKm, onClose, onLogClim
           : { top: '30%' },
       ]}>
         <View style={styles.card}>
-          {/* Color banner — clean, with optional Street View image fallback */}
-          <View style={[styles.thumbBanner, { backgroundColor: tier.color }]}>
-            {!imgFailed && block.lat != null && (
-              <Image
-                source={{ uri: `https://maps.googleapis.com/maps/api/streetview?size=400x120&location=${block.lat},${block.lng}&fov=90` }}
-                style={StyleSheet.absoluteFill}
-                resizeMode="cover"
-                onError={() => setImgFailed(true)}
-              />
-            )}
-          </View>
-
-          {/* Content */}
           <View style={styles.content}>
-            {/* Row 1: Storeys (big) + address */}
+            {/* Top row: storey count + address + directions arrow */}
             <View style={styles.topRow}>
               <View style={styles.storeyBadge}>
                 <Text style={[styles.storeyValue, { color: tier.color }]}>{block.storeys}</Text>
-                <Text style={styles.storeyLabel}>STOREYS</Text>
+                <Text style={styles.storeyLabel}>floors</Text>
               </View>
               <View style={styles.addressBlock}>
-                <Text style={styles.address} numberOfLines={1}>Blk {block.blk_no}</Text>
-                <Text style={styles.street} numberOfLines={1}>{block.street}</Text>
-                {block.town && <Text style={styles.town} numberOfLines={1}>{block.town}</Text>}
+                <View style={styles.addressRow}>
+                  <Text style={styles.address}>Blk {block.blk_no}</Text>
+                  <TouchableOpacity onPress={handleDirections} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                    <Text style={styles.dirArrow}>↗</Text>
+                  </TouchableOpacity>
+                </View>
+                <Text style={styles.street}>{block.street}</Text>
+                {block.town && <Text style={styles.town}>{block.town}</Text>}
               </View>
             </View>
 
@@ -106,23 +97,14 @@ export default function BlockDetailSheet({ block, distanceKm, onClose, onLogClim
               <Text style={styles.qtyLabel}>climbs</Text>
             </View>
 
-            {/* Actions row */}
-            <View style={styles.actionsRow}>
-              <TouchableOpacity
-                style={styles.logBtn}
-                onPress={handleLogClimb}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.logBtnText}>Log Climb</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.dirBtn}
-                onPress={handleDirections}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.dirBtnText}>Directions</Text>
-              </TouchableOpacity>
-            </View>
+            {/* Main action: Log a Climb */}
+            <TouchableOpacity
+              style={styles.logBtn}
+              onPress={handleLogClimb}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.logBtnText}>Log Climb</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </View>
@@ -150,21 +132,6 @@ const styles = StyleSheet.create({
       android: { elevation: 12 },
     }),
   },
-  headerStrip: { height: 4, width: '100%' },
-  headerStripOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 4,
-    opacity: 0.7,
-  },
-  thumbBanner: {
-    width: '100%',
-    height: 60,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-  },
   content: { padding: 14 },
   topRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
   storeyBadge: {
@@ -175,6 +142,8 @@ const styles = StyleSheet.create({
   storeyValue: { fontSize: 28, fontWeight: '800', lineHeight: 30 },
   storeyLabel: { fontSize: 10, color: '#9CA3AF', marginTop: 1, letterSpacing: 0.5 },
   addressBlock: { flex: 1 },
+  addressRow: { flexDirection: 'row', alignItems: 'center' },
+  dirArrow: { fontSize: 18, color: '#2563EB', marginLeft: 6 },
   address: { fontSize: 14, fontWeight: '700', color: '#111827' },
   street: { fontSize: 12, color: '#6B7280', marginTop: 1 },
   town: { fontSize: 12, color: '#9CA3AF', marginTop: 1 },
@@ -214,15 +183,9 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     marginLeft: 2,
   },
-  actionsRow: { flexDirection: 'row', gap: 6 },
   logBtn: {
-    flex: 1, backgroundColor: '#10B981', borderRadius: 12,
-    paddingVertical: 8, alignItems: 'center',
+    backgroundColor: '#10B981', borderRadius: 12,
+    paddingVertical: 10, alignItems: 'center', marginTop: 4,
   },
-  logBtnText: { fontSize: 12, fontWeight: '700', color: '#FFF' },
-  dirBtn: {
-    flex: 1, backgroundColor: '#2563EB', borderRadius: 12,
-    paddingVertical: 8, alignItems: 'center',
-  },
-  dirBtnText: { fontSize: 12, fontWeight: '700', color: '#FFF' },
+  logBtnText: { fontSize: 14, fontWeight: '700', color: '#FFF' },
 });
