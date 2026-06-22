@@ -63,13 +63,48 @@ FLOOR_HEIGHT_M = 2.8
 ONEMAP_DELAY_S = 0.25  # 250 ms between OneMap calls (well under 300/min limit)
 BATCH_SIZE = 500  # upsert batch size
 
-# Street abbreviation map (applied BEFORE geocoding/joining)
+# Street abbreviation map (applied BEFORE geocoding/joining).
+# OneMap uses full spellings — we expand SG abbreviations to full names.
+# Order matters: longer patterns first to avoid partial matches (e.g. C'WEALTH
+# before STH, ST. before ST).
 STREET_ABBREVIATIONS: dict[str, str] = {
-    r"\bST\.\b": "SAINT",
-    r"\bBT\b": "BUKIT",
-    r"\bS'GOON\b": "SERANGOON",
-    r"\bJLN\b": "JALAN",
-    # Extend this list as join failures reveal more patterns
+    # Contractions
+    r"\bS'GOON\b":     "SERANGOON",
+    r"\bC'WEALTH\b":   "COMMONWEALTH",
+    r"\bT'PANGS\b":    "TAMPINES",
+    r"\bBT\s+?MERAH\b": "BUKIT MERAH",  # "BT MERAH" is common
+    r"\bBT\s+?BATOK\b": "BUKIT BATOK",
+    r"\bBT\s+?PANJANG\b": "BUKIT PANJANG",
+    r"\bBT\s+?TIMAH\b": "BUKIT TIMAH",
+    # Cardinals / prefixes
+    r"\bSTH\b":         "SOUTH",
+    r"\bNTH\b":         "NORTH",
+    r"\bUPP\b":         "UPPER",
+    r"\bLOW\b":         "LOWER",
+    r"\bCTRL\b":        "CENTRAL",
+    # SAINT (must be before ST→STREET — SG uses "ST." for Saint streets)
+    r"\bST\.\s?":       "SAINT ",
+    # Street type suffixes
+    r"\bST\b":          "STREET",
+    r"\bAVE\b":         "AVENUE",
+    r"\bRD\b":          "ROAD",
+    r"\bDR\b":          "DRIVE",
+    r"\bCRES\b":        "CRESCENT",
+    r"\bLN\b":          "LANE",
+    r"\bCL\b":          "CLOSE",
+    r"\bPL\b":          "PLACE",
+    r"\bGDNS\b":        "GARDENS",
+    r"\bHTS\b":         "HEIGHTS",
+    r"\bPK\b":          "PARK",
+    r"\bTER\b":         "TERRACE",
+    r"\bWK\b":          "WALK",
+    # Other common abbreviations
+    r"\bJLN\b":         "JALAN",
+    r"\bKG\b":          "KAMPONG",
+    r"\bTG\b":          "TANJONG",
+    r"\bBT\b":          "BUKIT",
+    r"\bCTR\b":         "CENTRE",
+    r"\bTWN\b":         "TOWN",
 }
 
 # ---------------------------------------------------------------------------
@@ -501,7 +536,7 @@ def main() -> None:
     matched = 0
 
     for idx, r in enumerate(ungeocoded):
-        address = f"{r['_std_blk']} {r['_std_street']}, Singapore"
+        address = f"{r['_std_blk']} {r['_std_street']}"
         result = geocode_onemap_search(address, token)
         if result:
             r["_lat"], r["_lng"] = result
