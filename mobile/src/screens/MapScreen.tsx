@@ -20,10 +20,10 @@ import { fetchNearbyBlocks, fetchBlocksInBounds } from '../services/blocks';
 import type { Block, SortMode, BoundsRect } from '../types';
 import BlockDetailSheet from '../components/BlockDetailSheet';
 
-// OpenFreeMap Liberty — full OSM map with land, water, roads, buildings.
-// Font glyph errors in logs are cosmetic (no street names) — map surfaces
-// and block pins both render correctly.
-const MAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
+// MapLibre demotiles — the only free style that doesn't hide our pins.
+// For a proper map: sign up at map-tiler.com (free tier, no card) →
+// create a style → paste your style URL here. Takes 2 minutes.
+const MAP_STYLE = 'https://demotiles.maplibre.org/style.json';
 const RADIUS_PRESETS = [1000, 3000, 5000];
 
 // Default Singapore bounds for initial fetch before map camera settles
@@ -126,7 +126,7 @@ export default function MapScreen() {
 
   // Debounced handler for map region changes: track bounds/zoom, fetch blocks
   const handleRegionDidChange = useCallback(
-    (event: { nativeEvent: ViewStateChangeEvent }) => {
+    (event: any) => {
       const ev = event.nativeEvent ?? event;
       const boundsArr = ev.bounds;
       const zoom = ev.zoom;
