@@ -78,7 +78,7 @@ const FILTER_OPTIONS = [
   { value: 0, label: 'All' },
 ] as const;
 
-const FILTER_COLORS: Record<number, string> = { 21: '#FF9500', 31: '#FF3B30', 40: '#7C3AED', 0: '#6B7280' };
+const FILTER_COLORS: Record<number, string> = { 21: '#FF3B30', 31: '#8B0000', 40: '#7C3AED', 0: '#6B7280' };
 
 export default function MapScreen() {
   const location = useLocation();
@@ -475,7 +475,7 @@ export default function MapScreen() {
           />
         </GeoJSONSource>
 
-        {/* Water cooler icon markers — diamond symbols */}
+        {/* Water cooler markers — bullet characters for reliable MapLibre rendering */}
         <GeoJSONSource id="water-coolers" data={WATER_COOLER_GEOJSON}>
           <Layer
             id="wc-icons"
@@ -483,8 +483,8 @@ export default function MapScreen() {
             type="symbol"
             filter={['has', 'water_type']}
             layout={{
-              'text-field': '◆',
-              'text-size': 16,
+              'text-field': '●',
+              'text-size': 24,
               'text-allow-overlap': true,
               'text-ignore-placement': true,
             }}
@@ -495,7 +495,7 @@ export default function MapScreen() {
                 'ticketed', '#F59E0B',
                 '#06B6D4'],
               'text-halo-color': '#FFFFFF',
-              'text-halo-width': 2,
+              'text-halo-width': 3,
             }}
           />
         </GeoJSONSource>
@@ -570,7 +570,7 @@ export default function MapScreen() {
           }}
           activeOpacity={0.7}
         >
-          <Text style={styles.locIcon}>⊕</Text>
+          <Text style={styles.locIcon}>◎</Text>
         </TouchableOpacity>
       </View>
 
@@ -616,32 +616,43 @@ export default function MapScreen() {
         climbHistory={climbHistory}
       />
 
-      {/* Alert/Report modal */}
+      {/* Alert/Report modal — centered icon grid */}
       <Modal visible={alertVisible} transparent animationType="fade" onRequestClose={() => setAlertVisible(false)}>
-        <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setAlertVisible(false)} activeOpacity={1}>
-          <View style={styles.alertModal}>
-            <Text style={[styles.alertTitle, { color: isDark ? '#F9FAFB' : '#111827' }]}>Report nearby...</Text>
-            {['Water Cooler', 'Toilet', 'Food / Shop', 'Hazard / Alert', 'Other'].map((item) => (
-              <TouchableOpacity
-                key={item}
-                style={[styles.alertOption, { borderBottomColor: isDark ? '#374151' : '#F3F4F6' }]}
-                onPress={async () => {
-                  const existing = await storage.getItem('reports');
-                  const existingReports: Array<{ type: string; lat: number; lng: number; at: string }> = existing ? JSON.parse(existing) : [];
-                  existingReports.push({
-                    type: item,
-                    lat: location.latitude ?? 0,
-                    lng: location.longitude ?? 0,
-                    at: new Date().toISOString(),
-                  });
-                  await storage.setItem('reports', JSON.stringify(existingReports));
-                  setAlertVisible(false);
-                  Alert.alert('Reported', `"${item}" logged at your location.`);
-                }}
-              >
-                <Text style={[styles.alertOptionText, { color: isDark ? '#D1D5DB' : '#374151' }]}>{item}</Text>
-              </TouchableOpacity>
-            ))}
+        <TouchableOpacity style={styles.alertBackdrop} onPress={() => setAlertVisible(false)} activeOpacity={1}>
+          <View style={styles.alertGrid}>
+            <Text style={styles.alertGridTitle}>Report nearby...</Text>
+            <View style={styles.alertGridItems}>
+              {[
+                { icon: '💧', label: 'Water Cooler' },
+                { icon: '🚽', label: 'Toilet' },
+                { icon: '🛒', label: 'Food / Shop' },
+                { icon: '⚠️', label: 'Hazard' },
+                { icon: '🚧', label: 'Closed Access' },
+                { icon: '📌', label: 'Other' },
+              ].map((item) => (
+                <TouchableOpacity
+                  key={item.label}
+                  style={styles.alertGridItem}
+                  onPress={async () => {
+                    const existing = await storage.getItem('reports');
+                    const existingReports: Array<{ type: string; lat: number; lng: number; at: string; status: string }> = existing ? JSON.parse(existing) : [];
+                    existingReports.push({
+                      type: item.label,
+                      lat: location.latitude ?? 0,
+                      lng: location.longitude ?? 0,
+                      at: new Date().toISOString(),
+                      status: 'pending',
+                    });
+                    await storage.setItem('reports', JSON.stringify(existingReports));
+                    setAlertVisible(false);
+                    Alert.alert('Reported', `${item.label} reported at this location. Pending verification.`);
+                  }}
+                >
+                  <Text style={styles.alertGridIcon}>{item.icon}</Text>
+                  <Text style={styles.alertGridLabel}>{item.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
           </View>
         </TouchableOpacity>
       </Modal>
@@ -803,40 +814,52 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 
-  // Alert modal
-  alertModal: {
-    position: 'absolute',
-    bottom: 100,
-    right: 16,
+  // Alert/report modal — centered icon grid
+  alertBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  alertGrid: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    paddingVertical: 12,
-    paddingHorizontal: 4,
-    minWidth: 180,
+    borderRadius: 20,
+    padding: 24,
+    width: '80%',
+    maxWidth: 320,
     elevation: 8,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.2,
     shadowRadius: 12,
   },
-  alertTitle: {
-    fontSize: 14,
+  alertGridTitle: {
+    fontSize: 18,
     fontWeight: '700',
     color: '#111827',
-    paddingHorizontal: 12,
-    paddingBottom: 8,
-    marginBottom: 4,
+    textAlign: 'center',
+    marginBottom: 20,
   },
-  alertOption: {
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#F3F4F6',
+  alertGridItems: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 16,
   },
-  alertOptionText: {
-    fontSize: 14,
+  alertGridItem: {
+    width: 80,
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  alertGridIcon: {
+    fontSize: 32,
+    marginBottom: 6,
+  },
+  alertGridLabel: {
+    fontSize: 11,
+    color: '#6B7280',
+    textAlign: 'center',
     fontWeight: '500',
-    color: '#374151',
   },
 
   // Water cooler info card
