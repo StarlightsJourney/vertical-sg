@@ -6,7 +6,7 @@ import {
   ActivityIndicator,
   TouchableOpacity,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import storage from '../utils/storage';
 import {
   Map,
   Camera,
@@ -221,7 +221,7 @@ export default function MapScreen() {
       } else {
         next.add(block.block_id);
       }
-      AsyncStorage.setItem('starred_blocks', JSON.stringify([...next]));
+      storage.setItem('starred_blocks', JSON.stringify([...next]));
       return next;
     });
   }, []);
@@ -286,7 +286,7 @@ export default function MapScreen() {
 
   // Load starred blocks from AsyncStorage on mount
   useEffect(() => {
-    AsyncStorage.getItem('starred_blocks').then((val) => {
+    storage.getItem('starred_blocks').then((val) => {
       if (val) {
         try {
           const ids: string[] = JSON.parse(val);
