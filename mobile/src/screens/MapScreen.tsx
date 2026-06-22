@@ -378,51 +378,55 @@ export default function MapScreen() {
         </View>
       )}
 
-      {/* My Location button */}
-      <TouchableOpacity
-        style={[styles.myLocationBtn, { backgroundColor: isDark ? '#333' : '#FFFFFF' }]}
-        onPress={() => {
-          cameraRef.current?.easeTo({
-            center: cameraCenter,
-            zoom: 15,
-            duration: 500,
-          });
-        }}
-        activeOpacity={0.8}
-      >
-        <Text style={[styles.myLocationBtnText, { color: isDark ? '#60A5FA' : '#2563EB' }]}>◎</Text>
-      </TouchableOpacity>
-
-      {/* Search button */}
-      <TouchableOpacity
-        style={[styles.searchBtn, { backgroundColor: isDark ? '#333' : '#FFFFFF' }]}
-        onPress={() => setSearchVisible(true)}
-        activeOpacity={0.8}
-      >
-        <Text style={styles.searchBtnText}>🔍</Text>
-      </TouchableOpacity>
 
       {/* Height legend */}
-      <View style={[styles.legend, { backgroundColor: isDark ? 'rgba(30,30,30,0.92)' : 'rgba(255,255,255,0.92)' }]}>
-        <Text style={[styles.legendTitle, { color: isDark ? '#9CA3AF' : '#6B7280' }]}>Height</Text>
+      <View style={[styles.legend, { backgroundColor: isDark ? 'rgba(30,30,30,0.88)' : 'rgba(255,255,255,0.88)' }]}>
         {HEIGHT_TIERS.map((t) => (
-          <View key={t.label} style={styles.legendRow}>
+          <View key={t.label} style={styles.legendItem}>
             <View style={[styles.legendDot, { backgroundColor: t.color }]} />
-            <Text style={[styles.legendLabel, { color: isDark ? '#E5E7EB' : '#374151' }]}>{t.label} floors</Text>
+            <Text style={[styles.legendLabel, { color: isDark ? '#D1D5DB' : '#374151' }]}>{t.label}</Text>
           </View>
         ))}
       </View>
 
-      {/* 21+ floors toggle */}
+      {/* Filter toggle */}
       <TouchableOpacity
-        style={[styles.filterToggle, { backgroundColor: tallOnly ? '#8B0000' : (isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.7)') }]}
+        style={[styles.filterToggle, { backgroundColor: tallOnly ? '#8B0000' : (isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.6)') }]}
         onPress={() => setTallOnly(!tallOnly)}
         activeOpacity={0.8}
       >
         <Text style={styles.filterToggleText}>
-          {tallOnly ? '21+ only' : 'All blocks'}
+          {tallOnly ? '21+ floors' : 'All blocks'}
         </Text>
       </TouchableOpacity>
+
+      {/* Bottom bar */}
+      <View style={[styles.bottomBar, { backgroundColor: isDark ? 'rgba(30,30,30,0.95)' : 'rgba(255,255,255,0.95)' }]}>
+        {/* Search input — tapping opens SearchScreen */}
+        <TouchableOpacity
+          style={[styles.searchInput, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : '#F3F4F6' }]}
+          onPress={() => setSearchVisible(true)}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.searchIcon}>⌕</Text>
+          <Text style={styles.searchPlaceholder}>Search blocks...</Text>
+        </TouchableOpacity>
+
+        {/* Location button */}
+        <TouchableOpacity
+          style={styles.locBtn}
+          onPress={() => {
+            cameraRef.current?.easeTo({
+              center: cameraCenter,
+              zoom: 15,
+              duration: 500,
+            });
+          }}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.locIcon}>⊕</Text>
+        </TouchableOpacity>
+      </View>
 
       {/* Block Detail Sheet overlay */}
       <BlockDetailSheet
@@ -480,12 +484,17 @@ const styles = StyleSheet.create({
   },
   filterToggle: {
     position: 'absolute',
-    top: 214,
-    right: 16,
+    top: 12,
+    left: 16,
     paddingVertical: 8,
     paddingHorizontal: 14,
     borderRadius: 20,
     zIndex: 10,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
   },
   filterToggleText: {
     color: '#FFFFFF',
@@ -493,59 +502,66 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 
-  // My Location button
-  myLocationBtn: {
+  // Bottom bar
+  bottomBar: {
     position: 'absolute',
-    bottom: 40,
+    bottom: 60,
     left: 16,
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#FFFFFF',
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 10,
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 4,
-  },
-  myLocationBtnText: {
-    fontSize: 20,
-    color: '#2563EB',
-  },
-
-  // Search button
-  searchBtn: {
-    position: 'absolute',
-    bottom: 40,
     right: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 16,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    zIndex: 10,
+    elevation: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+  },
+  searchInput: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    marginRight: 10,
+  },
+  searchIcon: {
+    fontSize: 18,
+    color: '#9CA3AF',
+    marginRight: 8,
+  },
+  searchPlaceholder: {
+    fontSize: 15,
+    color: '#9CA3AF',
+    flex: 1,
+  },
+  locBtn: {
     width: 40,
     height: 40,
-    borderRadius: 20,
+    borderRadius: 12,
+    backgroundColor: '#2563EB',
     justifyContent: 'center',
     alignItems: 'center',
-    zIndex: 10,
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 4,
   },
-  searchBtnText: {
-    fontSize: 18,
+  locIcon: {
+    fontSize: 20,
+    color: '#FFFFFF',
+    fontWeight: '300',
   },
 
   // Height legend
   legend: {
     position: 'absolute',
-    top: 110,
+    top: 12,
     right: 16,
-    backgroundColor: 'rgba(255,255,255,0.92)',
-    borderRadius: 12,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
+    flexDirection: 'row',
+    borderRadius: 20,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
     zIndex: 10,
     elevation: 4,
     shadowColor: '#000',
@@ -553,28 +569,19 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.12,
     shadowRadius: 4,
   },
-  legendTitle: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#6B7280',
-    marginBottom: 6,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  legendRow: {
+  legendItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 4,
+    marginHorizontal: 4,
   },
   legendDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    marginRight: 8,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 4,
   },
   legendLabel: {
-    fontSize: 12,
-    color: '#374151',
-    fontWeight: '500',
+    fontSize: 11,
+    fontWeight: '600',
   },
 });
