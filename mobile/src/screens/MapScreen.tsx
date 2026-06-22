@@ -14,7 +14,6 @@ import {
   GeoJSONSource,
   Images,
   Layer,
-  UserLocation,
   type MapRef,
   type CameraRef,
 } from '@maplibre/maplibre-react-native';
@@ -408,8 +407,6 @@ export default function MapScreen() {
           maxBounds={[103.5, 1.15, 104.1, 1.5]}
           duration={500}
         />
-
-        <UserLocation />
 
         {/* Register custom water droplet icon with SDF mode for color tinting */}
         <Images images={{ 'water-drop': { source: require('../../assets/water-drop.png'), sdf: true } }} />
