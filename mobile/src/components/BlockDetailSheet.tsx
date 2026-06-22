@@ -1,4 +1,5 @@
-import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
+import { useState } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, Platform, Image } from 'react-native';
 import * as Linking from 'expo-linking';
 import type { Block } from '../types';
 
@@ -6,7 +7,7 @@ interface Props {
   block: Block | null;
   distanceKm: number | null;
   onClose: () => void;
-  onLogClimb?: (block: Block) => void;
+  onLogClimb?: (block: Block, qty: number) => void;
   tapY?: number;
 }
 
@@ -32,6 +33,7 @@ export default function BlockDetailSheet({ block, distanceKm, onClose, onLogClim
   if (!block) return null;
 
   const tier = getTier(block.storeys);
+  const [climbQty, setClimbQty] = useState(1);
 
   const handleDirections = () => {
     if (block.lat != null && block.lng != null) {
@@ -40,7 +42,8 @@ export default function BlockDetailSheet({ block, distanceKm, onClose, onLogClim
   };
 
   const handleLogClimb = () => {
-    onLogClimb?.(block);
+    onLogClimb?.(block, climbQty);
+    setClimbQty(1); // Reset after log
   };
 
   return (
@@ -61,7 +64,7 @@ export default function BlockDetailSheet({ block, distanceKm, onClose, onLogClim
 
           {/* Content */}
           <View style={styles.content}>
-            {/* Row 1: Storeys (big) + address */}
+            {/* Row 1: Storeys (big) + address + satellite thumbnail */}
             <View style={styles.topRow}>
               <View style={styles.storeyBadge}>
                 <Text style={[styles.storeyValue, { color: tier.color }]}>{block.storeys}</Text>
@@ -72,6 +75,12 @@ export default function BlockDetailSheet({ block, distanceKm, onClose, onLogClim
                 <Text style={styles.street} numberOfLines={1}>{block.street}</Text>
                 {block.town && <Text style={styles.town} numberOfLines={1}>{block.town}</Text>}
               </View>
+              {block.lat != null && block.lng != null && (
+                <Image
+                  source={{ uri: `https://maps.googleapis.com/maps/api/staticmap?center=${block.lat},${block.lng}&zoom=17&size=100x100&maptype=satellite` }}
+                  style={styles.thumbImage}
+                />
+              )}
             </View>
 
             {/* Row 2: Quick stats */}
@@ -88,6 +97,18 @@ export default function BlockDetailSheet({ block, distanceKm, onClose, onLogClim
                 <Text style={styles.statValue}>{formatYear(block.year_completed)}</Text>
                 <Text style={styles.statLabel}>Year</Text>
               </View>
+            </View>
+
+            {/* Quantity selector */}
+            <View style={styles.qtyRow}>
+              <TouchableOpacity onPress={() => setClimbQty(Math.max(1, climbQty - 1))} activeOpacity={0.7}>
+                <Text style={styles.qtyBtn}>−</Text>
+              </TouchableOpacity>
+              <Text style={styles.qtyValue}>{climbQty}</Text>
+              <TouchableOpacity onPress={() => setClimbQty(climbQty + 1)} activeOpacity={0.7}>
+                <Text style={styles.qtyBtn}>+</Text>
+              </TouchableOpacity>
+              <Text style={styles.qtyLabel}>climbs</Text>
             </View>
 
             {/* Actions row */}
@@ -147,10 +168,43 @@ const styles = StyleSheet.create({
   address: { fontSize: 15, fontWeight: '700', color: '#111827' },
   street: { fontSize: 13, color: '#6B7280', marginTop: 1 },
   town: { fontSize: 12, color: '#9CA3AF', marginTop: 1 },
+  thumbImage: { width: 80, height: 80, borderRadius: 8, marginLeft: 8 },
   statsRow: { flexDirection: 'row', marginBottom: 12 },
   stat: { marginRight: 20 },
   statValue: { fontSize: 14, fontWeight: '700', color: '#111827' },
   statLabel: { fontSize: 10, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 1 },
+  qtyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10,
+    gap: 8,
+  },
+  qtyBtn: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#374151',
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#F3F4F6',
+    textAlign: 'center',
+    lineHeight: 32,
+    overflow: 'hidden',
+  },
+  qtyValue: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#111827',
+    minWidth: 30,
+    textAlign: 'center',
+  },
+  qtyLabel: {
+    fontSize: 13,
+    color: '#6B7280',
+    fontWeight: '500',
+    marginLeft: 2,
+  },
   actionsRow: { flexDirection: 'row', gap: 8 },
   logBtn: {
     flex: 1, backgroundColor: '#10B981', borderRadius: 12,

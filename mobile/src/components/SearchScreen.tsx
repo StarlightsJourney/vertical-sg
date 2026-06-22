@@ -332,19 +332,20 @@ export default function SearchScreen({
                           key={i}
                           style={styles.climbRow}
                           activeOpacity={0.6}
-                          onPress={() => handleSelectBlock({
-                            block_id: climb.block_id,
-                            blk_no: climb.blk_no,
-                            street: climb.street,
-                            storeys: climb.storeys,
-                            town: null,
-                            est_height_m: 0,
-                            height_source: 'estimated',
-                            year_completed: null,
-                            total_dwelling_units: null,
-                            lat: null,
-                            lng: null,
-                          })}
+                          onPress={async () => {
+                            // Fetch full block from Supabase for navigation
+                            const { data } = await supabase
+                              .from('blocks')
+                              .select('*')
+                              .eq('block_id', climb.block_id)
+                              .single();
+                            if (data) {
+                              handleSelectBlock(data as Block);
+                            } else {
+                              // Fallback: close search if block not found
+                              onClose();
+                            }
+                          }}
                         >
                           <View style={styles.climbRowLeft}>
                             <Text style={[styles.climbAddr, isDark && { color: '#F9FAFB' }]} numberOfLines={1}>

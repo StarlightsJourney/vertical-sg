@@ -1,0 +1,1181 @@
+[
+  {
+    "name": "Bird Paradise: Next to Learning Centre (Ticketed)",
+    "lat": 1.407448,
+    "lng": 103.781392,
+    "status": "ticketed",
+    "level": "Ground",
+    "temperature": "Room Temperature",
+    "operator": "Mandai Wildlife Reserve"
+  },
+  {
+    "name": "Bird Paradise: In-between Guest Services & Bird Bakery (Ticketed)",
+    "lat": 1.406852,
+    "lng": 103.782346,
+    "status": "ticketed",
+    "level": "Ground",
+    "temperature": "Room Temperature",
+    "operator": "Mandai Wildlife Reserve"
+  },
+  {
+    "name": "Bird Paradise: In-between Hearts of Africa & Wings of Asia Toilets (Ticketed)",
+    "lat": 1.406341,
+    "lng": 103.780266,
+    "status": "ticketed",
+    "level": "Ground",
+    "temperature": "Room Temperature",
+    "operator": "Mandai Wildlife Reserve"
+  },
+  {
+    "name": "Bird Paradise: Egg Splash (Ticketed)",
+    "lat": 1.405412,
+    "lng": 103.779936,
+    "status": "ticketed",
+    "level": "Ground",
+    "temperature": "Room Temperature",
+    "operator": "Mandai Wildlife Reserve"
+  },
+  {
+    "name": "Bird Paradise: Sky Amphitheatre (Ticketed)",
+    "lat": 1.404877,
+    "lng": 103.780465,
+    "status": "ticketed",
+    "level": "Ground",
+    "temperature": "Room Temperature",
+    "operator": "Mandai Wildlife Reserve"
+  },
+  {
+    "name": "Bird Paradise: In-between Australian Outback & Mysterious Papua (Ticketed)",
+    "lat": 1.40604,
+    "lng": 103.782358,
+    "status": "ticketed",
+    "level": "Ground",
+    "temperature": "Room Temperature",
+    "operator": "Mandai Wildlife Reserve"
+  },
+  {
+    "name": "Bird Paradise: Heart of Africa (Ticketed)",
+    "lat": 1.406977,
+    "lng": 103.781576,
+    "status": "ticketed",
+    "level": "Ground",
+    "temperature": "Room Temperature",
+    "operator": "Mandai Wildlife Reserve"
+  },
+  {
+    "name": "Esplanade",
+    "lat": 1.289413367,
+    "lng": 103.8563204,
+    "status": "unverified",
+    "level": "1",
+    "temperature": "Cold",
+    "operator": "Esplanade Company"
+  },
+  {
+    "name": "Adam Food Centre",
+    "lat": 1.324232065,
+    "lng": 103.8142463,
+    "status": "unverified",
+    "level": "1",
+    "temperature": "Cold",
+    "operator": "NEA"
+  },
+  {
+    "name": "Punggol Point Park",
+    "lat": 1.420985645,
+    "lng": 103.9109749,
+    "status": "unverified",
+    "level": "1",
+    "temperature": "Cold",
+    "operator": "NParks"
+  },
+  {
+    "name": "Upper Pierce Reservoir Toilet",
+    "lat": 1.374309,
+    "lng": 103.811805,
+    "status": "unverified",
+    "level": "1",
+    "temperature": "Room Temperature",
+    "operator": "NParks/PUB"
+  },
+  {
+    "name": "Pandan Reservoir Amenities Centre",
+    "lat": 1.319726791,
+    "lng": 103.7370052,
+    "status": "unverified",
+    "level": "1",
+    "temperature": "Cold",
+    "operator": "NParks"
+  },
+  {
+    "name": "NEX",
+    "lat": 1.350947104,
+    "lng": 103.8725965,
+    "status": "unverified",
+    "level": "B2",
+    "temperature": "Cold, Hot",
+    "operator": "NEX"
+  },
+  {
+    "name": "Telok Blangah Hill Park",
+    "lat": 1.278153,
+    "lng": 103.81353,
+    "status": "unverified",
+    "level": "1",
+    "temperature": "Room Temperature",
+    "operator": "NParks"
+  },
+  {
+    "name": "Hortpark: Visiter Centre Building",
+    "lat": 1.27889001,
+    "lng": 103.8014111,
+    "status": "unverified",
+    "level": "1",
+    "temperature": "Cold",
+    "operator": "NParks"
+  },
+  {
+    "name": "Labrador Nature Reserve Park: Berlayer Shade",
+    "lat": 1.264046,
+    "lng": 103.805585,
+    "status": "unverified",
+    "level": "1",
+    "temperature": "Room Temperature",
+    "operator": "NParks"
+  },
+  {
+    "name": "Hillview Community Club",
+    "lat": 1.362049001,
+    "lng": 103.764118,
+    "status": "unverified",
+    "level": "1",
+    "temperature": "Cold",
+    "operator": "PA"
+  },
+  {
+    "name": "Upper Seletar Reservoir Park Car Park C",
+    "lat": 1.39708285,
+    "lng": 103.8032223,
+    "status": "unverified",
+    "level": "1",
+    "temperature": "Unsure",
+    "operator": "NParks"
+  },
+  {
+    "name": "AMK Hub",
+    "lat": 1.36962,
+    "lng": 103.84795,
+    "status": "unverified",
+    "level": "1",
+    "temperature": "Unsure",
+    "operator": "SBS Transit"
+  },
+  {
+    "name": "Northpoint City",
+    "lat": 1.42737,
+    "lng": 103.83634,
+    "status": "unverified",
+    "level": "1",
+    "temperature": "Unsure",
+    "operator": "SBS Transit"
+  },
+  {
+    "name": "Margaret Drive Hawker Centre",
+    "lat": 1.297780767,
+    "lng": 103.8044252,
+    "status": "unverified",
+    "level": "1",
+    "temperature": "Cold",
+    "operator": "NEA"
+  },
+  {
+    "name": "SUTD Building 1",
+    "lat": 1.3402191,
+    "lng": 103.9624426,
+    "status": "unverified",
+    "level": "1",
+    "temperature": "Cold",
+    "operator": "SUTD"
+  },
+  {
+    "name": "Bukit Batok Nature Park",
+    "lat": 1.34947,
+    "lng": 103.76322,
+    "status": "unverified",
+    "level": "1",
+    "temperature": "Unsure",
+    "operator": "NParks"
+  },
+  {
+    "name": "Plaza Singapura: Muji",
+    "lat": 1.3005,
+    "lng": 103.8452,
+    "status": "unverified",
+    "level": "N1",
+    "temperature": "Cold",
+    "operator": "Muji"
+  },
+  {
+    "name": "Old Terminal Lane: Kallang PCN",
+    "lat": 1.308193645,
+    "lng": 103.871077,
+    "status": "unverified",
+    "level": "1",
+    "temperature": "Unsure",
+    "operator": "NParks"
+  },
+  {
+    "name": "Passion Wave @ Marina Bay",
+    "lat": 1.2950795,
+    "lng": 103.8664925,
+    "status": "unverified",
+    "level": "1",
+    "temperature": "Cold, Room Temperature",
+    "operator": "Passion Wave"
+  },
+  {
+    "name": "Toh Guan Park: Next to the running track",
+    "lat": 1.338804299,
+    "lng": 103.7443385,
+    "status": "unverified",
+    "level": "1",
+    "temperature": "Unsure",
+    "operator": ""
+  },
+  {
+    "name": "Punggol East Bridge: Waterway Sunrise PCN",
+    "lat": 1.3988204,
+    "lng": 103.9200217,
+    "status": "unverified",
+    "level": "1",
+    "temperature": "Unsure",
+    "operator": "NParks"
+  },
+  {
+    "name": "Pek Kio Food Center",
+    "lat": 1.31622,
+    "lng": 103.8498,
+    "status": "unverified",
+    "level": "1",
+    "temperature": "Room Temperature",
+    "operator": "Tanjong Pagar Town Council"
+  },
+  {
+    "name": "Riverside Park",
+    "lat": 1.399347,
+    "lng": 103.8879549,
+    "status": "unverified",
+    "level": "1",
+    "temperature": "Room Temperature",
+    "operator": "NParks"
+  },
+  {
+    "name": "Along Punggol Park PCN",
+    "lat": 1.409579304,
+    "lng": 103.8981102,
+    "status": "unverified",
+    "level": "1",
+    "temperature": "Cold",
+    "operator": "NParks"
+  },
+  {
+    "name": "Along Punggol Waterway Sunrise PCN",
+    "lat": 1.398805,
+    "lng": 103.920049,
+    "status": "unverified",
+    "level": "1",
+    "temperature": "Cold",
+    "operator": "NParks"
+  },
+  {
+    "name": "Chestnut Close Playground Shed/Exercise Area",
+    "lat": 1.369122,
+    "lng": 103.773678,
+    "status": "unverified",
+    "level": "1",
+    "temperature": "Room Temperature",
+    "operator": ""
+  },
+  {
+    "name": "Clementi Woods Park",
+    "lat": 1.29871,
+    "lng": 103.768317,
+    "status": "unverified",
+    "level": "1",
+    "temperature": "Cold",
+    "operator": "NParks"
+  },
+  {
+    "name": "Kent Ridge Park",
+    "lat": 1.283503,
+    "lng": 103.791071,
+    "status": "unverified",
+    "level": "1",
+    "temperature": "Room Temperature",
+    "operator": "NParks"
+  },
+  {
+    "name": "Hortpark: Hands On House building",
+    "lat": 1.279349,
+    "lng": 103.798106,
+    "status": "unverified",
+    "level": "1",
+    "temperature": "Cold",
+    "operator": "NParks"
+  },
+  {
+    "name": "NUS: LT 4",
+    "lat": 1.297772,
+    "lng": 103.773209,
+    "status": "unverified",
+    "level": "",
+    "temperature": "Cold, Hot",
+    "operator": "NUS"
+  },
+  {
+    "name": "Chestnut Nature Park",
+    "lat": 1.371657,
+    "lng": 103.779822,
+    "status": "unverified",
+    "level": "1",
+    "temperature": "Room Temperature",
+    "operator": "NParks"
+  },
+  {
+    "name": "Zhenghua Nature Park",
+    "lat": 1.386156,
+    "lng": 103.772975,
+    "status": "unverified",
+    "level": "1",
+    "temperature": "Room Temperature",
+    "operator": "NParks"
+  },
+  {
+    "name": "Promenade Riverside Walk Toilet",
+    "lat": 1.393717531,
+    "lng": 103.9183716,
+    "status": "unverified",
+    "level": "1",
+    "temperature": "Room Temperature",
+    "operator": "NParks"
+  },
+  {
+    "name": "Hong Kah North Community Club",
+    "lat": 1.3591396,
+    "lng": 103.7494832,
+    "status": "unverified",
+    "level": "1",
+    "temperature": "Cold",
+    "operator": "PA"
+  },
+  {
+    "name": "Ranger Station",
+    "lat": 1.3570652,
+    "lng": 103.8127065,
+    "status": "unverified",
+    "level": "1",
+    "temperature": "Unsure",
+    "operator": "NParks"
+  },
+  {
+    "name": "Ngee Ann Polytechnic: Block 58",
+    "lat": 1.333149,
+    "lng": 103.774893,
+    "status": "unverified",
+    "level": "1",
+    "temperature": "Room Temperature",
+    "operator": "NP"
+  },
+  {
+    "name": "Lim Chu Kang Muslim Cemetery Carpark A",
+    "lat": 1.37197128,
+    "lng": 103.6939558,
+    "status": "unverified",
+    "level": "1",
+    "temperature": "Cold",
+    "operator": "NEA"
+  },
+  {
+    "name": "Garden Of Peace Carpark C",
+    "lat": 1.371939659,
+    "lng": 103.6894824,
+    "status": "unverified",
+    "level": "1",
+    "temperature": "Cold",
+    "operator": "NEA"
+  },
+  {
+    "name": "Punggol Waterway Park",
+    "lat": 1.411368554,
+    "lng": 103.90398054110399,
+    "status": "unverified",
+    "level": "1",
+    "temperature": "Cold",
+    "operator": "NParks"
+  },
+  {
+    "name": "Esplanade Park",
+    "lat": 1.2894426,
+    "lng": 103.8540622,
+    "status": "unverified",
+    "level": "1",
+    "temperature": "Unsure",
+    "operator": "NParks"
+  },
+  {
+    "name": "Kebun Baru Community Club",
+    "lat": 1.37303,
+    "lng": 103.83786,
+    "status": "unverified",
+    "level": "1",
+    "temperature": "Cold",
+    "operator": "PA"
+  },
+  {
+    "name": "Punggol Temporary Bus Interchange",
+    "lat": 1.40416,
+    "lng": 103.90218,
+    "status": "unverified",
+    "level": "1",
+    "temperature": "Cold",
+    "operator": "Go-Ahead Singapore"
+  },
+  {
+    "name": "Esplanade",
+    "lat": 1.289423689,
+    "lng": 103.856327,
+    "status": "unverified",
+    "level": "1",
+    "temperature": "Cold",
+    "operator": "Esplanade Company"
+  },
+  {
+    "name": "Delta Sports Hall",
+    "lat": 1.290411237,
+    "lng": 103.82038,
+    "status": "unverified",
+    "level": "1",
+    "temperature": "Cold",
+    "operator": "SportSG"
+  },
+  {
+    "name": "MacRitchie Reservoir - Amenities Centre",
+    "lat": 1.342421,
+    "lng": 103.834849,
+    "status": "unverified",
+    "level": "Ground Floor",
+    "temperature": "Unsure",
+    "operator": "NParks"
+  },
+  {
+    "name": "Clementi 448 Market and Food Centre",
+    "lat": 1.313274,
+    "lng": 103.764415,
+    "status": "unverified",
+    "level": "1",
+    "temperature": "Cold",
+    "operator": "Jurong - Clementi Town Council"
+  },
+  {
+    "name": "Tanglin Halt Market",
+    "lat": 1.300415,
+    "lng": 103.797777,
+    "status": "unverified",
+    "level": "1",
+    "temperature": "Unsure",
+    "operator": "NEA"
+  },
+  {
+    "name": "Queenstown Public Library",
+    "lat": 1.298601,
+    "lng": 103.805426,
+    "status": "unverified",
+    "level": "2",
+    "temperature": "Cold",
+    "operator": "NLB"
+  },
+  {
+    "name": "Opposite the Beast and Butterfly Restaurant, facing the river",
+    "lat": 1.290216,
+    "lng": 103.836372,
+    "status": "unverified",
+    "level": "1",
+    "temperature": "Room Temperature",
+    "operator": "NParks"
+  },
+  {
+    "name": "Yuhua Community Club",
+    "lat": 1.3400828,
+    "lng": 103.737205,
+    "status": "unverified",
+    "level": "1",
+    "temperature": "Unsure",
+    "operator": "PA"
+  },
+  {
+    "name": "Sentosa: Siloso Beach Toilets",
+    "lat": 1.2542741,
+    "lng": 103.8140929,
+    "status": "unverified",
+    "level": "1",
+    "temperature": "Room Temperature",
+    "operator": "Sentosa"
+  },
+  {
+    "name": "Rifle Range Nature Park",
+    "lat": 1.3434385,
+    "lng": 103.7797485,
+    "status": "unverified",
+    "level": "Ground",
+    "temperature": "Cold",
+    "operator": "NParks"
+  },
+  {
+    "name": "Bedok Reservoir Carpark A: Near to toilets",
+    "lat": 1.338747,
+    "lng": 103.933568,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Room Temperature",
+    "operator": "NParks"
+  },
+  {
+    "name": "Bedok Reservoir Carpark B: Near to toilets",
+    "lat": 1.347284277,
+    "lng": 103.9253415,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Room Temperature",
+    "operator": "NParks"
+  },
+  {
+    "name": "Telok Blangah Food Centre",
+    "lat": 1.273557564,
+    "lng": 103.8076044,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Unsure",
+    "operator": "West Coast Town Council"
+  },
+  {
+    "name": "Masjid Ar-Raudhah Mosque (Not Working)",
+    "lat": 1.351796256,
+    "lng": 103.7555657,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Room Temperature",
+    "operator": "Masjid Ar-Raudhah Mosque"
+  },
+  {
+    "name": "West Coast Park",
+    "lat": 1.296779,
+    "lng": 103.762734,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Cold",
+    "operator": "NParks"
+  },
+  {
+    "name": "West Coast Park",
+    "lat": 1.292011,
+    "lng": 103.766177,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Cold",
+    "operator": "NParks"
+  },
+  {
+    "name": "West Coast Park",
+    "lat": 1.289815,
+    "lng": 103.770184,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Cold",
+    "operator": "NParks"
+  },
+  {
+    "name": "Kampong Bahru Bus Terminal",
+    "lat": 1.275949966,
+    "lng": 103.8330071,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Cold, Hot",
+    "operator": "SBS Transit"
+  },
+  {
+    "name": "Kampong Bahru Bus Terminal",
+    "lat": 1.275981318,
+    "lng": 103.8333694,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Cold, Hot",
+    "operator": "SBS Transit"
+  },
+  {
+    "name": "GBTB: Bay East Garden Visitor Centre",
+    "lat": 1.294047687,
+    "lng": 103.868299,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Room Temperature",
+    "operator": "NParks"
+  },
+  {
+    "name": "Labrador Nature Reserve Park: Carpark B",
+    "lat": 1.2645843,
+    "lng": 103.8036655,
+    "status": "verified",
+    "level": "Ground",
+    "temperature": "Room Temperature",
+    "operator": "NParks"
+  },
+  {
+    "name": "Jalan Kayu Node",
+    "lat": 1.4028848,
+    "lng": 103.8718865,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Unsure",
+    "operator": "NParks"
+  },
+  {
+    "name": "JEM: Muji",
+    "lat": 1.333101221,
+    "lng": 103.7430353,
+    "status": "verified",
+    "level": "4",
+    "temperature": "Room Temperature",
+    "operator": "Muji"
+  },
+  {
+    "name": "Pang Sua Park Connector",
+    "lat": 1.393708817,
+    "lng": 103.7524266,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Room Temperature",
+    "operator": "NParks"
+  },
+  {
+    "name": "Senja Hawker Centre",
+    "lat": 1.387218,
+    "lng": 103.761221,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Room Temperature",
+    "operator": "Senja Hawker Centre"
+  },
+  {
+    "name": "Choa Chu Kang Park",
+    "lat": 1.385776232,
+    "lng": 103.7467034,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Room Temperature",
+    "operator": "NParks"
+  },
+  {
+    "name": "Villa Verde Fitness Corner",
+    "lat": 1.389299987,
+    "lng": 103.7529146,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Room Temperature",
+    "operator": "NParks"
+  },
+  {
+    "name": "Masjid Hang Jebat Mosque",
+    "lat": 1.289555,
+    "lng": 103.798949,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Cold",
+    "operator": "Masjid Hang Jebat Mosque"
+  },
+  {
+    "name": "Old Airport Road Food Court",
+    "lat": 1.30856,
+    "lng": 103.88616,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Room Temperature",
+    "operator": "NEA"
+  },
+  {
+    "name": "Changi Coast Road: NSRCC",
+    "lat": 1.316851822,
+    "lng": 103.9753454,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Unsure",
+    "operator": "NParks"
+  },
+  {
+    "name": "Marina Barrage",
+    "lat": 1.280383,
+    "lng": 103.87146,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Room Temperature",
+    "operator": "Marina Barrage"
+  },
+  {
+    "name": "Jurong Point",
+    "lat": 1.34011,
+    "lng": 103.70557,
+    "status": "verified",
+    "level": "3",
+    "temperature": "Cold, Hot",
+    "operator": "Jurong Point"
+  },
+  {
+    "name": "Changi Airport Jewel: Muji",
+    "lat": 1.3607183,
+    "lng": 103.9893059,
+    "status": "verified",
+    "level": "3",
+    "temperature": "Cold, Hot",
+    "operator": "MUJI"
+  },
+  {
+    "name": "Bird Paradise: Entrance (Non-Ticketed)",
+    "lat": 1.408349,
+    "lng": 103.780777,
+    "status": "verified",
+    "level": "2",
+    "temperature": "Room Temperature",
+    "operator": "Mandai Wildlife Reserve"
+  },
+  {
+    "name": "Bukit Timah Plaza: Fairprice Finest",
+    "lat": 1.33816,
+    "lng": 103.77822,
+    "status": "verified",
+    "level": "B3",
+    "temperature": "Cold, Hot",
+    "operator": "NTUC"
+  },
+  {
+    "name": "Esplanade",
+    "lat": 1.289629,
+    "lng": 103.855902,
+    "status": "verified",
+    "level": "2",
+    "temperature": "Room Temperature",
+    "operator": "Esplanade Company"
+  },
+  {
+    "name": "Bukit Timah Market & Food Centre",
+    "lat": 1.33937,
+    "lng": 103.77574,
+    "status": "verified",
+    "level": "2",
+    "temperature": "Room Temperature",
+    "operator": "NEA"
+  },
+  {
+    "name": "Jurong Lake Gardens: Clusia Cove",
+    "lat": 1.340249,
+    "lng": 103.724434,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Room Temperature",
+    "operator": "NParks"
+  },
+  {
+    "name": "Jurong Lake Gardens: PassionWave",
+    "lat": 1.33894,
+    "lng": 103.727368,
+    "status": "verified",
+    "level": "2",
+    "temperature": "Room Temperature",
+    "operator": "NParks"
+  },
+  {
+    "name": "Jean-Marie Beurel Centre",
+    "lat": 1.2956218,
+    "lng": 103.8507674,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Cold",
+    "operator": "Cathedral of the Good Shepherd"
+  },
+  {
+    "name": "Shenton Way Bus Terminal",
+    "lat": 1.274658309,
+    "lng": 103.8474874,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Cold, Hot",
+    "operator": "SBS Transit"
+  },
+  {
+    "name": "Telok Blangah Hill Park",
+    "lat": 1.2781386,
+    "lng": 103.8133774,
+    "status": "verified",
+    "level": "Ground",
+    "temperature": "Room Temperature",
+    "operator": "NParks"
+  },
+  {
+    "name": "Telok Blangah Hill Park",
+    "lat": 1.2779938,
+    "lng": 103.8131112,
+    "status": "verified",
+    "level": "Ground",
+    "temperature": "Room Temperature",
+    "operator": "NParks"
+  },
+  {
+    "name": "NTU: Yunan Gardens - Sheltered Pavilion (Nanyang Dr)",
+    "lat": 1.343359,
+    "lng": 103.686172,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Cold",
+    "operator": "NTU"
+  },
+  {
+    "name": "NTU: Yunan Gardens - Sheltered Pavilion (Nanyang Ave)",
+    "lat": 1.341746,
+    "lng": 103.684141,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Cold",
+    "operator": "NTU"
+  },
+  {
+    "name": "Civil Service Club (Tessensohn)",
+    "lat": 1.316,
+    "lng": 103.8566,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Cold",
+    "operator": "CSC"
+  },
+  {
+    "name": "61 Punggol Field Playground",
+    "lat": 1.408382,
+    "lng": 103.904039,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Unsure",
+    "operator": ""
+  },
+  {
+    "name": "AMK Garden West: Walking track toilet",
+    "lat": 1.3727597,
+    "lng": 103.8414159,
+    "status": "verified",
+    "level": "Ground",
+    "temperature": "Cold",
+    "operator": "NParks"
+  },
+  {
+    "name": "Sengkang Riverside Park",
+    "lat": 1.39937,
+    "lng": 103.88792,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Room Temperature",
+    "operator": "NParks"
+  },
+  {
+    "name": "Pasir Ris Park: Near to Carpark A",
+    "lat": 1.38061,
+    "lng": 103.96001,
+    "status": "verified",
+    "level": "Ground",
+    "temperature": "Room Temperature",
+    "operator": "NParks"
+  },
+  {
+    "name": "Admiralty Park",
+    "lat": 1.44246,
+    "lng": 103.7846,
+    "status": "verified",
+    "level": "Ground",
+    "temperature": "Cold",
+    "operator": "NParks"
+  },
+  {
+    "name": "Springleaf Nature Park",
+    "lat": 1.401177974,
+    "lng": 103.81761937188291,
+    "status": "verified",
+    "level": "Ground",
+    "temperature": "Cold",
+    "operator": "NParks"
+  },
+  {
+    "name": "SkatePark @ Lakeside Garden: Rainforest Pavilion",
+    "lat": 1.344019,
+    "lng": 103.725769,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Cold",
+    "operator": "NParks"
+  },
+  {
+    "name": "Yishun Dam: Rowers Bay Toilet 2",
+    "lat": 1.42166,
+    "lng": 103.86345,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Cold",
+    "operator": "NParks"
+  },
+  {
+    "name": "Nee Soon East Senior Hub",
+    "lat": 1.43584,
+    "lng": 103.83746,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Unsure",
+    "operator": "Town Council"
+  },
+  {
+    "name": "Decathlon - Singapore Lab",
+    "lat": 1.304050268,
+    "lng": 103.882062,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Cold",
+    "operator": "Decathlon"
+  },
+  {
+    "name": "Admiralty Park: Carpark North End",
+    "lat": 1.45105,
+    "lng": 103.78024,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Room Temperature",
+    "operator": "NParks"
+  },
+  {
+    "name": "Taman Jurong Community Club",
+    "lat": 1.335376,
+    "lng": 103.721508,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Cold",
+    "operator": "PA"
+  },
+  {
+    "name": "Singapore Botanical Gardens Melati Gate",
+    "lat": 1.3207808,
+    "lng": 103.8145345,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Unsure",
+    "operator": "NParks"
+  },
+  {
+    "name": "Singapore Botanic Gardens Bukit Timah Gate",
+    "lat": 1.3220431,
+    "lng": 103.8153425,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Room Temperature",
+    "operator": "NParks"
+  },
+  {
+    "name": "Jurong Central Park",
+    "lat": 1.3375089,
+    "lng": 103.7075371,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Unsure",
+    "operator": "NParks"
+  },
+  {
+    "name": "Changi Airport T2: Hub & Spoke",
+    "lat": 1.3506592,
+    "lng": 103.9873515,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Cold",
+    "operator": "Changi Airport Group"
+  },
+  {
+    "name": "Ngee Ann Polytechnic: Blk 1  - The Atrium",
+    "lat": 1.333653437,
+    "lng": 103.7769731,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Cold",
+    "operator": "Ngee Ann Polytechnic"
+  },
+  {
+    "name": "SAFRA Choa Chu Kang",
+    "lat": 1.38859,
+    "lng": 103.74759,
+    "status": "verified",
+    "level": "2",
+    "temperature": "Cold",
+    "operator": "SAFRA"
+  },
+  {
+    "name": "Jurong Lake Gardens: Water Watch Society",
+    "lat": 1.340964,
+    "lng": 103.72301,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Room Temperature",
+    "operator": "NParks"
+  },
+  {
+    "name": "Jurong Lake Gardens: Cross junction towards Wave Plaza",
+    "lat": 1.338463,
+    "lng": 103.726192,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Room Temperature",
+    "operator": "NParks"
+  },
+  {
+    "name": "Jurong Lake Gardens: The Logs Trails",
+    "lat": 1.334846,
+    "lng": 103.727557,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Room Temperature",
+    "operator": "NParks"
+  },
+  {
+    "name": "Jurong Lake Gardens: Next to the oval",
+    "lat": 1.33201,
+    "lng": 103.72568,
+    "status": "verified",
+    "level": "1",
+    "temperature": "",
+    "operator": "NParks"
+  },
+  {
+    "name": "Jurong Point",
+    "lat": 1.339804,
+    "lng": 103.706909,
+    "status": "verified",
+    "level": "3",
+    "temperature": "Cold, Hot",
+    "operator": "Jurong Point"
+  },
+  {
+    "name": "Serangoon Stadium",
+    "lat": 1.35625,
+    "lng": 103.87488,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Cold",
+    "operator": "SportSG"
+  },
+  {
+    "name": "Serangoon Stadium",
+    "lat": 1.35626,
+    "lng": 103.87488,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Cold",
+    "operator": "SportSG"
+  },
+  {
+    "name": "Serangoon Stadium",
+    "lat": 1.35626,
+    "lng": 103.87488,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Cold",
+    "operator": "SportSG"
+  },
+  {
+    "name": "Sungei Buloh Wetland Reserve (Neo Tiew Crescent entrance)",
+    "lat": 1.44605,
+    "lng": 103.72875,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Room Temperature",
+    "operator": "NParks"
+  },
+  {
+    "name": "Hwi Yoh Community Centre",
+    "lat": 1.374726,
+    "lng": 103.873766,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Cold",
+    "operator": "PA"
+  },
+  {
+    "name": "Tiong Bahru Park",
+    "lat": 1.287932,
+    "lng": 103.824622,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Room Temperature",
+    "operator": "NParks"
+  },
+  {
+    "name": "Robertson Quay: Park Connector",
+    "lat": 1.29022,
+    "lng": 103.83673,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Room Temperature",
+    "operator": "NParks"
+  },
+  {
+    "name": "Hougang Community Club",
+    "lat": 1.3649,
+    "lng": 103.89264,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Cold",
+    "operator": "PA"
+  },
+  {
+    "name": "Punggol Park: Public Toilet",
+    "lat": 1.377707078,
+    "lng": 103.8972588,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Room Temperature",
+    "operator": "NParks"
+  },
+  {
+    "name": "Tekka Place",
+    "lat": 1.305097,
+    "lng": 103.8516633,
+    "status": "verified",
+    "level": "2",
+    "temperature": "Cold, Hot, Room Temperature",
+    "operator": "Tekka Place"
+  },
+  {
+    "name": "The Railway Mall: Entrance to Railway corridor",
+    "lat": 1.35718,
+    "lng": 103.76826,
+    "status": "verified",
+    "level": "Ground",
+    "temperature": "Room Temperature",
+    "operator": "NParks"
+  },
+  {
+    "name": "Marina Bay Sands: Convention Centre",
+    "lat": 1.28266,
+    "lng": 103.85923,
+    "status": "verified",
+    "level": "B3",
+    "temperature": "Cold, Hot, Room Temperature",
+    "operator": "MBS"
+  },
+  {
+    "name": "Sentosa: Fort Siloso Battery Command Post",
+    "lat": 1.25851,
+    "lng": 103.80876,
+    "status": "verified",
+    "level": "1",
+    "temperature": "Cold",
+    "operator": "Sentosa"
+  }
+]

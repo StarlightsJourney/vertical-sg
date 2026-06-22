@@ -5,6 +5,8 @@ import {
   StyleSheet,
   ActivityIndicator,
   TouchableOpacity,
+  Modal,
+  Alert,
 } from 'react-native';
 import {
   Map as MapView,
@@ -27,6 +29,18 @@ import storage from '../utils/storage';
 const LIGHT_STYLE = require('../../assets/map-style.json');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const DARK_STYLE = require('../../assets/map-style-dark.json');
+
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const WATER_COOLERS_RAW: Array<{ name: string; lat: number; lng: number; status: string; level: string; temperature: string; operator: string }> = require('../../assets/water-coolers.json');
+
+const WATER_COOLER_GEOJSON: GeoJSON.FeatureCollection = {
+  type: 'FeatureCollection',
+  features: WATER_COOLERS_RAW.map((wc) => ({
+    type: 'Feature',
+    geometry: { type: 'Point', coordinates: [wc.lng, wc.lat] as [number, number] },
+    properties: { name: wc.name, status: wc.status, level: wc.level, temperature: wc.temperature, operator: wc.operator },
+  })),
+};
 
 // Default Singapore bounds for initial fetch before map camera settles
 const SG_BOUNDS: BoundsRect = { sw: [103.6, 1.2], ne: [104.0, 1.48] };
@@ -69,10 +83,10 @@ export default function MapScreen() {
   const [selectedBlockDist, setSelectedBlockDist] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [minStoreys, setMinStoreys] = useState(31);
-  const [pinScale, setPinScale] = useState(1.0);
+  const [minFilter, setMinFilter] = useState(21);
   const [pulseOn, setPulseOn] = useState(true);
   const [searchVisible, setSearchVisible] = useState(false);
+  const [alertVisible, setAlertVisible] = useState(false);
   const [recentBlocks, setRecentBlocks] = useState<Block[]>([]);
   const [starredIds, setStarredIds] = useState<Set<string>>(new Set());
   const [climbCounts, setClimbCounts] = useState<Map<string, number>>(new Map());
@@ -93,7 +107,7 @@ export default function MapScreen() {
     type: 'FeatureCollection',
     features: blocks
       .filter((b) => b.lat != null && b.lng != null)
-      .filter((b) => minStoreys === 0 || (b.storeys != null && b.storeys >= minStoreys))
+      .filter((b) => minFilter === 0 || (b.storeys != null && b.storeys >= minFilter))
       .map((b) => ({
         type: 'Feature',
         geometry: {
@@ -112,7 +126,7 @@ export default function MapScreen() {
           climbed: climbCounts.has(b.block_id),
         },
       })),
-  }), [blocks, minStoreys, climbCounts]);
+  }), [blocks, minFilter, climbCounts]);
 
   const userLocationGeojson = useMemo((): GeoJSON.FeatureCollection | null => {
     if (location.loading || !location.latitude) return null;
@@ -168,11 +182,6 @@ export default function MapScreen() {
       }
       if (typeof zoom === 'number') {
         zoomRef.current = zoom;
-        // Update minStoreys and pinScale based on zoom level
-        if (zoom < 12) { setMinStoreys(999); setPinScale(0.5); }
-        else if (zoom < 13) { setMinStoreys(31); setPinScale(0.7); }
-        else if (zoom < 14) { setMinStoreys(21); setPinScale(0.85); }
-        else { setMinStoreys(0); setPinScale(1.0); }
       }
 
       // Debounce: wait 300ms after last camera movement
@@ -236,17 +245,22 @@ export default function MapScreen() {
     });
   }, []);
 
-  const handleLogClimb = useCallback((block: Block) => {
-    storage.addClimb({
-      block_id: block.block_id,
-      blk_no: block.blk_no,
-      street: block.street,
-      storeys: block.storeys,
-      climbedAt: new Date().toISOString(),
-    }).then(() => {
+  const handleLogClimb = useCallback((block: Block, qty: number) => {
+    const timestamp = new Date().toISOString();
+    const promises: Promise<void>[] = [];
+    for (let i = 0; i < qty; i++) {
+      promises.push(storage.addClimb({
+        block_id: block.block_id,
+        blk_no: block.blk_no,
+        street: block.street,
+        storeys: block.storeys,
+        climbedAt: timestamp,
+      }));
+    }
+    Promise.all(promises).then(() => {
       setClimbCounts((prev) => {
         const next = new Map(prev);
-        next.set(block.block_id, (next.get(block.block_id) || 0) + 1);
+        next.set(block.block_id, (next.get(block.block_id) || 0) + qty);
         return next;
       });
       // Refresh climb history
@@ -403,15 +417,15 @@ export default function MapScreen() {
               'circle-radius': [
                 'step',
                 ['get', 'storeys'],
-                Math.round(4 * pinScale),   // 1-10
+                4,   // 1-10
                 11,
-                Math.round(6 * pinScale),   // 11-20
+                6,   // 11-20
                 21,
-                Math.round(9 * pinScale),   // 21-30
+                9,  // 21-30
                 31,
-                Math.round(12 * pinScale),  // 31-39
+                12, // 31-39
                 40,
-                Math.round(15 * pinScale),  // 40+
+                15, // 40+
               ],
               'circle-stroke-width': [
                 'case',
@@ -422,10 +436,34 @@ export default function MapScreen() {
               'circle-stroke-color': [
                 'case',
                 ['get', 'climbed'],
-                '#10B981',
+                '#F59E0B',
                 '#ffffff',
               ],
               'circle-opacity': 0.85,
+            }}
+          />
+        </GeoJSONSource>
+
+        {/* Water cooler markers — small dots colored by verification status */}
+        <GeoJSONSource id="water-coolers" data={WATER_COOLER_GEOJSON}>
+          <Layer
+            id="water-cooler-pins"
+            source="water-coolers"
+            type="circle"
+            minzoom={14}
+            paint={{
+              'circle-radius': 5,
+              'circle-color': [
+                'match',
+                ['get', 'status'],
+                'verified', '#0288D1',
+                'unverified', '#A52714',
+                'ticketed', '#F57C00',
+                '#9E9E9E',
+              ],
+              'circle-opacity': 0.8,
+              'circle-stroke-width': 1.5,
+              'circle-stroke-color': '#FFFFFF',
             }}
           />
         </GeoJSONSource>
@@ -445,12 +483,21 @@ export default function MapScreen() {
         </View>
       )}
 
-      {/* Zoom prompt when zoomed out too far */}
-      {minStoreys >= 999 && !loading && (
-        <View style={styles.zoomPrompt}>
-          <Text style={styles.zoomPromptText}>Zoom in to see blocks</Text>
-        </View>
-      )}
+      {/* Filter chips — manual storeys filter at top-left */}
+      <View style={styles.filterChips}>
+        {[40, 31, 21, 0].map(floor => (
+          <TouchableOpacity
+            key={floor}
+            style={[styles.filterChip, minFilter === floor && styles.filterChipActive]}
+            onPress={() => setMinFilter(floor)}
+            activeOpacity={0.7}
+          >
+            <Text style={[styles.filterChipText, minFilter === floor && styles.filterChipTextActive]}>
+              {floor === 0 ? 'All' : `${floor}+`}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
 
       {/* Height legend */}
       <View style={[styles.legend, { backgroundColor: isDark ? 'rgba(30,30,30,0.88)' : 'rgba(255,255,255,0.88)' }]}>
@@ -490,6 +537,15 @@ export default function MapScreen() {
         </TouchableOpacity>
       </View>
 
+      {/* Alert/Report button — Waze-style flag, above search bar */}
+      <TouchableOpacity
+        style={[styles.alertBtn, { backgroundColor: isDark ? '#333' : '#FFFFFF' }]}
+        onPress={() => setAlertVisible(true)}
+        activeOpacity={0.8}
+      >
+        <Text style={styles.alertBtnText}>⚑</Text>
+      </TouchableOpacity>
+
       {/* Block Detail Sheet overlay */}
       <BlockDetailSheet
         block={selectedBlock}
@@ -510,6 +566,36 @@ export default function MapScreen() {
         isDark={isDark}
         climbHistory={climbHistory}
       />
+
+      {/* Alert/Report modal */}
+      <Modal visible={alertVisible} transparent animationType="fade" onRequestClose={() => setAlertVisible(false)}>
+        <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setAlertVisible(false)} activeOpacity={1}>
+          <View style={styles.alertModal}>
+            <Text style={[styles.alertTitle, { color: isDark ? '#F9FAFB' : '#111827' }]}>Report nearby...</Text>
+            {['Water Cooler', 'Toilet', 'Food / Shop', 'Hazard / Alert', 'Other'].map((item) => (
+              <TouchableOpacity
+                key={item}
+                style={[styles.alertOption, { borderBottomColor: isDark ? '#374151' : '#F3F4F6' }]}
+                onPress={async () => {
+                  const existing = await storage.getItem('reports');
+                  const existingReports: Array<{ type: string; lat: number; lng: number; at: string }> = existing ? JSON.parse(existing) : [];
+                  existingReports.push({
+                    type: item,
+                    lat: location.latitude ?? 0,
+                    lng: location.longitude ?? 0,
+                    at: new Date().toISOString(),
+                  });
+                  await storage.setItem('reports', JSON.stringify(existingReports));
+                  setAlertVisible(false);
+                  Alert.alert('Reported', `"${item}" logged at your location.`);
+                }}
+              >
+                <Text style={[styles.alertOptionText, { color: isDark ? '#D1D5DB' : '#374151' }]}>{item}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </View>
   );
 }
@@ -548,20 +634,33 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     zIndex: 10,
   },
-  zoomPrompt: {
+  // Filter chips — vertical column at top-left
+  filterChips: {
     position: 'absolute',
-    top: '50%',
-    alignSelf: 'center',
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    borderRadius: 24,
+    top: 52,
+    left: 12,
     zIndex: 10,
+    gap: 6,
   },
-  zoomPromptText: {
+  filterChip: {
+    paddingVertical: 5,
+    paddingHorizontal: 12,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.85)',
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.1)',
+  },
+  filterChipActive: {
+    backgroundColor: '#8B0000',
+    borderColor: '#8B0000',
+  },
+  filterChipText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#374151',
+  },
+  filterChipTextActive: {
     color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
   },
 
   // Bottom bar
@@ -645,5 +744,62 @@ const styles = StyleSheet.create({
   legendLabel: {
     fontSize: 11,
     fontWeight: '600',
+  },
+
+  // Alert button — floating above search bar
+  alertBtn: {
+    position: 'absolute',
+    bottom: 88,
+    right: 16,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 10,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+  },
+  alertBtnText: {
+    fontSize: 18,
+  },
+
+  // Alert modal
+  alertModal: {
+    position: 'absolute',
+    bottom: 140,
+    right: 16,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 4,
+    minWidth: 180,
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 12,
+  },
+  alertTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#111827',
+    paddingHorizontal: 12,
+    paddingBottom: 8,
+    marginBottom: 4,
+  },
+  alertOption: {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#F3F4F6',
+  },
+  alertOptionText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#374151',
   },
 });
