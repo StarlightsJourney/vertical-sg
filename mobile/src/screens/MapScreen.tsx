@@ -20,8 +20,9 @@ import { fetchNearbyBlocks, fetchBlocksInBounds } from '../services/blocks';
 import type { Block, SortMode, BoundsRect } from '../types';
 import BlockDetailSheet from '../components/BlockDetailSheet';
 
-// MapLibre Streets — free demo style, no external font dependencies
-const MAP_STYLE = 'https://demotiles.maplibre.org/style.json';
+// OpenFreeMap Liberty — fixed font glyphs (local copy with MapLibre font server)
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const MAP_STYLE = require('../../assets/map-style.json');
 const RADIUS_PRESETS = [1000, 3000, 5000];
 
 // Default Singapore bounds for initial fetch before map camera settles
