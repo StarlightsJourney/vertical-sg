@@ -6,7 +6,6 @@ import {
   ActivityIndicator,
   TouchableOpacity,
 } from 'react-native';
-import storage from '../utils/storage';
 import {
   Map,
   Camera,
@@ -21,8 +20,13 @@ import { fetchBlocksInBounds } from '../services/blocks';
 import type { Block, BoundsRect } from '../types';
 import BlockDetailSheet from '../components/BlockDetailSheet';
 import SearchScreen from '../components/SearchScreen';
+import storage from '../utils/storage';
 
-const MAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
+// Light (default) and dark map styles for day/night auto-switching
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const LIGHT_STYLE = require('../../assets/map-style.json');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const DARK_STYLE = require('../../assets/map-style-dark.json');
 
 // Default Singapore bounds for initial fetch before map camera settles
 const SG_BOUNDS: BoundsRect = { sw: [103.6, 1.2], ne: [104.0, 1.48] };
@@ -70,7 +74,10 @@ export default function MapScreen() {
   const [starredIds, setStarredIds] = useState<Set<string>>(new Set());
 
   // Auto-detect day/night based on local time
-  const [isDark] = useState(false); // dark mode disabled until style is fixed
+  const [isDark, setIsDark] = useState(() => {
+    const hour = new Date().getHours();
+    return hour < 6 || hour >= 19; // dark mode 7pm-6am
+  });
 
   // Sync ref with state
   blocksRef.current = blocks;
@@ -182,7 +189,6 @@ export default function MapScreen() {
       );
       if (block) {
         setSelectedBlock(block);
-        // Add to recents
         setRecentBlocks((prev) => {
           const filtered = prev.filter((b) => b.block_id !== block.block_id);
           return [block, ...filtered].slice(0, 10);
@@ -206,14 +212,11 @@ export default function MapScreen() {
     setSelectedBlockDist(null);
   }, []);
 
-  const handleToggleStar = useCallback(async (block: Block) => {
+  const handleToggleStar = useCallback((block: Block) => {
     setStarredIds((prev) => {
       const next = new Set(prev);
-      if (next.has(block.block_id)) {
-        next.delete(block.block_id);
-      } else {
-        next.add(block.block_id);
-      }
+      if (next.has(block.block_id)) next.delete(block.block_id);
+      else next.add(block.block_id);
       storage.setItem('starred_blocks', JSON.stringify([...next]));
       return next;
     });
@@ -222,26 +225,15 @@ export default function MapScreen() {
   const handleSelectSearchBlock = useCallback((block: Block) => {
     setSearchVisible(false);
     setSelectedBlock(block);
-    // Fly to the block
     if (block.lat != null && block.lng != null) {
-      cameraRef.current?.flyTo({
-        center: [block.lng, block.lat],
-        zoom: 16,
-        duration: 800,
-      });
+      cameraRef.current?.flyTo({ center: [block.lng, block.lat], zoom: 16, duration: 800 });
     }
-    // Add to recents
     setRecentBlocks((prev) => {
       const filtered = prev.filter((b) => b.block_id !== block.block_id);
       return [block, ...filtered].slice(0, 10);
     });
-    // Compute distance
     if (block.lat != null && block.lng != null && location.latitude) {
-      const km = haversineKm(
-        location.latitude, location.longitude,
-        block.lat, block.lng,
-      );
-      setSelectedBlockDist(km);
+      setSelectedBlockDist(haversineKm(location.latitude, location.longitude, block.lat, block.lng));
     }
   }, [location.latitude, location.longitude]);
 
@@ -272,12 +264,18 @@ export default function MapScreen() {
   useEffect(() => {
     storage.getItem('starred_blocks').then((val) => {
       if (val) {
-        try {
-          const ids: string[] = JSON.parse(val);
-          setStarredIds(new Set(ids));
-        } catch {}
+        try { setStarredIds(new Set(JSON.parse(val))); } catch {}
       }
     });
+  }, []);
+
+  // Check time every 60 seconds for day/night auto-switching
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const hour = new Date().getHours();
+      setIsDark(hour < 6 || hour >= 19);
+    }, 60000);
+    return () => clearInterval(timer);
   }, []);
 
   return (
@@ -285,7 +283,7 @@ export default function MapScreen() {
       <Map
         ref={mapRef}
         style={styles.map}
-        mapStyle={MAP_STYLE}
+        mapStyle={isDark ? DARK_STYLE : LIGHT_STYLE}
         logo={false}
         onPress={handleMapPress}
         onRegionDidChange={handleRegionDidChange}
@@ -397,7 +395,7 @@ export default function MapScreen() {
 
       {/* Search button */}
       <TouchableOpacity
-        style={styles.searchBtn}
+        style={[styles.searchBtn, { backgroundColor: isDark ? '#333' : '#FFFFFF' }]}
         onPress={() => setSearchVisible(true)}
         activeOpacity={0.8}
       >
@@ -433,6 +431,7 @@ export default function MapScreen() {
         onClose={handleCloseDetail}
       />
 
+      {/* Search screen */}
       <SearchScreen
         visible={searchVisible}
         onClose={() => setSearchVisible(false)}
@@ -481,7 +480,7 @@ const styles = StyleSheet.create({
   },
   filterToggle: {
     position: 'absolute',
-    top: 284,
+    top: 214,
     right: 16,
     paddingVertical: 8,
     paddingHorizontal: 14,
@@ -522,10 +521,9 @@ const styles = StyleSheet.create({
     position: 'absolute',
     bottom: 40,
     right: 16,
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: '#FFFFFF',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 10,
@@ -536,13 +534,13 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
   },
   searchBtnText: {
-    fontSize: 20,
+    fontSize: 18,
   },
 
   // Height legend
   legend: {
     position: 'absolute',
-    top: 180,
+    top: 110,
     right: 16,
     backgroundColor: 'rgba(255,255,255,0.92)',
     borderRadius: 12,
