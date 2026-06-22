@@ -408,8 +408,8 @@ export default function MapScreen() {
           duration={500}
         />
 
-        {/* Register custom water droplet icon with SDF mode for color tinting */}
-        <Images images={{ 'water-drop': { source: require('../../assets/water-drop.png'), sdf: true } }} />
+        {/* Register custom water droplet icon */}
+        <Images images={{ 'water-drop': require('../../assets/water-drop.png') }} />
 
         {userLocationGeojson && (
           <GeoJSONSource id="user-location" data={userLocationGeojson}>
@@ -491,13 +491,8 @@ export default function MapScreen() {
               'icon-ignore-placement': true,
             }}
             paint={{
-              'icon-color': ['match', ['get', 'water_type'],
-                'verified', '#06B6D4',
-                'unverified', '#EC4899',
-                'ticketed', '#F59E0B',
-                '#06B6D4'],
               'icon-halo-color': '#FFFFFF',
-              'icon-halo-width': 2,
+              'icon-halo-width': 1.5,
             }}
           />
         </GeoJSONSource>
