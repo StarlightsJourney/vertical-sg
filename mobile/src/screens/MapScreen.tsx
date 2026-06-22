@@ -22,11 +22,8 @@ import type { Block, BoundsRect } from '../types';
 import BlockDetailSheet from '../components/BlockDetailSheet';
 import SearchScreen from '../components/SearchScreen';
 
-// Light (default) and dark map styles for day/night auto-switching
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const LIGHT_STYLE = require('../../assets/map-style.json');
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const DARK_STYLE = require('../../assets/map-style-dark.json');
+const MAP_STYLE = require('../../assets/map-style.json');
 
 // Default Singapore bounds for initial fetch before map camera settles
 const SG_BOUNDS: BoundsRect = { sw: [103.6, 1.2], ne: [104.0, 1.48] };
@@ -74,10 +71,7 @@ export default function MapScreen() {
   const [starredIds, setStarredIds] = useState<Set<string>>(new Set());
 
   // Auto-detect day/night based on local time
-  const [isDark, setIsDark] = useState(() => {
-    const hour = new Date().getHours();
-    return hour < 6 || hour >= 19; // dark mode 7pm-6am
-  });
+  const [isDark] = useState(false); // dark mode disabled until style is fixed
 
   // Sync ref with state
   blocksRef.current = blocks;
@@ -275,16 +269,7 @@ export default function MapScreen() {
     };
   }, []);
 
-  // Check time every 60 seconds for day/night auto-switching
-  useEffect(() => {
-    const timer = setInterval(() => {
-      const hour = new Date().getHours();
-      setIsDark(hour < 6 || hour >= 19);
-    }, 60000);
-    return () => clearInterval(timer);
-  }, []);
-
-  // Load starred blocks from AsyncStorage on mount
+  // Load starred blocks from storage on mount
   useEffect(() => {
     storage.getItem('starred_blocks').then((val) => {
       if (val) {
@@ -301,7 +286,7 @@ export default function MapScreen() {
       <Map
         ref={mapRef}
         style={styles.map}
-        mapStyle={isDark ? DARK_STYLE : LIGHT_STYLE}
+        mapStyle={MAP_STYLE}
         logo={false}
         onPress={handleMapPress}
         onRegionDidChange={handleRegionDidChange}
