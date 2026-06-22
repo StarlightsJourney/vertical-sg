@@ -38,7 +38,7 @@ const WATER_COOLER_GEOJSON: GeoJSON.FeatureCollection = {
   features: WATER_COOLERS_RAW.map((wc) => ({
     type: 'Feature',
     geometry: { type: 'Point', coordinates: [wc.lng, wc.lat] as [number, number] },
-    properties: { name: wc.name, status: wc.status, level: wc.level, temperature: wc.temperature, operator: wc.operator },
+    properties: { name: wc.name, status: wc.status, water_type: wc.status, lat: wc.lat, lng: wc.lng, level: wc.level, temperature: wc.temperature, operator: wc.operator },
   })),
 };
 
@@ -69,6 +69,13 @@ const HEIGHT_TIERS = [
   { label: '40+', color: '#7C3AED' },
 ] as const;
 
+const FILTER_OPTIONS = [
+  { value: 21, label: '21+' },
+  { value: 31, label: '31+' },
+  { value: 40, label: '40+' },
+  { value: 0, label: 'All' },
+] as const;
+
 export default function MapScreen() {
   const location = useLocation();
   const mapRef = useRef<MapRef>(null);
@@ -84,7 +91,8 @@ export default function MapScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [minFilter, setMinFilter] = useState(21);
-  const [pulseOn, setPulseOn] = useState(true);
+  const [pinRadius, setPinRadius] = useState(8);
+  const [pulsePhase, setPulsePhase] = useState(0);
   const [searchVisible, setSearchVisible] = useState(false);
   const [alertVisible, setAlertVisible] = useState(false);
   const [recentBlocks, setRecentBlocks] = useState<Block[]>([]);
@@ -92,6 +100,12 @@ export default function MapScreen() {
   const [climbCounts, setClimbCounts] = useState<Map<string, number>>(new Map());
   const [climbHistory, setClimbHistory] = useState<ClimbLog[]>([]);
   const [tapY, setTapY] = useState<number>(0);
+  const [selectedWaterCooler, setSelectedWaterCooler] = useState<{
+    name: string;
+    type: string;
+    lat: number;
+    lng: number;
+  } | null>(null);
 
   // Auto-detect day/night based on local time
   const [isDark, setIsDark] = useState(() => {
@@ -182,6 +196,12 @@ export default function MapScreen() {
       }
       if (typeof zoom === 'number') {
         zoomRef.current = zoom;
+        // Update pin radius based on zoom level — all same size at same zoom
+        if (zoom < 12) setPinRadius(4);
+        else if (zoom < 13) setPinRadius(6);
+        else if (zoom < 14) setPinRadius(8);
+        else if (zoom < 15) setPinRadius(11);
+        else setPinRadius(14);
       }
 
       // Debounce: wait 300ms after last camera movement
@@ -210,6 +230,7 @@ export default function MapScreen() {
       );
       if (block) {
         setSelectedBlock(block);
+        setSelectedWaterCooler(null); // deselect any water cooler
         setTapY(point[1]);
         setRecentBlocks((prev) => {
           const filtered = prev.filter((b) => b.block_id !== block.block_id);
@@ -226,12 +247,21 @@ export default function MapScreen() {
           setSelectedBlockDist(null);
         }
       }
+    } else if (props.water_type) {
+      setSelectedWaterCooler({
+        name: props.name,
+        type: props.water_type,
+        lat: props.lat,
+        lng: props.lng,
+      });
+      setSelectedBlock(null); // deselect any building
     }
   }, [location.latitude, location.longitude]);
 
   const handleCloseDetail = useCallback(() => {
     setSelectedBlock(null);
     setSelectedBlockDist(null);
+    setSelectedWaterCooler(null);
     setTapY(0);
   }, []);
 
@@ -336,13 +366,22 @@ export default function MapScreen() {
     return () => clearInterval(timer);
   }, []);
 
-  // Pulse timer for user location ring
+  // Smooth pulse for user location ring using sine wave
   useEffect(() => {
+    const start = Date.now();
     const timer = setInterval(() => {
-      setPulseOn((prev) => !prev);
-    }, 1500);
+      setPulsePhase((Date.now() - start) / 1500 * Math.PI * 2);
+    }, 50);
     return () => clearInterval(timer);
   }, []);
+
+  // Compute pulse values for smooth location ring animation
+  const pulseOpacity = 0.15 + 0.15 * Math.sin(pulsePhase);
+  const pulseRadius = 18 + 4 * Math.sin(pulsePhase);
+
+  // Cycling filter: find current index and label
+  const currentFilterIdx = FILTER_OPTIONS.findIndex(f => f.value === minFilter);
+  const currentLabel = FILTER_OPTIONS[currentFilterIdx]?.label ?? '21+';
 
   return (
     <View style={styles.container}>
@@ -371,9 +410,9 @@ export default function MapScreen() {
             {/* Outer pulsing ring */}
             <Layer id="user-location-ring" source="user-location" type="circle"
               paint={{
-                'circle-radius': pulseOn ? 18 : 22,
+                'circle-radius': pulseRadius,
                 'circle-color': '#14B8A6',
-                'circle-opacity': pulseOn ? 0.3 : 0.1,
+                'circle-opacity': pulseOpacity,
                 'circle-stroke-width': 2,
                 'circle-stroke-color': '#14B8A6',
                 'circle-stroke-opacity': 0.5,
@@ -414,19 +453,7 @@ export default function MapScreen() {
                 40,
                 '#7C3AED', // 40+: purple
               ],
-              'circle-radius': [
-                'step',
-                ['get', 'storeys'],
-                4,   // 1-10
-                11,
-                6,   // 11-20
-                21,
-                9,  // 21-30
-                31,
-                12, // 31-39
-                40,
-                15, // 40+
-              ],
+              'circle-radius': pinRadius,
               'circle-stroke-width': [
                 'case',
                 ['get', 'climbed'],
@@ -444,7 +471,7 @@ export default function MapScreen() {
           />
         </GeoJSONSource>
 
-        {/* Water cooler markers — small dots colored by verification status */}
+        {/* Water cooler markers — large distinct circles colored by verification status */}
         <GeoJSONSource id="water-coolers" data={WATER_COOLER_GEOJSON}>
           <Layer
             id="water-cooler-pins"
@@ -452,17 +479,17 @@ export default function MapScreen() {
             type="circle"
             minzoom={14}
             paint={{
-              'circle-radius': 5,
+              'circle-radius': 14,
               'circle-color': [
                 'match',
                 ['get', 'status'],
-                'verified', '#0288D1',
-                'unverified', '#A52714',
-                'ticketed', '#F57C00',
+                'verified', '#06B6D4',
+                'unverified', '#EC4899',
+                'ticketed', '#F59E0B',
                 '#9E9E9E',
               ],
-              'circle-opacity': 0.8,
-              'circle-stroke-width': 1.5,
+              'circle-opacity': 0.9,
+              'circle-stroke-width': 3,
               'circle-stroke-color': '#FFFFFF',
             }}
           />
@@ -483,21 +510,17 @@ export default function MapScreen() {
         </View>
       )}
 
-      {/* Filter chips — manual storeys filter at top-left */}
-      <View style={styles.filterChips}>
-        {[40, 31, 21, 0].map(floor => (
-          <TouchableOpacity
-            key={floor}
-            style={[styles.filterChip, minFilter === floor && styles.filterChipActive]}
-            onPress={() => setMinFilter(floor)}
-            activeOpacity={0.7}
-          >
-            <Text style={[styles.filterChipText, minFilter === floor && styles.filterChipTextActive]}>
-              {floor === 0 ? 'All' : `${floor}+`}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
+      {/* Single cycling filter toggle at top-left */}
+      <TouchableOpacity
+        style={[styles.filterToggle, { backgroundColor: minFilter === 0 ? '#6B7280' : '#8B0000' }]}
+        onPress={() => {
+          const next = (currentFilterIdx + 1) % FILTER_OPTIONS.length;
+          setMinFilter(FILTER_OPTIONS[next].value);
+        }}
+        activeOpacity={0.8}
+      >
+        <Text style={styles.filterToggleText}>{currentLabel}</Text>
+      </TouchableOpacity>
 
       {/* Height legend */}
       <View style={[styles.legend, { backgroundColor: isDark ? 'rgba(30,30,30,0.88)' : 'rgba(255,255,255,0.88)' }]}>
@@ -554,6 +577,23 @@ export default function MapScreen() {
         onLogClimb={handleLogClimb}
         tapY={tapY}
       />
+
+      {/* Water cooler info card */}
+      {selectedWaterCooler && (
+        <View style={styles.wcCard}>
+          <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setSelectedWaterCooler(null)} />
+          <View style={styles.wcCardInner}>
+            <Text style={styles.wcIcon}>💧</Text>
+            <View>
+              <Text style={styles.wcTitle}>Water Cooler</Text>
+              <Text style={styles.wcStatus}>
+                {selectedWaterCooler.type === 'verified' ? '✓ Verified' :
+                 selectedWaterCooler.type === 'unverified' ? '? Unverified' : '🎫 Ticketed'}
+              </Text>
+            </View>
+          </View>
+        </View>
+      )}
 
       {/* Search screen */}
       <SearchScreen
@@ -634,32 +674,24 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     zIndex: 10,
   },
-  // Filter chips — vertical column at top-left
-  filterChips: {
+  // Single cycling filter toggle at top-left
+  filterToggle: {
     position: 'absolute',
     top: 52,
-    left: 12,
+    left: 16,
     zIndex: 10,
-    gap: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    borderRadius: 16,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
   },
-  filterChip: {
-    paddingVertical: 5,
-    paddingHorizontal: 12,
-    borderRadius: 14,
-    backgroundColor: 'rgba(255,255,255,0.85)',
-    borderWidth: 1,
-    borderColor: 'rgba(0,0,0,0.1)',
-  },
-  filterChipActive: {
-    backgroundColor: '#8B0000',
-    borderColor: '#8B0000',
-  },
-  filterChipText: {
-    fontSize: 12,
+  filterToggleText: {
+    fontSize: 13,
     fontWeight: '700',
-    color: '#374151',
-  },
-  filterChipTextActive: {
     color: '#FFFFFF',
   },
 
@@ -801,5 +833,42 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '500',
     color: '#374151',
+  },
+
+  // Water cooler info card
+  wcCard: {
+    position: 'absolute',
+    bottom: 160,
+    left: 16,
+    right: 16,
+    zIndex: 20,
+  },
+  wcCardInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 12,
+  },
+  wcIcon: {
+    fontSize: 28,
+    marginRight: 12,
+  },
+  wcTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  wcStatus: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#6B7280',
+    marginTop: 2,
   },
 });

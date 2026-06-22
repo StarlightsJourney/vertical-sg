@@ -24,11 +24,6 @@ function formatDistance(km: number | null): string {
   return km < 1 ? `${Math.round(km * 1000)}m` : `${km.toFixed(1)}km`;
 }
 
-function formatYear(year: number | null): string {
-  if (year == null) return '--';
-  return String(year);
-}
-
 export default function BlockDetailSheet({ block, distanceKm, onClose, onLogClimb, tapY }: Props) {
   if (!block) return null;
 
@@ -59,12 +54,27 @@ export default function BlockDetailSheet({ block, distanceKm, onClose, onLogClim
           : { top: '30%' },
       ]}>
         <View style={styles.card}>
-          {/* Colored header strip — 4px */}
-          <View style={[styles.headerStrip, { backgroundColor: tier.color }]} />
+          {/* Satellite banner at the top */}
+          {block.lat != null && block.lng != null && (
+            <View>
+              <Image
+                source={{ uri: `https://maps.googleapis.com/maps/api/staticmap?center=${block.lat},${block.lng}&zoom=18&size=320x120&maptype=satellite` }}
+                style={styles.thumbBanner}
+                resizeMode="cover"
+              />
+              {/* Colored header strip overlays on the image */}
+              <View style={[styles.headerStripOverlay, { backgroundColor: tier.color }]} />
+            </View>
+          )}
+
+          {/* Colored header strip — when no satellite image */}
+          {block.lat == null && block.lng == null && (
+            <View style={[styles.headerStrip, { backgroundColor: tier.color }]} />
+          )}
 
           {/* Content */}
           <View style={styles.content}>
-            {/* Row 1: Storeys (big) + address + satellite thumbnail */}
+            {/* Row 1: Storeys (big) + address */}
             <View style={styles.topRow}>
               <View style={styles.storeyBadge}>
                 <Text style={[styles.storeyValue, { color: tier.color }]}>{block.storeys}</Text>
@@ -75,12 +85,6 @@ export default function BlockDetailSheet({ block, distanceKm, onClose, onLogClim
                 <Text style={styles.street} numberOfLines={1}>{block.street}</Text>
                 {block.town && <Text style={styles.town} numberOfLines={1}>{block.town}</Text>}
               </View>
-              {block.lat != null && block.lng != null && (
-                <Image
-                  source={{ uri: `https://maps.googleapis.com/maps/api/staticmap?center=${block.lat},${block.lng}&zoom=17&size=100x100&maptype=satellite` }}
-                  style={styles.thumbImage}
-                />
-              )}
             </View>
 
             {/* Row 2: Quick stats */}
@@ -92,10 +96,6 @@ export default function BlockDetailSheet({ block, distanceKm, onClose, onLogClim
               <View style={styles.stat}>
                 <Text style={styles.statValue}>{formatDistance(distanceKm)}</Text>
                 <Text style={styles.statLabel}>Away</Text>
-              </View>
-              <View style={styles.stat}>
-                <Text style={styles.statValue}>{formatYear(block.year_completed)}</Text>
-                <Text style={styles.statLabel}>Year</Text>
               </View>
             </View>
 
@@ -146,6 +146,7 @@ const styles = StyleSheet.create({
   },
   card: {
     width: '100%',
+    maxWidth: 320,
     backgroundColor: 'rgba(255,255,255,0.92)',
     borderRadius: 20,
     overflow: 'hidden',
@@ -155,24 +156,37 @@ const styles = StyleSheet.create({
     }),
   },
   headerStrip: { height: 4, width: '100%' },
-  content: { paddingHorizontal: 16, paddingVertical: 14 },
+  headerStripOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 4,
+    opacity: 0.7,
+  },
+  thumbBanner: {
+    width: '100%',
+    height: 100,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+  },
+  content: { padding: 14 },
   topRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
   storeyBadge: {
     backgroundColor: 'transparent',
     marginRight: 12,
     alignItems: 'center',
   },
-  storeyValue: { fontSize: 34, fontWeight: '800', lineHeight: 36 },
+  storeyValue: { fontSize: 28, fontWeight: '800', lineHeight: 30 },
   storeyLabel: { fontSize: 10, color: '#9CA3AF', marginTop: 1, letterSpacing: 0.5 },
   addressBlock: { flex: 1 },
-  address: { fontSize: 15, fontWeight: '700', color: '#111827' },
-  street: { fontSize: 13, color: '#6B7280', marginTop: 1 },
+  address: { fontSize: 14, fontWeight: '700', color: '#111827' },
+  street: { fontSize: 12, color: '#6B7280', marginTop: 1 },
   town: { fontSize: 12, color: '#9CA3AF', marginTop: 1 },
-  thumbImage: { width: 80, height: 80, borderRadius: 8, marginLeft: 8 },
-  statsRow: { flexDirection: 'row', marginBottom: 12 },
-  stat: { marginRight: 20 },
-  statValue: { fontSize: 14, fontWeight: '700', color: '#111827' },
-  statLabel: { fontSize: 10, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 1 },
+  statsRow: { flexDirection: 'row', marginBottom: 8 },
+  stat: { marginRight: 16 },
+  statValue: { fontSize: 13, fontWeight: '700', color: '#111827' },
+  statLabel: { fontSize: 9, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 1 },
   qtyRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -205,15 +219,15 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     marginLeft: 2,
   },
-  actionsRow: { flexDirection: 'row', gap: 8 },
+  actionsRow: { flexDirection: 'row', gap: 6 },
   logBtn: {
     flex: 1, backgroundColor: '#10B981', borderRadius: 12,
-    paddingVertical: 10, alignItems: 'center',
+    paddingVertical: 8, alignItems: 'center',
   },
-  logBtnText: { fontSize: 13, fontWeight: '700', color: '#FFF' },
+  logBtnText: { fontSize: 12, fontWeight: '700', color: '#FFF' },
   dirBtn: {
     flex: 1, backgroundColor: '#2563EB', borderRadius: 12,
-    paddingVertical: 10, alignItems: 'center',
+    paddingVertical: 8, alignItems: 'center',
   },
-  dirBtnText: { fontSize: 13, fontWeight: '700', color: '#FFF' },
+  dirBtnText: { fontSize: 12, fontWeight: '700', color: '#FFF' },
 });
