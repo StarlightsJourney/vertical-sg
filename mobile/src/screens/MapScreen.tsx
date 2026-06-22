@@ -20,9 +20,10 @@ import { fetchNearbyBlocks, fetchBlocksInBounds } from '../services/blocks';
 import type { Block, SortMode, BoundsRect } from '../types';
 import BlockDetailSheet from '../components/BlockDetailSheet';
 
-// MapLibre demotiles — basic but reliable, shows pins correctly.
-// Will upgrade to a richer style when we find a reliable free tile provider.
-const MAP_STYLE = 'https://demotiles.maplibre.org/style.json';
+// Local Liberty style — text labels removed (font server unreachable),
+// building layers stripped so they don't cover our block pins.
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const MAP_STYLE = require('../../assets/map-style.json');
 const RADIUS_PRESETS = [1000, 3000, 5000];
 
 // Default Singapore bounds for initial fetch before map camera settles
@@ -240,11 +241,12 @@ export default function MapScreen() {
           clusterRadius={50}
           clusterMaxZoom={14}
         >
-          {/* Cluster background circles */}
+          {/* Cluster background circles — render above all style layers */}
           <Layer
             id="clusters-bg"
             source="blocks"
             type="circle"
+            layerIndex={1000}
             filter={['has', 'point_count']}
             paint={{
               'circle-color': '#2563EB',
@@ -260,6 +262,7 @@ export default function MapScreen() {
             id="clusters"
             source="blocks"
             type="symbol"
+            layerIndex={1001}
             filter={['has', 'point_count']}
             layout={{
               'text-field': ['get', 'point_count'],
@@ -275,6 +278,7 @@ export default function MapScreen() {
             id="unclustered-points"
             source="blocks"
             type="circle"
+            layerIndex={1002}
             filter={['!', ['has', 'point_count']]}
             paint={{
               'circle-color': [
