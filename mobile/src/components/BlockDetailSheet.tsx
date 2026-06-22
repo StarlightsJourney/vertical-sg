@@ -6,14 +6,15 @@ import {
   StyleSheet,
   Platform,
   Dimensions,
+  ScrollView,
 } from 'react-native';
 import * as Linking from 'expo-linking';
 import type { Block } from '../types';
 
 const SCREEN_HEIGHT = Dimensions.get('window').height;
 const MAX_SHEET_HEIGHT = SCREEN_HEIGHT * 0.42;
-// Extra padding for Android gesture navigation bar
-const BOTTOM_INSET = Platform.OS === 'android' ? 56 : 0;
+// Padding to clear the Android gesture navigation bar
+const BOTTOM_INSET = Platform.OS === 'android' ? 32 : 0;
 
 interface BlockDetailSheetProps {
   block: Block | null;
@@ -58,7 +59,11 @@ export default function BlockDetailSheet({
           onPress={onClose}
         />
         <View style={styles.sheet}>
-          <View style={styles.sheetContent}>
+          <ScrollView
+            style={styles.sheetContent}
+            bounces={false}
+            showsVerticalScrollIndicator={false}
+          >
             {/* Drag handle */}
             <View style={styles.dragHandle} />
 
@@ -161,7 +166,7 @@ export default function BlockDetailSheet({
                 </Text>
               )}
             </View>
-          </View>
+          </ScrollView>
         </View>
       </View>
     </Modal>

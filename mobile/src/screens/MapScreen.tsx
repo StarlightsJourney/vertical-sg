@@ -11,6 +11,7 @@ import {
   Camera,
   GeoJSONSource,
   Layer,
+  UserLocation,
   type MapRef,
   type CameraRef,
 } from '@maplibre/maplibre-react-native';
@@ -260,6 +261,8 @@ export default function MapScreen() {
           duration={500}
         />
 
+        <UserLocation />
+
         <GeoJSONSource
           id="blocks"
           data={geojson}
@@ -284,17 +287,17 @@ export default function MapScreen() {
               'circle-radius': [
                 'step',
                 ['get', 'storeys'],
-                10,  // 1-10
+                6,   // 1-10
                 11,
-                12,  // 11-20
+                8,   // 11-20
                 21,
-                15,  // 21-30
+                10,  // 21-30
                 31,
-                18,  // 31+
+                13,  // 31+
               ],
-              'circle-stroke-width': 2,
+              'circle-stroke-width': 1.5,
               'circle-stroke-color': '#ffffff',
-              'circle-opacity': 0.9,
+              'circle-opacity': 0.85,
             }}
           />
         </GeoJSONSource>
