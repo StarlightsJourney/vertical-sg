@@ -13,6 +13,7 @@ import {
   Camera,
   GeoJSONSource,
   Layer,
+  Marker,
   type MapRef,
   type CameraRef,
 } from '@maplibre/maplibre-react-native';
@@ -32,17 +33,6 @@ const DARK_STYLE = require('../../assets/map-style-dark.json');
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const WATER_COOLERS_RAW: Array<{ name: string; lat: number; lng: number; status: string; level: string; temperature: string; operator: string }> = require('../../assets/water-coolers.json');
-
-const WATER_COOLER_GEOJSON: GeoJSON.FeatureCollection = {
-  type: 'FeatureCollection',
-  features: WATER_COOLERS_RAW
-    .filter((wc) => wc.lat != null && wc.lng != null && !isNaN(wc.lat) && !isNaN(wc.lng))
-    .map((wc) => ({
-    type: 'Feature',
-    geometry: { type: 'Point', coordinates: [wc.lng, wc.lat] as [number, number] },
-    properties: { name: wc.name, status: wc.status, water_type: wc.status, lat: wc.lat, lng: wc.lng, level: wc.level, temperature: wc.temperature, operator: wc.operator },
-  })),
-};
 
 // Default Singapore bounds for initial fetch before map camera settles
 const SG_BOUNDS: BoundsRect = { sw: [103.6, 1.2], ne: [104.0, 1.48] };
@@ -407,30 +397,30 @@ export default function MapScreen() {
           duration={500}
         />
 
-        {/* Water cooler markers — ★ star symbol, tinted by water_type */}
-        <GeoJSONSource id="water-coolers" data={WATER_COOLER_GEOJSON}>
-          <Layer
-            id="wc-star"
-            source="water-coolers"
-            filter={['has', 'water_type']}
-            type="symbol"
-            layout={{
-              'text-field': '★',
-              'text-size': 20,
-              'text-allow-overlap': true,
-              'text-ignore-placement': true,
-            }}
-            paint={{
-              'text-color': ['match', ['get', 'water_type'],
-                'verified', '#06B6D4',
-                'unverified', '#EC4899',
-                'ticketed', '#F59E0B',
-                '#06B6D4'],
-              'text-halo-color': '#FFFFFF',
-              'text-halo-width': 2,
-            }}
-          />
-        </GeoJSONSource>
+        {/* Water cooler markers — Ionicons rendered as Marker components */}
+        {zoomRef.current >= 14 && WATER_COOLERS_RAW.filter(wc => wc.lat && wc.lng).map((wc, i) => (
+          <Marker
+            key={`wc-${i}`}
+            lngLat={[wc.lng, wc.lat]}
+            anchor="center"
+          >
+            <View style={{
+              width: 20, height: 20, borderRadius: 10,
+              backgroundColor: '#FFFFFF',
+              justifyContent: 'center', alignItems: 'center',
+              elevation: 2,
+            }}>
+              <Ionicons
+                name="water-outline"
+                size={14}
+                color={
+                  wc.status === 'verified' ? '#06B6D4' :
+                  wc.status === 'unverified' ? '#EC4899' : '#F59E0B'
+                }
+              />
+            </View>
+          </Marker>
+        ))}
 
         {userLocationGeojson && (
           <GeoJSONSource id="user-location" data={userLocationGeojson}>
@@ -498,25 +488,6 @@ export default function MapScreen() {
           />
         </GeoJSONSource>
 
-        {/* Water cooler markers — SDF droplet icon, tinted by water_type */}
-        <GeoJSONSource id="water-coolers" data={WATER_COOLER_GEOJSON}>
-          <Layer
-            id="wc-droplet"
-            source="water-coolers"
-            filter={['has', 'water_type']}
-            type="symbol"
-            layout={{
-              'icon-image': 'water-drop',
-              'icon-size': 0.7,
-              'icon-allow-overlap': true,
-              'icon-ignore-placement': true,
-            }}
-            paint={{
-              'icon-halo-color': '#FFFFFF',
-              'icon-halo-width': 1.5,
-            }}
-          />
-        </GeoJSONSource>
       </MapView>
 
       {/* Error banner */}
