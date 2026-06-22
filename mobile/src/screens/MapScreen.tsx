@@ -86,6 +86,7 @@ export default function MapScreen() {
   const [error, setError] = useState<string | null>(null);
   const [minFilter, setMinFilter] = useState(21);
   const [pinRadius, setPinRadius] = useState(8);
+  const [zoom, setZoom] = useState(13);
   const [pulsePhase, setPulsePhase] = useState(0);
   const [searchVisible, setSearchVisible] = useState(false);
   const [alertVisible, setAlertVisible] = useState(false);
@@ -190,6 +191,7 @@ export default function MapScreen() {
       }
       if (typeof zoom === 'number') {
         zoomRef.current = zoom;
+        setZoom(zoom);
         // Update pin radius based on zoom level — all same size at same zoom
         if (zoom < 12) setPinRadius(4);
         else if (zoom < 13) setPinRadius(6);
@@ -398,7 +400,7 @@ export default function MapScreen() {
         />
 
         {/* Water cooler markers — Ionicons rendered as Marker components */}
-        {zoomRef.current >= 14 && WATER_COOLERS_RAW.filter(wc => wc.lat && wc.lng).map((wc, i) => (
+        {zoom >= 14 && WATER_COOLERS_RAW.filter(wc => wc.lat && wc.lng).map((wc, i) => (
           <Marker
             key={`wc-${i}`}
             lngLat={[wc.lng, wc.lat]}
