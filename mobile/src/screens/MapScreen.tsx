@@ -241,12 +241,10 @@ export default function MapScreen() {
           clusterRadius={50}
           clusterMaxZoom={14}
         >
-          {/* Cluster background circles — render above all style layers */}
+          {/* Cluster background circles */}
           <Layer
             id="clusters-bg"
-            source="blocks"
             type="circle"
-            layerIndex={1000}
             filter={['has', 'point_count']}
             paint={{
               'circle-color': '#2563EB',
@@ -260,9 +258,7 @@ export default function MapScreen() {
           {/* Cluster count labels */}
           <Layer
             id="clusters"
-            source="blocks"
             type="symbol"
-            layerIndex={1001}
             filter={['has', 'point_count']}
             layout={{
               'text-field': ['get', 'point_count'],
@@ -276,9 +272,7 @@ export default function MapScreen() {
           {/* Individual block points — coloured circles by height tier */}
           <Layer
             id="unclustered-points"
-            source="blocks"
             type="circle"
-            layerIndex={1002}
             filter={['!', ['has', 'point_count']]}
             paint={{
               'circle-color': [
