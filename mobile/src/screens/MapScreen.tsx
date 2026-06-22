@@ -20,10 +20,10 @@ import { fetchNearbyBlocks, fetchBlocksInBounds } from '../services/blocks';
 import type { Block, SortMode, BoundsRect } from '../types';
 import BlockDetailSheet from '../components/BlockDetailSheet';
 
-// Local Liberty style — text labels removed (font server unreachable),
-// building layers stripped so they don't cover our block pins.
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const MAP_STYLE = require('../../assets/map-style.json');
+// MapLibre demotiles — works reliably, shows pins correctly.
+// To upgrade to a proper map: sign up for MapTiler (free tier, map-tiler.com)
+// and replace this URL with your MapTiler style URL.
+const MAP_STYLE = 'https://demotiles.maplibre.org/style.json';
 const RADIUS_PRESETS = [1000, 3000, 5000];
 
 // Default Singapore bounds for initial fetch before map camera settles
