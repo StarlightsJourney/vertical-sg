@@ -495,8 +495,8 @@ export default function MapScreen() {
           </Marker>
         )})}
 
-        {/* Pending report markers — amber, semi-transparent, tappable */}
-        {pendingReports.filter(r => r.lat && r.lng).map((r, i) => {
+        {/* Pending report markers — gray, semi-transparent, tappable, zoom >= 13 */}
+        {zoom >= 13 && pendingReports.filter(r => r.lat && r.lng).map((r, i) => {
           const pIcon = r.type === 'Toilet' ? 'male-female-outline' :
                         r.type === 'Food / Shop' ? 'cafe-outline' : 'water-outline';
           return (
