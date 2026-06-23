@@ -14,7 +14,6 @@ import {
   Camera,
   GeoJSONSource,
   Layer,
-  Marker,
   type MapRef,
   type CameraRef,
 } from '@maplibre/maplibre-react-native';
@@ -89,7 +88,6 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [minFilter, setMinFilter] = useState(21);
-  const [zoom, setZoom] = useState(13);
   const [pulsePhase, setPulsePhase] = useState(0);
   const [searchVisible, setSearchVisible] = useState(false);
   const [alertVisible, setAlertVisible] = useState(false);
@@ -200,7 +198,6 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
       if (ev.center) setPlacementCenter(ev.center as [number, number]);
       if (typeof zoom === 'number') {
         zoomRef.current = zoom;
-        setZoom(zoom);
       }
 
       // Debounce: wait 600ms after last camera movement
@@ -416,93 +413,92 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
         />
 
         {/* Water cooler markers — Ionicons rendered as Marker components */}
-        {zoom >= 13 && WATER_COOLERS_RAW.filter(wc => wc.lat && wc.lng).map((wc, i) => (
-          <Marker
-            key={`wc-${i}`}
-            lngLat={[wc.lng, wc.lat]}
-            anchor="center"
-            onPress={() => setSelectedWaterCooler({
-              name: wc.name,
-              type: wc.status,
-              lat: wc.lat,
-              lng: wc.lng,
-            })}
-          >
-            <View style={{
-              width: 22, height: 22, borderRadius: 11,
-              backgroundColor: isDark ? 'rgba(30,30,30,0.9)' : '#FFFFFF',
-              justifyContent: 'center', alignItems: 'center',
-              elevation: 3,
-            }}>
-              <Ionicons
-                name="water-outline"
-                size={14}
-                color={
-                  wc.status === 'verified' ? '#06B6D4' :
-                  wc.status === 'unverified' ? '#EC4899' : '#F59E0B'
-                }
-              />
-            </View>
-          </Marker>
-        ))}
+        {/* Water cooler markers — native layers for smooth panning */}
+        <GeoJSONSource
+          id="water-coolers"
+          data={useMemo(() => ({
+            type: 'FeatureCollection' as const,
+            features: WATER_COOLERS_RAW.filter(wc => wc.lat && wc.lng).map(wc => ({
+              type: 'Feature' as const,
+              geometry: { type: 'Point' as const, coordinates: [wc.lng, wc.lat] as [number, number] },
+              properties: { name: wc.name, status: wc.status, water_type: wc.status },
+            })),
+          }), [])}
+        >
+          {/* White outer ring */}
+          <Layer id="wc-outer" source="water-coolers" filter={['has', 'water_type']} type="circle" minzoom={13}
+            paint={{
+              'circle-radius': 10,
+              'circle-color': '#FFFFFF',
+              'circle-opacity': 1,
+            }}
+          />
+          {/* Colored inner dot */}
+          <Layer id="wc-inner" source="water-coolers" filter={['has', 'water_type']} type="circle" minzoom={13}
+            paint={{
+              'circle-radius': 6,
+              'circle-color': ['match', ['get', 'water_type'],
+                'verified', '#06B6D4',
+                'unverified', '#EC4899',
+                '#06B6D4'],
+              'circle-opacity': 1,
+            }}
+          />
+        </GeoJSONSource>
 
-        {/* Amenity markers — toilets, shops, medical */}
-        {zoom >= 13 && AMENITIES_RAW.filter(a => a.lat && a.lng).map((a, i) => {
-          const iconName = a.type === 'toilet' ? 'male-female-outline' :
-                           a.type === 'shop' ? 'cafe-outline' : 'cafe-outline';
-          const iconColor = a.type === 'toilet' ? '#8B5CF6' :
-                            a.type === 'shop' ? '#F59E0B' : '#F59E0B';
-          return (
-          <Marker
-            key={`am-${i}`}
-            lngLat={[a.lng, a.lat]}
-            anchor="center"
-            onPress={() => setSelectedWaterCooler({
-              name: a.name,
-              type: a.type,
-              lat: a.lat,
-              lng: a.lng,
-            })}
-          >
-            <View style={{
-              width: 22, height: 22, borderRadius: 11,
-              backgroundColor: isDark ? 'rgba(30,30,30,0.9)' : '#FFFFFF',
-              justifyContent: 'center', alignItems: 'center',
-              elevation: 3,
-            }}>
-              <Ionicons
-                name={iconName as any}
-                size={14}
-                color={iconColor}
-              />
-            </View>
-          </Marker>
-        )})}
+        {/* Amenity markers — toilets, shops (native layers) */}
+        <GeoJSONSource
+          id="amenities"
+          data={useMemo(() => ({
+            type: 'FeatureCollection' as const,
+            features: AMENITIES_RAW.filter(a => a.lat && a.lng).map(a => ({
+              type: 'Feature' as const,
+              geometry: { type: 'Point' as const, coordinates: [a.lng, a.lat] as [number, number] },
+              properties: { name: a.name, type: a.type },
+            })),
+          }), [])}
+        >
+          <Layer id="am-outer" source="amenities" filter={['has', 'type']} type="circle" minzoom={13}
+            paint={{
+              'circle-radius': 10,
+              'circle-color': '#FFFFFF',
+              'circle-opacity': 1,
+            }}
+          />
+          <Layer id="am-inner" source="amenities" filter={['has', 'type']} type="circle" minzoom={13}
+            paint={{
+              'circle-radius': 6,
+              'circle-color': ['match', ['get', 'type'],
+                'toilet', '#8B5CF6',
+                'shop', '#F59E0B',
+                '#8B5CF6'],
+              'circle-opacity': 1,
+            }}
+          />
+        </GeoJSONSource>
 
-        {/* Pending report markers — gray, semi-transparent, tappable, zoom >= 13 */}
-        {zoom >= 13 && pendingReports.filter(r => r.lat && r.lng).map((r, i) => {
-          const pIcon = r.type === 'Toilet' ? 'male-female-outline' :
-                        r.type === 'Food / Shop' ? 'cafe-outline' : 'water-outline';
-          return (
-          <Marker
-            key={`pending-${i}`}
-            lngLat={[r.lng, r.lat]}
-            anchor="center"
-            onPress={() => setSelectedWaterCooler({
-              name: r.name, type: `unverified-${r.type}`,
-              lat: r.lat, lng: r.lng,
-            })}
+        {/* Pending reports — native layer, gray, zoom >= 13 */}
+        {pendingReports.length > 0 && (
+          <GeoJSONSource
+            id="pending-reports"
+            data={useMemo(() => ({
+              type: 'FeatureCollection' as const,
+              features: pendingReports.filter(r => r.lat && r.lng).map(r => ({
+                type: 'Feature' as const,
+                geometry: { type: 'Point' as const, coordinates: [r.lng, r.lat] as [number, number] },
+                properties: { name: r.name, type: r.type, pending: true },
+              })),
+            }), [pendingReports])}
           >
-            <View style={{
-              width: 22, height: 22, borderRadius: 11,
-              backgroundColor: isDark ? 'rgba(30,30,30,0.8)' : 'rgba(255,255,255,0.8)',
-              justifyContent: 'center', alignItems: 'center',
-              borderWidth: 2, borderColor: '#9CA3AF',
-            }}>
-              <Ionicons name={pIcon as any} size={14} color="#9CA3AF" />
-            </View>
-          </Marker>
-        )})}
+            <Layer id="pending-outer" source="pending-reports" filter={['has', 'pending']} type="circle" minzoom={13}
+              paint={{
+                'circle-radius': 8,
+                'circle-color': '#9CA3AF',
+                'circle-opacity': 0.7,
+              }}
+            />
+          </GeoJSONSource>
+        )}
 
         {userLocationGeojson && (
           <GeoJSONSource id="user-location" data={userLocationGeojson}>
