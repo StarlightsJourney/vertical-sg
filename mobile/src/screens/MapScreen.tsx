@@ -416,7 +416,7 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
         />
 
         {/* Water cooler icons */}
-        {zoom >= 13 && WATER_COOLERS_RAW.filter(wc => wc.lat && wc.lng).map((wc, i) => (
+        {zoom >= 11 && WATER_COOLERS_RAW.filter(wc => wc.lat && wc.lng).map((wc, i) => (
           <Marker key={`wc-${i}`} lngLat={[wc.lng, wc.lat]} anchor="center"
             onPress={() => setSelectedWaterCooler({ name: wc.name, type: wc.status, lat: wc.lat, lng: wc.lng })}>
             <View style={mStyles.marker}>
@@ -425,7 +425,7 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
           </Marker>
         ))}
         {/* Amenity icons (toilets, shops) */}
-        {zoom >= 13 && AMENITIES_RAW.filter(a => a.lat && a.lng).map((a, i) => (
+        {zoom >= 11 && AMENITIES_RAW.filter(a => a.lat && a.lng).map((a, i) => (
           <Marker key={`am-${i}`} lngLat={[a.lng, a.lat]} anchor="center"
             onPress={() => setSelectedWaterCooler({ name: a.name, type: a.type, lat: a.lat, lng: a.lng })}>
             <View style={mStyles.marker}>
@@ -434,7 +434,7 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
           </Marker>
         ))}
         {/* Pending report icons */}
-        {zoom >= 13 && pendingReports.filter(r => r.lat && r.lng).map((r, i) => (
+        {zoom >= 11 && pendingReports.filter(r => r.lat && r.lng).map((r, i) => (
           <Marker key={`pending-${i}`} lngLat={[r.lng, r.lat]} anchor="center"
             onPress={() => setSelectedWaterCooler({ name: r.name, type: `unverified-${r.type}`, lat: r.lat, lng: r.lng })}>
             <View style={mStyles.markerPending}>
