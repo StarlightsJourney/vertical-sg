@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import Ionicons from '@expo/vector-icons/Ionicons';
@@ -18,22 +18,33 @@ const TABS = [
 export default function App() {
   const [splashDone, setSplashDone] = useState(false);
   const [activeTab, setActiveTab] = useState('map');
+  const [isDark, setIsDark] = useState(() => {
+    const h = new Date().getHours();
+    return h < 6 || h >= 19;
+  });
+
   const handleSplashFinish = useCallback(() => setSplashDone(true), []);
+
+  useEffect(() => {
+    const t = setInterval(() => {
+      const h = new Date().getHours();
+      setIsDark(h < 6 || h >= 19);
+    }, 60000);
+    return () => clearInterval(t);
+  }, []);
 
   return (
     <>
-      <StatusBar style="dark" />
+      <StatusBar style={isDark ? 'light' : 'dark'} />
       <View style={styles.container}>
-        {/* Screen area */}
         <View style={styles.screen}>
           {activeTab === 'social' && <SocialScreen />}
           {activeTab === 'climbs' && <ClimbsScreen />}
-          {activeTab === 'map' && <MapScreen />}
+          {activeTab === 'map' && <MapScreen isDark={isDark} />}
           {activeTab === 'profile' && <ProfileScreen />}
         </View>
 
-        {/* Custom tab bar — zero native deps */}
-        <View style={styles.tabBar}>
+        <View style={[styles.tabBar, { backgroundColor: isDark ? '#1F2937' : '#FFFFFF', borderTopColor: isDark ? '#374151' : '#F3F4F6' }]}>
           {TABS.map((tab) => {
             const active = activeTab === tab.key;
             return (
@@ -43,19 +54,8 @@ export default function App() {
                 onPress={() => setActiveTab(tab.key)}
                 activeOpacity={0.7}
               >
-                <Ionicons
-                  name={tab.icon}
-                  size={22}
-                  color={active ? '#2563EB' : '#9CA3AF'}
-                />
-                <Text
-                  style={[
-                    styles.tabLabel,
-                    { color: active ? '#2563EB' : '#9CA3AF' },
-                  ]}
-                >
-                  {tab.label}
-                </Text>
+                <Ionicons name={tab.icon} size={22} color={active ? '#60A5FA' : (isDark ? '#9CA3AF' : '#9CA3AF')} />
+                <Text style={[styles.tabLabel, { color: active ? '#60A5FA' : (isDark ? '#9CA3AF' : '#9CA3AF') }]}>{tab.label}</Text>
               </TouchableOpacity>
             );
           })}
@@ -71,20 +71,10 @@ const styles = StyleSheet.create({
   screen: { flex: 1 },
   tabBar: {
     flexDirection: 'row',
-    backgroundColor: '#FFFFFF',
     borderTopWidth: 1,
-    borderTopColor: '#F3F4F6',
     paddingBottom: Platform.OS === 'android' ? 36 : 6,
     paddingTop: 6,
   },
-  tab: {
-    flex: 1,
-    alignItems: 'center',
-    paddingVertical: 4,
-  },
-  tabLabel: {
-    fontSize: 10,
-    fontWeight: '600',
-    marginTop: 2,
-  },
+  tab: { flex: 1, alignItems: 'center', paddingVertical: 4 },
+  tabLabel: { fontSize: 10, fontWeight: '600', marginTop: 2 },
 });

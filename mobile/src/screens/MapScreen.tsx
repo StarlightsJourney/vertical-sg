@@ -73,7 +73,7 @@ const FILTER_OPTIONS = [
 
 const FILTER_COLORS: Record<number, string> = { 21: '#FF3B30', 31: '#8B0000', 40: '#7C3AED', 0: '#6B7280' };
 
-export default function MapScreen() {
+export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) {
   const location = useLocation();
   const mapRef = useRef<MapRef>(null);
   const cameraRef = useRef<CameraRef>(null);
@@ -110,20 +110,11 @@ export default function MapScreen() {
     lng: number;
   } | null>(null);
 
-  // Auto-detect day/night based on local time
-  const [isDark, setIsDark] = useState(() => {
+  // Use prop if provided (from App.tsx tab bar), otherwise auto-detect
+  const isDark = isDarkProp ?? (() => {
     const hour = new Date().getHours();
     return hour < 6 || hour >= 19;
-  });
-
-  // Check every 60s for day/night transition
-  useEffect(() => {
-    const t = setInterval(() => {
-      const h = new Date().getHours();
-      setIsDark(h < 6 || h >= 19);
-    }, 60000);
-    return () => clearInterval(t);
-  }, []);
+  })();
 
   // Sync ref with state
   blocksRef.current = blocks;
@@ -888,7 +879,7 @@ const styles = StyleSheet.create({
   // Bottom bar
   bottomBar: {
     position: 'absolute',
-    bottom: 80,
+    bottom: 52,
     left: 16,
     right: 16,
     flexDirection: 'row',
