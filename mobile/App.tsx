@@ -1,57 +1,90 @@
-import { NavigationContainer } from '@react-navigation/native';
-import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import Ionicons from '@expo/vector-icons/Ionicons';
 import { useState, useCallback } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import AnimatedSplash from './src/components/AnimatedSplash';
 import MapScreen from './src/screens/MapScreen';
 import SocialScreen from './src/screens/SocialScreen';
 import ClimbsScreen from './src/screens/ClimbsScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
 
-const Tab = createBottomTabNavigator();
+const TABS = [
+  { key: 'social', label: 'Social', icon: 'people-outline' as const },
+  { key: 'climbs', label: 'My Climbs', icon: 'trending-up-outline' as const },
+  { key: 'map', label: 'Map', icon: 'map-outline' as const },
+  { key: 'profile', label: 'Profile', icon: 'person-outline' as const },
+];
 
 export default function App() {
   const [splashDone, setSplashDone] = useState(false);
+  const [activeTab, setActiveTab] = useState('map');
   const handleSplashFinish = useCallback(() => setSplashDone(true), []);
 
   return (
     <>
       <StatusBar style="dark" />
-      <NavigationContainer>
-        <Tab.Navigator
-          screenOptions={({ route }) => ({
-            headerShown: false,
-            tabBarIcon: ({ color, size }) => {
-              const icons: Record<string, keyof typeof Ionicons.glyphMap> = {
-                Social: 'people-outline',
-                'My Climbs': 'trending-up-outline',
-                Map: 'map-outline',
-                Profile: 'person-outline',
-              };
-              return <Ionicons name={icons[route.name]} size={size} color={color} />;
-            },
-            tabBarActiveTintColor: '#2563EB',
-            tabBarInactiveTintColor: '#9CA3AF',
-            tabBarStyle: {
-              backgroundColor: '#FFFFFF',
-              borderTopColor: '#F3F4F6',
-              paddingBottom: 4,
-              height: 56,
-            },
-            tabBarLabelStyle: {
-              fontSize: 11,
-              fontWeight: '600',
-            },
+      <View style={styles.container}>
+        {/* Screen area */}
+        <View style={styles.screen}>
+          {activeTab === 'social' && <SocialScreen />}
+          {activeTab === 'climbs' && <ClimbsScreen />}
+          {activeTab === 'map' && <MapScreen />}
+          {activeTab === 'profile' && <ProfileScreen />}
+        </View>
+
+        {/* Custom tab bar — zero native deps */}
+        <View style={styles.tabBar}>
+          {TABS.map((tab) => {
+            const active = activeTab === tab.key;
+            return (
+              <TouchableOpacity
+                key={tab.key}
+                style={styles.tab}
+                onPress={() => setActiveTab(tab.key)}
+                activeOpacity={0.7}
+              >
+                <Ionicons
+                  name={tab.icon}
+                  size={22}
+                  color={active ? '#2563EB' : '#9CA3AF'}
+                />
+                <Text
+                  style={[
+                    styles.tabLabel,
+                    { color: active ? '#2563EB' : '#9CA3AF' },
+                  ]}
+                >
+                  {tab.label}
+                </Text>
+              </TouchableOpacity>
+            );
           })}
-        >
-          <Tab.Screen name="Social" component={SocialScreen} />
-          <Tab.Screen name="My Climbs" component={ClimbsScreen} />
-          <Tab.Screen name="Map" component={MapScreen} />
-          <Tab.Screen name="Profile" component={ProfileScreen} />
-        </Tab.Navigator>
-      </NavigationContainer>
+        </View>
+      </View>
       {!splashDone && <AnimatedSplash onFinish={handleSplashFinish} />}
     </>
   );
 }
+
+const styles = StyleSheet.create({
+  container: { flex: 1 },
+  screen: { flex: 1 },
+  tabBar: {
+    flexDirection: 'row',
+    backgroundColor: '#FFFFFF',
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
+    paddingBottom: 6,
+    paddingTop: 6,
+  },
+  tab: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 4,
+  },
+  tabLabel: {
+    fontSize: 10,
+    fontWeight: '600',
+    marginTop: 2,
+  },
+});
