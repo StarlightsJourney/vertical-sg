@@ -561,7 +561,7 @@ export default function MapScreen() {
                 40,
                 '#7C3AED', // 40+: purple
               ],
-              'circle-radius': 7,
+              'circle-radius': 5,
               'circle-stroke-width': [
                 'case',
                 ['get', 'climbed'],
