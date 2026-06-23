@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   Modal,
   Alert,
+  Linking,
 } from 'react-native';
 import {
   Map as MapView,
@@ -107,8 +108,17 @@ export default function MapScreen() {
   // Auto-detect day/night based on local time
   const [isDark, setIsDark] = useState(() => {
     const hour = new Date().getHours();
-    return hour < 6 || hour >= 19; // dark mode 7pm-6am
+    return hour < 6 || hour >= 19;
   });
+
+  // Check every 60s for day/night transition
+  useEffect(() => {
+    const t = setInterval(() => {
+      const h = new Date().getHours();
+      setIsDark(h < 6 || h >= 19);
+    }, 60000);
+    return () => clearInterval(t);
+  }, []);
 
   // Sync ref with state
   blocksRef.current = blocks;
@@ -666,6 +676,15 @@ export default function MapScreen() {
                 {selectedWaterCooler.name}
               </Text>
             )}
+            <TouchableOpacity style={{ marginTop: 6 }}
+              onPress={() => {
+                const { lat, lng } = selectedWaterCooler;
+                if (lat && lng) {
+                  Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`);
+                }
+              }}>
+              <Text style={{ fontSize: 11, color: '#2563EB', fontWeight: '600' }}>Get Directions ↗</Text>
+            </TouchableOpacity>
           </View>
         </View>
       )}
