@@ -415,9 +415,7 @@ export default function MapScreen() {
         />
 
         {/* Water cooler markers — Ionicons rendered as Marker components */}
-        {WATER_COOLERS_RAW.filter(wc => wc.lat && wc.lng).map((wc, i) => {
-          const wcScale = Math.max(0.5, Math.min(1.2, pinRadius / 8));
-          return (
+        {WATER_COOLERS_RAW.filter(wc => wc.lat && wc.lng).map((wc, i) => (
           <Marker
             key={`wc-${i}`}
             lngLat={[wc.lng, wc.lat]}
@@ -430,17 +428,16 @@ export default function MapScreen() {
             })}
           >
             <View style={{
-              width: Math.round(28 * wcScale),
-              height: Math.round(28 * wcScale),
-              borderRadius: Math.round(14 * wcScale),
+              width: Math.max(14, Math.round(pinRadius * 2.5)),
+              height: Math.max(14, Math.round(pinRadius * 2.5)),
+              borderRadius: Math.max(7, Math.round(pinRadius * 1.25)),
               backgroundColor: isDark ? 'rgba(30,30,30,0.9)' : '#FFFFFF',
-              justifyContent: 'center',
-              alignItems: 'center',
+              justifyContent: 'center', alignItems: 'center',
               elevation: 3,
             }}>
               <Ionicons
                 name="water-outline"
-                size={Math.round(18 * wcScale)}
+                size={Math.max(10, Math.round(pinRadius * 1.6))}
                 color={
                   wc.status === 'verified' ? '#06B6D4' :
                   wc.status === 'unverified' ? '#EC4899' : '#F59E0B'
@@ -448,14 +445,14 @@ export default function MapScreen() {
               />
             </View>
           </Marker>
-        )})}
+        ))}
 
         {/* Amenity markers — toilets, shops, medical */}
         {AMENITIES_RAW.filter(a => a.lat && a.lng).map((a, i) => {
-          const iconName = a.type === 'toilet' ? 'accessibility-outline' :
-                           a.type === 'shop' ? 'cafe-outline' : 'medkit-outline';
+          const iconName = a.type === 'toilet' ? 'man-outline' :
+                           a.type === 'shop' ? 'cafe-outline' : 'cafe-outline';
           const iconColor = a.type === 'toilet' ? '#8B5CF6' :
-                            a.type === 'shop' ? '#F59E0B' : '#EF4444';
+                            a.type === 'shop' ? '#F59E0B' : '#F59E0B';
           return (
           <Marker
             key={`am-${i}`}
