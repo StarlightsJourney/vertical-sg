@@ -449,7 +449,7 @@ export default function MapScreen() {
 
         {/* Amenity markers — toilets, shops, medical */}
         {AMENITIES_RAW.filter(a => a.lat && a.lng).map((a, i) => {
-          const iconName = a.type === 'toilet' ? 'man-outline' :
+          const iconName = a.type === 'toilet' ? 'male-female-outline' :
                            a.type === 'shop' ? 'cafe-outline' : 'cafe-outline';
           const iconColor = a.type === 'toilet' ? '#8B5CF6' :
                             a.type === 'shop' ? '#F59E0B' : '#F59E0B';
@@ -688,11 +688,8 @@ export default function MapScreen() {
             <View style={styles.alertGridItems}>
               {[
                 { icon: 'water-outline', label: 'Water Cooler', color: '#06B6D4' },
-                { icon: 'accessibility-outline', label: 'Toilet', color: '#8B5CF6' },
+                { icon: 'male-female-outline', label: 'Toilet', color: '#8B5CF6' },
                 { icon: 'cafe-outline', label: 'Food / Shop', color: '#F59E0B' },
-                { icon: 'warning-outline', label: 'Hazard', color: '#EF4444' },
-                { icon: 'lock-closed-outline', label: 'Closed Access', color: '#6B7280' },
-                { icon: 'ellipsis-horizontal', label: 'Other', color: '#3B82F6' },
               ].map((item) => (
                 <TouchableOpacity
                   key={item.label}
