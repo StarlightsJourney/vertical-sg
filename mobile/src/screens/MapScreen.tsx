@@ -439,21 +439,22 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
           duration={500}
         />
 
-        {/* Water cooler markers — Ionicons rendered as Marker components */}
         {/* Water cooler markers — native layers for smooth panning */}
         <GeoJSONSource id="water-coolers" data={waterCoolerGeojson}>
           {/* White outer ring */}
           <Layer id="wc-outer" source="water-coolers" filter={['has', 'water_type']} type="circle" minzoom={13}
             paint={{
-              'circle-radius': 10,
+              'circle-radius': 12,
               'circle-color': '#FFFFFF',
               'circle-opacity': 1,
+              'circle-stroke-width': 2,
+              'circle-stroke-color': '#FFFFFF',
             }}
           />
           {/* Colored inner dot */}
           <Layer id="wc-inner" source="water-coolers" filter={['has', 'water_type']} type="circle" minzoom={13}
             paint={{
-              'circle-radius': 6,
+              'circle-radius': 8,
               'circle-color': ['match', ['get', 'water_type'],
                 'verified', '#06B6D4',
                 'unverified', '#EC4899',
@@ -467,14 +468,14 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
         <GeoJSONSource id="amenities" data={amenityGeojson}>
           <Layer id="am-outer" source="amenities" filter={['has', 'type']} type="circle" minzoom={13}
             paint={{
-              'circle-radius': 10,
+              'circle-radius': 12,
               'circle-color': '#FFFFFF',
               'circle-opacity': 1,
             }}
           />
           <Layer id="am-inner" source="amenities" filter={['has', 'type']} type="circle" minzoom={13}
             paint={{
-              'circle-radius': 6,
+              'circle-radius': 8,
               'circle-color': ['match', ['get', 'type'],
                 'toilet', '#8B5CF6',
                 'shop', '#F59E0B',
