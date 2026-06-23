@@ -6,7 +6,6 @@ import type { Block } from '../types';
 interface Props {
   block: Block | null;
   distanceKm: number | null;
-  onClose: () => void;
   onLogClimb?: (block: Block, qty: number) => void;
   tapY?: number;
 }
@@ -24,7 +23,7 @@ function formatDistance(km: number | null): string {
   return km < 1 ? `${Math.round(km * 1000)}m` : `${km.toFixed(1)}km`;
 }
 
-export default function BlockDetailSheet({ block, distanceKm, onClose, onLogClimb, tapY }: Props) {
+export default function BlockDetailSheet({ block, distanceKm, onLogClimb, tapY }: Props) {
   if (!block) return null;
 
   const tier = getTier(block.storeys);
@@ -42,10 +41,7 @@ export default function BlockDetailSheet({ block, distanceKm, onClose, onLogClim
   };
 
   return (
-    <View style={styles.container}>
-      {/* Invisible backdrop — tap to dismiss */}
-      <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={onClose} />
-
+    <View style={styles.container} pointerEvents="box-none">
       {/* Card — positioned near the tapped pin */}
       <View style={[
         styles.cardWrapper,
@@ -114,7 +110,6 @@ export default function BlockDetailSheet({ block, distanceKm, onClose, onLogClim
 
 const styles = StyleSheet.create({
   container: { ...StyleSheet.absoluteFill, zIndex: 20 },
-  backdrop: { ...StyleSheet.absoluteFill },
   cardWrapper: {
     position: 'absolute',
     left: 24,

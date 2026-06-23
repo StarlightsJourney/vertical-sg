@@ -78,6 +78,7 @@ export default function MapScreen() {
   const blocksRef = useRef<Block[]>([]);
   const zoomRef = useRef(13);
   const boundsRef = useRef<BoundsRect | null>(null);
+  const prevBoundsRef = useRef<BoundsRect | null>(null);
 
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [selectedBlock, setSelectedBlock] = useState<Block | null>(null);
@@ -198,13 +199,24 @@ export default function MapScreen() {
         else setPinRadius(11);
       }
 
-      // Debounce: wait 300ms after last camera movement
+      // Debounce: wait 600ms after last camera movement
       if (debounceTimer.current) clearTimeout(debounceTimer.current);
       debounceTimer.current = setTimeout(() => {
         if (boundsRef.current) {
-          fetchBounds(boundsRef.current);
+          const cur = boundsRef.current;
+          const prev = prevBoundsRef.current;
+          const threshold = 0.003; // ~300m
+          if (prev &&
+            Math.abs(prev.ne[0] - cur.ne[0]) < threshold &&
+            Math.abs(prev.ne[1] - cur.ne[1]) < threshold &&
+            Math.abs(prev.sw[0] - cur.sw[0]) < threshold &&
+            Math.abs(prev.sw[1] - cur.sw[1]) < threshold) {
+            return; // Not enough movement — skip fetch
+          }
+          prevBoundsRef.current = cur;
+          fetchBounds(cur);
         }
-      }, 300);
+      }, 600);
     },
     [fetchBounds],
   );
@@ -582,7 +594,6 @@ export default function MapScreen() {
       <BlockDetailSheet
         block={selectedBlock}
         distanceKm={selectedBlockDist}
-        onClose={handleCloseDetail}
         onLogClimb={handleLogClimb}
         tapY={tapY}
       />
