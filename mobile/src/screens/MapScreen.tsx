@@ -89,7 +89,6 @@ export default function MapScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [minFilter, setMinFilter] = useState(21);
-  const [pinRadius, setPinRadius] = useState(8);
   const [zoom, setZoom] = useState(13);
   const [pulsePhase, setPulsePhase] = useState(0);
   const [searchVisible, setSearchVisible] = useState(false);
@@ -211,12 +210,6 @@ export default function MapScreen() {
       if (typeof zoom === 'number') {
         zoomRef.current = zoom;
         setZoom(zoom);
-        // Update pin radius based on zoom level — all same size at same zoom
-        if (zoom < 12) setPinRadius(3);
-        else if (zoom < 13) setPinRadius(5);
-        else if (zoom < 14) setPinRadius(7);
-        else if (zoom < 15) setPinRadius(9);
-        else setPinRadius(11);
       }
 
       // Debounce: wait 600ms after last camera movement
@@ -568,7 +561,7 @@ export default function MapScreen() {
                 40,
                 '#7C3AED', // 40+: purple
               ],
-              'circle-radius': pinRadius,
+              'circle-radius': 7,
               'circle-stroke-width': [
                 'case',
                 ['get', 'climbed'],
