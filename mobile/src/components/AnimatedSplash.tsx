@@ -7,32 +7,24 @@ interface AnimatedSplashProps {
 
 const TIERS = ['#4A90D9', '#FF9500', '#FF3B30', '#8B0000', '#7C3AED'];
 
-/**
- * Animated splash — pin logo + 5 rising bars + app name.
- * White opaque screen, no map UI visible underneath. ~2s total.
- */
 export default function AnimatedSplash({ onFinish }: AnimatedSplashProps) {
   const fadeOut = useRef(new Animated.Value(1)).current;
-  const logoOpacity = useRef(new Animated.Value(0)).current;
   const titleOpacity = useRef(new Animated.Value(0)).current;
-  const barHeights = useRef(TIERS.map(() => new Animated.Value(0))).current;
+
+  // Each bar scales up from the bottom using transform (native-driver friendly)
+  const barScales = useRef(TIERS.map(() => new Animated.Value(0.05))).current;
 
   useEffect(() => {
     Animated.sequence([
-      // Logo fades in
-      Animated.timing(logoOpacity, {
-        toValue: 1,
-        duration: 400,
-        useNativeDriver: true,
-      }),
-      // Bars rise
+      // Bars rise in sequence using native driver (transform, not height)
       Animated.parallel(
-        barHeights.map((bar, i) =>
-          Animated.timing(bar, {
+        barScales.map((bar, i) =>
+          Animated.spring(bar, {
             toValue: 1,
-            duration: 500,
-            delay: i * 100,
-            useNativeDriver: false,
+            friction: 6,
+            tension: 60,
+            delay: i * 80,
+            useNativeDriver: true,
           }),
         ),
       ),
@@ -43,8 +35,8 @@ export default function AnimatedSplash({ onFinish }: AnimatedSplashProps) {
         useNativeDriver: true,
       }),
       // Hold
-      Animated.delay(400),
-      // Fade out
+      Animated.delay(500),
+      // Everything fades out
       Animated.timing(fadeOut, {
         toValue: 0,
         duration: 400,
@@ -55,29 +47,20 @@ export default function AnimatedSplash({ onFinish }: AnimatedSplashProps) {
 
   return (
     <Animated.View style={[styles.container, { opacity: fadeOut }]}>
-      {/* Pin logo */}
-      <Animated.Image
-        source={require('../../assets/splash-icon.png')}
-        style={[styles.logo, { opacity: logoOpacity }]}
-        resizeMode="contain"
-      />
-
-      {/* Stair bars */}
+      {/* Stair bars — animated with scaleY from bottom */}
       <View style={styles.barsRow}>
         {TIERS.map((color, i) => (
-          <Animated.View
-            key={color}
-            style={[
-              styles.bar,
-              {
-                backgroundColor: color,
-                height: barHeights[i].interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [4, 64 + i * 12],
-                }),
-              },
-            ]}
-          />
+          <View key={color} style={styles.barWrap}>
+            <Animated.View
+              style={[
+                styles.bar,
+                {
+                  backgroundColor: color,
+                  transform: [{ scaleY: barScales[i] }],
+                },
+              ]}
+            />
+          </View>
         ))}
       </View>
 
@@ -103,20 +86,22 @@ const styles = StyleSheet.create({
     zIndex: 9999,
     elevation: 9999,
   },
-  logo: {
-    width: 160,
-    height: 80,
-    marginBottom: 24,
-  },
   barsRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',
     gap: 8,
-    marginBottom: 28,
     height: 100,
+    marginBottom: 28,
+  },
+  barWrap: {
+    width: 28,
+    height: 100,
+    justifyContent: 'flex-end',
+    overflow: 'hidden',
   },
   bar: {
     width: 28,
+    height: 100,
     borderRadius: 4,
   },
   titleWrap: {
