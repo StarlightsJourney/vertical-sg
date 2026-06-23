@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Animated } from 'react-native';
+import { View, Text, StyleSheet, Animated, Easing } from 'react-native';
 
 interface AnimatedSplashProps {
   onFinish: () => void;
@@ -15,15 +15,14 @@ export default function AnimatedSplash({ onFinish }: AnimatedSplashProps) {
 
   useEffect(() => {
     Animated.sequence([
-      // Brief pause, then bars ripple up with tight stagger
-      Animated.delay(200),
+      // Bars rise immediately, tight stagger, smooth ease-out
       Animated.parallel(
         barHeights.map((bar, i) =>
-          Animated.spring(bar, {
+          Animated.timing(bar, {
             toValue: BAR_MAX[i],
-            friction: 7,
-            tension: 60,
-            delay: i * 60,
+            duration: 450,
+            delay: i * 50,
+            easing: Easing.out(Easing.cubic),
             useNativeDriver: false,
           }),
         ),
@@ -31,15 +30,15 @@ export default function AnimatedSplash({ onFinish }: AnimatedSplashProps) {
       // Title fades in
       Animated.timing(titleOpacity, {
         toValue: 1,
-        duration: 400,
+        duration: 300,
         useNativeDriver: true,
       }),
       // Hold
-      Animated.delay(800),
-      // Everything fades out slowly
+      Animated.delay(600),
+      // Fade out
       Animated.timing(fadeOut, {
         toValue: 0,
-        duration: 800,
+        duration: 600,
         useNativeDriver: true,
       }),
     ]).start(onFinish);
