@@ -93,6 +93,11 @@ export default function MapScreen() {
   const [pulsePhase, setPulsePhase] = useState(0);
   const [searchVisible, setSearchVisible] = useState(false);
   const [alertVisible, setAlertVisible] = useState(false);
+  const [placementType, setPlacementType] = useState<string | null>(null);
+  const [placementCenter, setPlacementCenter] = useState<[number, number]>([103.8198, 1.3521]);
+  const [descModalVisible, setDescModalVisible] = useState(false);
+  const [descText, setDescText] = useState('');
+  const [pendingReports, setPendingReports] = useState<Array<{ name: string; lat: number; lng: number; type: string; desc: string; at: string; status: string }>>([]);
   const [recentBlocks, setRecentBlocks] = useState<Block[]>([]);
   const [starredIds, setStarredIds] = useState<Set<string>>(new Set());
   const [climbCounts, setClimbCounts] = useState<Map<string, number>>(new Map());
@@ -201,6 +206,7 @@ export default function MapScreen() {
           ne: [boundsArr[2], boundsArr[3]],
         };
       }
+      if (ev.center) setPlacementCenter(ev.center as [number, number]);
       if (typeof zoom === 'number') {
         zoomRef.current = zoom;
         setZoom(zoom);
@@ -355,6 +361,13 @@ export default function MapScreen() {
     };
   }, []);
 
+  // Load pending reports + starred blocks from storage on mount
+  useEffect(() => {
+    storage.getItem('pending_reports').then((val) => {
+      if (val) { try { setPendingReports(JSON.parse(val)); } catch {} }
+    });
+  }, []);
+
   // Load starred blocks from storage on mount
   useEffect(() => {
     storage.getItem('starred_blocks').then((val) => {
@@ -484,6 +497,30 @@ export default function MapScreen() {
             </View>
           </Marker>
         )})}
+
+        {/* Pending report markers — semi-transparent until verified */}
+        {pendingReports.filter(r => r.lat && r.lng).map((r, i) => (
+          <Marker
+            key={`pending-${i}`}
+            lngLat={[r.lng, r.lat]}
+            anchor="center"
+          >
+            <View style={{
+              width: Math.max(14, Math.round(pinRadius * 2.5)),
+              height: Math.max(14, Math.round(pinRadius * 2.5)),
+              borderRadius: Math.max(7, Math.round(pinRadius * 1.25)),
+              backgroundColor: isDark ? 'rgba(30,30,30,0.7)' : 'rgba(255,255,255,0.7)',
+              justifyContent: 'center', alignItems: 'center',
+              borderWidth: 2, borderColor: '#F59E0B', borderStyle: 'dashed',
+            }}>
+              <Ionicons
+                name="add-circle-outline"
+                size={Math.max(10, Math.round(pinRadius * 1.6))}
+                color="#F59E0B"
+              />
+            </View>
+          </Marker>
+        ))}
 
         {userLocationGeojson && (
           <GeoJSONSource id="user-location" data={userLocationGeojson}>
@@ -626,6 +663,83 @@ export default function MapScreen() {
         </TouchableOpacity>
       </View>
 
+      {/* Placement mode: crosshair + confirm */}
+      {placementType && (
+        <>
+          {/* Crosshair */}
+          <View style={styles.crosshair} pointerEvents="none">
+            <Text style={{ fontSize: 32, color: '#EF4444' }}>✚</Text>
+          </View>
+          {/* Confirm / Cancel buttons */}
+          <View style={styles.placementBar}>
+            <Text style={styles.placementLabel}>Place {placementType}</Text>
+            <View style={styles.placementButtons}>
+              <TouchableOpacity style={styles.placementCancel} onPress={() => setPlacementType(null)}>
+                <Text style={styles.placementCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.placementConfirm} onPress={() => setDescModalVisible(true)}>
+                <Text style={styles.placementConfirmText}>Confirm Location</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </>
+      )}
+
+      {/* Description modal */}
+      <Modal visible={descModalVisible} transparent animationType="fade">
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}>
+          <View style={{ backgroundColor: '#FFF', borderRadius: 16, padding: 24, width: '85%', maxWidth: 360 }}>
+            <Text style={{ fontSize: 18, fontWeight: '700', color: '#111827', marginBottom: 8 }}>
+              New {placementType}
+            </Text>
+            <Text style={{ fontSize: 13, color: '#6B7280', marginBottom: 16 }}>
+              This will appear as unverified until confirmed by the community.
+            </Text>
+            <View style={{ backgroundColor: '#F3F4F6', borderRadius: 10, padding: 12, marginBottom: 16 }}>
+              <Text style={{ fontSize: 13, color: '#374151', fontWeight: '500' }}>Description (optional)</Text>
+              <View style={{ height: 1, backgroundColor: '#E5E7EB', marginVertical: 8 }} />
+              <Text style={{ fontSize: 13, color: '#9CA3AF' }}>
+                e.g. "Level 1 void deck, near lift B"
+              </Text>
+            </View>
+            <View style={{ flexDirection: 'row', gap: 10 }}>
+              <TouchableOpacity
+                style={{ flex: 1, padding: 14, borderRadius: 12, backgroundColor: '#F3F4F6', alignItems: 'center' }}
+                onPress={() => { setDescModalVisible(false); setDescText(''); }}
+              >
+                <Text style={{ fontWeight: '600', color: '#6B7280' }}>Skip</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{ flex: 2, padding: 14, borderRadius: 12, backgroundColor: '#2563EB', alignItems: 'center' }}
+                onPress={async () => {
+                  const [lng, lat] = placementCenter;
+                  const newReport = {
+                    name: descText ? `${placementType}: ${descText.slice(0, 40)}` : (placementType ?? ''),
+                    lat, lng,
+                    type: placementType!,
+                    desc: descText,
+                    at: new Date().toISOString(),
+                    status: 'pending',
+                  };
+                  // Store locally
+                  const existing = await storage.getItem('pending_reports');
+                  const reports: typeof pendingReports = existing ? JSON.parse(existing) : [];
+                  reports.push(newReport);
+                  await storage.setItem('pending_reports', JSON.stringify(reports));
+                  setPendingReports(reports);
+                  setPlacementType(null);
+                  setDescModalVisible(false);
+                  setDescText('');
+                  Alert.alert('Reported', `${placementType} submitted as unverified. Visible immediately.`);
+                }}
+              >
+                <Text style={{ fontWeight: '700', color: '#FFF' }}>Submit</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       {/* Block Detail Sheet overlay */}
       <BlockDetailSheet
         block={selectedBlock}
@@ -706,19 +820,9 @@ export default function MapScreen() {
                 <TouchableOpacity
                   key={item.label}
                   style={[styles.alertGridItem, { backgroundColor: item.color + (isDark ? '1F' : '15') }]}
-                  onPress={async () => {
-                    const existing = await storage.getItem('reports');
-                    const existingReports: Array<{ type: string; lat: number; lng: number; at: string; status: string }> = existing ? JSON.parse(existing) : [];
-                    existingReports.push({
-                      type: item.label,
-                      lat: location.latitude ?? 0,
-                      lng: location.longitude ?? 0,
-                      at: new Date().toISOString(),
-                      status: 'pending',
-                    });
-                    await storage.setItem('reports', JSON.stringify(existingReports));
+                  onPress={() => {
                     setAlertVisible(false);
-                    Alert.alert('Reported', `${item.label} reported at this location. Pending verification.`);
+                    setPlacementType(item.label);
                   }}
                 >
                   <Ionicons name={item.icon as any} size={26} color={item.color} />
@@ -914,5 +1018,65 @@ const styles = StyleSheet.create({
     color: '#6B7280',
     textAlign: 'center',
     fontWeight: '500',
+  },
+
+  // Placement mode
+  crosshair: {
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    marginLeft: -16,
+    marginTop: -16,
+    zIndex: 15,
+  },
+  placementBar: {
+    position: 'absolute',
+    top: 90,
+    left: 16,
+    right: 16,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 14,
+    zIndex: 15,
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+  },
+  placementLabel: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#111827',
+    marginBottom: 10,
+    textAlign: 'center',
+  },
+  placementButtons: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  placementCancel: {
+    flex: 1,
+    padding: 12,
+    borderRadius: 10,
+    backgroundColor: '#F3F4F6',
+    alignItems: 'center',
+  },
+  placementCancelText: {
+    fontWeight: '600',
+    color: '#6B7280',
+    fontSize: 14,
+  },
+  placementConfirm: {
+    flex: 1,
+    padding: 12,
+    borderRadius: 10,
+    backgroundColor: '#2563EB',
+    alignItems: 'center',
+  },
+  placementConfirmText: {
+    fontWeight: '700',
+    color: '#FFFFFF',
+    fontSize: 14,
   },
 });
