@@ -14,7 +14,7 @@ import {
   Camera,
   GeoJSONSource,
   Layer,
-  Images,
+  Marker,
   type MapRef,
   type CameraRef,
 } from '@maplibre/maplibre-react-native';
@@ -413,31 +413,38 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
           duration={500}
         />
 
-        {/* Register custom PNG icons for amenities */}
-        <Images images={{
-          'wc-verified': require('../../assets/wc-verified.png'),
-          'wc-unverified': require('../../assets/wc-unverified.png'),
-          'amenity-toilet': require('../../assets/amenity-toilet.png'),
-          'amenity-shop': require('../../assets/amenity-shop.png'),
-        }} />
-
-        {/* Water cooler icons — native SymbolLayer, smooth 60fps */}
-        <GeoJSONSource id="water-coolers" data={WATER_COOLERS_RAW.filter(wc => wc.lat && wc.lng).reduce((fc, wc) => {
-          fc.features.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [wc.lng, wc.lat] as [number, number] }, properties: { name: wc.name, water_type: wc.status } });
-          return fc;
-        }, { type: 'FeatureCollection' as const, features: [] as any[] })}>
-          <Layer id="wc-icon" source="water-coolers" filter={['has', 'water_type']} type="symbol" minzoom={13}
-            layout={{ 'icon-image': ['match', ['get', 'water_type'], 'verified', 'wc-verified', 'wc-unverified'], 'icon-size': 1.2, 'icon-allow-overlap': true }} />
-        </GeoJSONSource>
-
-        {/* Amenity icons — native SymbolLayer, smooth 60fps */}
-        <GeoJSONSource id="amenities" data={AMENITIES_RAW.filter(a => a.lat && a.lng).reduce((fc, a) => {
-          fc.features.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [a.lng, a.lat] as [number, number] }, properties: { name: a.name, type: a.type } });
-          return fc;
-        }, { type: 'FeatureCollection' as const, features: [] as any[] })}>
-          <Layer id="am-icon" source="amenities" filter={['has', 'type']} type="symbol" minzoom={13}
-            layout={{ 'icon-image': ['match', ['get', 'type'], 'toilet', 'amenity-toilet', 'amenity-shop'], 'icon-size': 1.2, 'icon-allow-overlap': true }} />
-        </GeoJSONSource>
+        {/* Water cooler icons */}
+        {WATER_COOLERS_RAW.filter(wc => wc.lat && wc.lng).map((wc, i) => (
+          <Marker key={`wc-${i}`} lngLat={[wc.lng, wc.lat]} anchor="center"
+            onPress={() => setSelectedWaterCooler({ name: wc.name, type: wc.status, lat: wc.lat, lng: wc.lng })}>
+            <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: '#FFFFFF', justifyContent: 'center', alignItems: 'center', elevation: 2 }}>
+              <Ionicons name="water-outline" size={13} color={wc.status === 'verified' ? '#06B6D4' : '#EC4899'} />
+            </View>
+          </Marker>
+        ))}
+        {/* Amenity icons (toilets, shops) */}
+        {AMENITIES_RAW.filter(a => a.lat && a.lng).map((a, i) => {
+          const iconName = a.type === 'toilet' ? 'male-female-outline' : 'cafe-outline';
+          const iconColor = a.type === 'toilet' ? '#8B5CF6' : '#F59E0B';
+          return (
+          <Marker key={`am-${i}`} lngLat={[a.lng, a.lat]} anchor="center"
+            onPress={() => setSelectedWaterCooler({ name: a.name, type: a.type, lat: a.lat, lng: a.lng })}>
+            <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: '#FFFFFF', justifyContent: 'center', alignItems: 'center', elevation: 2 }}>
+              <Ionicons name={iconName as any} size={13} color={iconColor} />
+            </View>
+          </Marker>
+        )})}
+        {/* Pending report icons */}
+        {pendingReports.filter(r => r.lat && r.lng).map((r, i) => {
+          const pIcon = r.type === 'Toilet' ? 'male-female-outline' : r.type === 'Food / Shop' ? 'cafe-outline' : 'water-outline';
+          return (
+          <Marker key={`pending-${i}`} lngLat={[r.lng, r.lat]} anchor="center"
+            onPress={() => setSelectedWaterCooler({ name: r.name, type: `unverified-${r.type}`, lat: r.lat, lng: r.lng })}>
+            <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.85)', justifyContent: 'center', alignItems: 'center', borderWidth: 1.5, borderColor: '#9CA3AF' }}>
+              <Ionicons name={pIcon as any} size={13} color="#9CA3AF" />
+            </View>
+          </Marker>
+        )})}
 
         {userLocationGeojson && (
           <GeoJSONSource id="user-location" data={userLocationGeojson}>
