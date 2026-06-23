@@ -74,7 +74,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderTopWidth: 1,
     borderTopColor: '#F3F4F6',
-    paddingBottom: Platform.OS === 'android' ? 20 : 6,
+    paddingBottom: Platform.OS === 'android' ? 36 : 6,
     paddingTop: 6,
   },
   tab: {
