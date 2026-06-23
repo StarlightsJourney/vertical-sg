@@ -15,13 +15,12 @@ export default function AnimatedSplash({ onFinish }: AnimatedSplashProps) {
 
   useEffect(() => {
     Animated.sequence([
-      // Bars rise
+      // All bars rise simultaneously
       Animated.parallel(
         barHeights.map((bar, i) =>
           Animated.timing(bar, {
             toValue: BAR_MAX[i],
-            duration: 500,
-            delay: i * 80,
+            duration: 600,
             useNativeDriver: false,
           }),
         ),
@@ -29,15 +28,15 @@ export default function AnimatedSplash({ onFinish }: AnimatedSplashProps) {
       // Title fades in
       Animated.timing(titleOpacity, {
         toValue: 1,
-        duration: 300,
+        duration: 400,
         useNativeDriver: true,
       }),
       // Hold
-      Animated.delay(500),
-      // Everything fades out
+      Animated.delay(800),
+      // Everything fades out slowly
       Animated.timing(fadeOut, {
         toValue: 0,
-        duration: 400,
+        duration: 800,
         useNativeDriver: true,
       }),
     ]).start(onFinish);
