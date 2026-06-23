@@ -88,6 +88,9 @@ comment on function blocks_in_bounds(float, float, float, float, text, int) is
 -- ---------------------------------------------------------------------------
 -- 2. RPC function: blocks_count_in_bounds
 --
+-- NOTE: This function is available for future use (e.g., "X blocks in this
+-- area" UI label) but is not currently called by the mobile app.
+--
 -- Lightweight count-only companion for showing "X blocks in this area" in
 -- the map UI without fetching full row data. Returns the number of blocks
 -- with non-null geom that intersect the given bounding box.

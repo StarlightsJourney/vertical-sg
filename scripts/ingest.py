@@ -2,9 +2,8 @@
 """
 Vertical — Phase 0: Data Ingestion Pipeline
 
-Pulls HDB block data from data.gov.sg, geocodes it via cascading passes
-(postal code -> HDB Existing Building polygon dataset -> fuzzy match ->
-OneMap fallback), then upserts into a Supabase Postgres/PostGIS database.
+Pulls HDB block data from data.gov.sg, geocodes via OneMap Search API (single pass),
+then upserts into a Supabase Postgres/PostGIS database.
 
 Usage:
     pip install -r scripts/requirements.txt
@@ -20,7 +19,6 @@ Environment variables (from ../.env.local):
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import sys
@@ -218,7 +216,7 @@ def pull_dataset(resource_id: str, page_size: int = 500) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Step 4 / 5 — OneMap Authentication & Geocoding
+# OneMap Authentication & Geocoding
 # ---------------------------------------------------------------------------
 
 
@@ -272,7 +270,7 @@ def geocode_onemap_search(query: str, token: str) -> tuple[float, float] | None:
 
 
 # ---------------------------------------------------------------------------
-# Step 6 — Supabase Upsert
+# Supabase Upsert
 # ---------------------------------------------------------------------------
 
 
@@ -336,7 +334,7 @@ def upsert_blocks(supabase, records: list[dict], verified_pairs: set[tuple[str, 
 
 
 # ---------------------------------------------------------------------------
-# Step 7 — Log Unmatched
+# Log Unmatched
 # ---------------------------------------------------------------------------
 
 
@@ -425,10 +423,6 @@ def main() -> None:
     print(f"  Standardized {len(residential)} addresses")
 
     # ── Step 3: OneMap Geocoding ─────────────────────────────────────────
-    # The HDB Existing Building polygon dataset is not accessible via the
-    # data.gov.sg CKAN datastore API (resource_show returns empty).  We use
-    # OneMap Search for all geocoding — rate-limited to ~240 calls/min to
-    # stay safely under the 300/min cap.
     print("\n--- Step 3: OneMap Geocoding ---")
 
     token = get_onemap_token()

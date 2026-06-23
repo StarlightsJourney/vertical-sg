@@ -10,15 +10,12 @@ export interface Block {
   total_dwelling_units: number | null;
   lat: number | null;
   lng: number | null;
-  distance_m?: number; // Only present in nearby queries
 }
 
 export interface BoundsRect {
   sw: [number, number];
   ne: [number, number];
 }
-
-export type SortMode = 'storeys' | 'distance';
 
 export interface ClimbLog {
   block_id: string;

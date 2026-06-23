@@ -7,7 +7,6 @@ import {
   TouchableOpacity,
   Modal,
   Alert,
-  Linking,
 } from 'react-native';
 import {
   Map as MapView,
@@ -25,6 +24,7 @@ import BlockDetailSheet from '../components/BlockDetailSheet';
 import SearchScreen from '../components/SearchScreen';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import storage from '../utils/storage';
+import * as Linking from 'expo-linking';
 
 // Light (default) and dark map styles for day/night auto-switching
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -374,15 +374,6 @@ export default function MapScreen() {
       });
       setClimbCounts(counts);
     });
-  }, []);
-
-  // Check time every 60 seconds for day/night auto-switching
-  useEffect(() => {
-    const timer = setInterval(() => {
-      const hour = new Date().getHours();
-      setIsDark(hour < 6 || hour >= 19);
-    }, 60000);
-    return () => clearInterval(timer);
   }, []);
 
   // Smooth pulse for user location ring using sine wave
@@ -917,10 +908,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 12,
     borderRadius: 12,
-  },
-  alertGridIcon: {
-    fontSize: 26,
-    marginBottom: 6,
   },
   alertGridLabel: {
     fontSize: 11,

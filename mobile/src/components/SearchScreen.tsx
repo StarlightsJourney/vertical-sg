@@ -28,7 +28,8 @@ function getTier(storeys: number) {
   if (storeys <= 10) return { label: 'Low-rise', color: '#4A90D9' };
   if (storeys <= 20) return { label: 'Mid-rise', color: '#FF9500' };
   if (storeys <= 30) return { label: 'High-rise', color: '#FF3B30' };
-  return { label: 'Sky-high', color: '#8B0000' };
+  if (storeys <= 39) return { label: 'Sky-high', color: '#8B0000' };
+  return { label: 'Super-tall', color: '#7C3AED' };
 }
 
 function formatRelativeTime(iso: string): string {

@@ -89,8 +89,8 @@ comment on function nearby_blocks(float, float, float, text) is
 --   min_lat      float — South latitude of the bounding box
 --   max_lng      float — East longitude of the bounding box
 --   max_lat      float — North latitude of the bounding box
---   sort_by      text  — Sort order: 'storeys' (default, tallest first) or
---                        'distance' (no reference point; falls back to tallest-first)
+--   sort_by      text  — Kept for API compatibility; only 'storeys' is
+--                        meaningful (always sorts tallest-first)
 --   result_limit  int   — Max rows returned (default 500, clamped to ≤ 1000)
 --
 -- Returns:
@@ -147,12 +147,10 @@ begin
   from blocks b
   where b.geom is not null
     and st_intersects(b.geom, bbox::geography)
-  order by
-    case when sort_by = 'storeys'  then b.storeys end desc nulls last,
-    case when sort_by = 'distance' then b.storeys end desc nulls last
+  order by b.storeys desc nulls last
   limit capped_limit;
 end;
 $$;
 
 comment on function blocks_in_bounds(float, float, float, float, text, int) is
-  'Returns up to result_limit (≤1000) blocks within a bounding box, sorted by storeys desc (default) or tallest-first (distance fallback)';
+  'Returns up to result_limit (≤1000) blocks within a bounding box, sorted by storeys desc. sort_by param kept for API compatibility; only storeys is meaningful.';
