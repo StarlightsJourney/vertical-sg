@@ -197,35 +197,141 @@ limit 50;
 - In-app routing/pathfinding (always deep link out)
 - Push notifications
 
-### Definition of done for Phase 1
+### Definition of done for Phase 1 (✅ Shipped)
 A person can open the app, see HDB block pins colored by height, filter by minimum storeys, tap to see details and log climbs, search by address, star blocks, view My Climbs history, see water coolers, and report amenities.
 
 ---
 
-## Phase 2 — Crowdsourced Layer (next, after Phase 1 ships)
+## Phase 1.5 — Current Enhancements (post-MVP, shipped)
 
-❓ Not yet fully scoped — revisit once Phase 1 has real usage data. Known requirements from earlier discussion, for context only:
+Features added after the initial Phase 1 MVP shipped, during ongoing development:
 
-- **User accounts**: needed starting this phase (Supabase Auth — already part of the stack, no new service).
-- **Height verification flow**: users submit storey-count corrections (simple number input, no photo required — storey count is countable by eye, low friction matters more than proof). Require 3+ corroborating submissions before promoting a block from `height_source = 'estimated'` to `'verified'`. No single submission overwrites the displayed value.
-- **Condition reports** (ventilation, dust): rating + optional photo. Photo encouraged (not required) since "dusty" is subjective and a photo resolves disputes better than a number alone.
-- **Known UX pitfall to design around**: HDB floor numbering often skips superstition numbers (4, 13, 14, 24), so lift-panel top label ≠ true storey count. Submission UI should instruct "count physical floors, not the lift panel number."
-- **Moderation**: start with simple threshold logic (3 agreeing reports = verified), not a scoring algorithm — add weighting later if abuse patterns actually emerge, don't pre-build for hypothetical abuse.
-- **Offline queueing**: stairwells are often cellular dead zones. Submissions made with no signal should queue locally and sync when back in range, not fail silently. Local-first write + background sync pattern.
+1. **Interactive amenity placement flow**
+   - Tap the amber `+` button in the bottom bar to open a category picker (Water Cooler, Toilet, Food/Shop).
+   - Selecting a category enters placement mode: a crosshair overlay appears at map center, with Confirm Location / Cancel buttons.
+   - On confirm, a description modal opens (optional text input, "Skip" or "Submit").
+   - Submitted amenities save to AsyncStorage and appear immediately as pending/unverified markers.
 
-## Phase 3 — Engagement / Scale (later, unscoped)
+2. **Animated splash screen**
+   - `AnimatedSplash.tsx` — 5 vertical bars rise sequentially, colored by the height tiers (blue, orange, red, dark red, purple).
+   - The "Vertical" title and "Find your next climb" subtitle fade in.
+   - Uses `Animated` with `useNativeDriver: true` for 60fps performance.
 
-❓ Ideas raised in earlier discussion, not yet spec'd:
-- Climb session logging (Strava-style: flights climbed, duration, history)
-- Amenity layer (water points, seating) — fully crowdsourced, no government data source exists for this
-- Trust-weighted moderation (replacing the simple 3-report threshold)
-- "Publicly accessible staircase" verification — flagged earlier as the highest-liability data point in the whole product (risk of routing someone into a badge-access or fire-alarmed door). Needs explicit legal/safety thinking before building, not just a UI toggle.
+3. **AsyncStorage persistence**
+   - `storage.ts` switched from in-memory to `@react-native-async-storage/async-storage`.
+   - Climb history, starred blocks, and pending reports all survive app restarts.
+
+4. **Toilet + food/shop markers**
+   - 120 bundled amenity locations (61 toilets, 59 food/shops) from `amenities.json`.
+   - Rendered as individual `<Marker>` components with Ionicons, only at zoom >= 13 for performance.
+
+5. **Performance: fixed pin sizes & bounds caching**
+   - Block pins use a constant 5px `circle-radius` (no zoom scaling) for smooth rendering.
+   - Bounds-fetch debounce (600ms) with a 300m movement threshold avoids redundant API calls.
+
+6. **Pending/unverified marker system**
+   - User-submitted amenities render as gray dashed-border markers with semi-transparent background.
+   - Tappable to view type, description, and get directions.
+   - Only rendered at zoom >= 13.
 
 ---
 
-## Open Questions Log (unresolved, revisit before relevant phase starts)
+## Phase 2 — Social & Community Layer (next, after Phase 1.5 ships)
 
-- Exact radius defaults for "nearby" search (5km was used as an example above, not a confirmed product decision).
-- Whether `bldg_contract_town` from the source data is sufficient for a "browse by town" feature, or whether a separate towns/regions table is needed.
-- ~~Pin clustering strategy at low zoom levels (13K+ blocks will need clustering — MapLibre supports this natively, but cluster radius/behavior isn't decided).~~ ✅ **Resolved** — removed clustering in favor of individual markers. Pins are fetched per-bounds via `blocks_in_bounds` RPC with a 500/1000-row cap, so only visible blocks render at any zoom level.
-- Legal review of the "publicly accessible staircase" framing before Phase 3 — flagged, not resolved.
+❓ Not yet built — scoped from user vision. Requires Supabase Auth, new tables, and significant UI work.
+
+**Required foundation: user accounts (Supabase Auth)**
+- Anonymous accounts on first launch, upgradeable to email/OAuth.
+- All Phase 2 features depend on identity: verification, social, leaderboard, photos.
+
+**Features:**
+
+1. **Community height verification**
+   - Users submit storey-count corrections (simple number input, no photo required — storey count is countable by eye, low friction matters more than proof).
+   - Require 3+ corroborating submissions before promoting a block from `height_source = 'estimated'` to `'verified'`.
+   - The displayed value only changes after the 3-report threshold is met.
+   - Known UX pitfall: HDB floor numbering often skips superstition numbers (4, 13, 14, 24), so lift-panel top label != true storey count. Submission UI should instruct "count physical floors, not the lift panel number."
+
+2. **Bottom navigation tabs** (replacing the floating search bar)
+   - Tabs: Social / My Climbs / Map / Profile
+   - Map tab remains the default and main screen.
+   - Each tab is a separate stack navigator.
+
+3. **Social feed**
+   - Scrollable feed of recent activity: "user123 climbed 88 floors at Blk 123 {street} 10 hours ago"
+   - Comments on buildings — any user can comment on any block's wall.
+   - Share climbs — post a climb to the feed with optional note.
+
+4. **Building detail expansion**
+   - Tapping a pin opens an enhanced detail view (not just the floating glass card):
+     - Photos submitted by users (gallery view)
+     - Comments / discussion thread
+     - Climb history for that block (who climbed it, how many times)
+     - Aggregate stats (total climbs this week/month/all-time)
+
+5. **Leaderboard**
+   - Most climbs (count)
+   - Most floors (sum of storeys x climbs)
+   - Time-window filters: today, this week, this month, all-time
+   - Rolling feed of recent climbs at the top
+
+6. **In-app routing**
+   - Walking directions to blocks without relying on Google Maps.
+   - OSRM or similar free routing engine (self-hosted or API).
+   - Shows estimated walk time and path on the map.
+
+7. **Photo submissions**
+   - Users attach photos to climbs and building reports.
+   - Stored in Supabase Storage (already part of the stack).
+
+8. **Moderation (Phase 2)**
+   - Start with simple threshold logic (3 agreeing reports = verified).
+   - Not a scoring algorithm — add weighting later if abuse patterns actually emerge.
+
+9. **Offline queueing**
+   - Stairwells are often cellular dead zones.
+   - Submissions made with no signal should queue locally and sync when back in range.
+   - Local-first write + background sync pattern.
+
+## Phase 3 — Gamification & Advanced Moderation (later, unscoped)
+
+❓ Not yet scoped — ideas from user vision for future exploration:
+
+1. **Climb logging gamification**
+   - Badges (e.g. "Century Club" for 100 climbs, "Tall Towers" for 10 different 40+ blocks)
+   - Streaks (consecutive days with at least one logged climb)
+   - Challenges (community or self-set goals: "climb 500 floors this month")
+
+2. **Amenity verification**
+   - Community confirms amenity reports (similar to the height verification flow).
+   - Pending markers graduate to verified after threshold is met.
+
+3. **Advanced moderation**
+   - Trust-weighted scoring replacing the simple 3-report threshold.
+   - Users with a history of accurate reports get higher weight.
+   - Low-trust users' reports require more corroboration.
+
+4. **"Publicly accessible staircase" verification** (legal/safety)
+   - Flagged as the highest-liability data point in the whole product.
+   - Risk of routing someone into a badge-access or fire-alarmed door.
+   - Needs explicit legal/safety thinking before building, not just a UI toggle.
+
+---
+
+## Tech Decisions Log (decisions made during development)
+
+| Decision | Choice | Rationale / Context |
+|---|---|---|
+| Map rendering | OpenFreeMap (Liberty schema) tiles, NOT Mapbox | No API key required. Uses `https://tiles.openfreemap.org` — both light and dark styles. |
+| Map style | Local JSON files (`map-style.json`, `map-style-dark.json`) | Bundled in `assets/`. Sprite and glyph URLs reference OpenFreeMap CDN. |
+| Sprite source | OpenFreeMap CDN sprite (`https://tiles.openfreemap.org/sprites/ofm_f384/ofm`) | Referenced in both light and dark style JSONs. No local sprite sheet. |
+| SVG assets | None shipped | The project does not ship any custom SVG files. All icons use `@expo/vector-icons/Ionicons`. |
+| Marker icons | Ionicons from `@expo/vector-icons` | Used for water coolers (`water-outline`), amenities (`male-female-outline`, `cafe-outline`), and UI elements. |
+| Water cooler data | Bundled `water-coolers.json` (~131 locations) | Static file, not fetched from API. |
+| Amenity data | Bundled `amenities.json` (120 locations: 61 toilets, 59 food/shops) | Static file added after initial MVP. |
+| Persistent storage | `@react-native-async-storage/async-storage` | Replaced in-memory storage. Used for climb history, starred blocks, pending amenity reports. |
+| Performance: pin sizes | Fixed 5px `circle-radius` (no zoom scaling) | Simplified rendering, avoids re-paints on zoom changes. |
+| Performance: bounds caching | 600ms debounce + 300m movement threshold | Avoids redundant `blocks_in_bounds` RPC calls during pan/zoom. |
+| Performance: amenity rendering | Conditional rendering at zoom >= 13 | Water coolers, amenities, and pending markers only render when zoomed in enough to be useful. |
+| Day/night switching | Local time check (7pm-6am = dark), 60s interval | Switches between `map-style.json` and `map-style-dark.json`. No API call needed. |
+| App name | "Vertical" (formerly StairTrain) | Changed during development. `expo.name` in `app.json` is "Vertical". |

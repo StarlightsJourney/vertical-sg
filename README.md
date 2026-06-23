@@ -24,18 +24,19 @@ vertical/
 │   ├── assets/
 │   │   ├── map-style.json        # Light OpenFreeMap style (Liberty schema, no 3D buildings)
 │   │   ├── map-style-dark.json   # Dark variant for night mode
-│   │   ├── water-coolers.json    # ~175 water cooler locations across SG
-│   │   └── water-drop.png        # Fallback marker icon
+│   │   ├── water-coolers.json    # ~131 water cooler locations across SG
+│   │   └── amenities.json        # 120 toilets/food/shop locations across SG
 │   └── src/
 │       ├── config/               # Supabase client init
 │       ├── types/                # TypeScript types (Block, ClimbLog, BoundsRect, SortMode)
 │       ├── services/             # Supabase RPC calls (nearby_blocks, blocks_in_bounds)
 │       ├── hooks/                # useLocation hook (GPS permission + Singapore fallback)
 │       ├── utils/
-│       │   └── storage.ts        # In-memory storage (climb history, stars, reports)
+│       │   └── storage.ts        # AsyncStorage-backed (persistent: climb history, stars, reports)
 │       ├── screens/
-│       │   └── MapScreen.tsx     # Main map: pins, water cooler markers, filter, report modal
+│       │   └── MapScreen.tsx     # Main map: pins, water cooler/amenity markers, filter, placement, splash
 │       └── components/
+│           ├── AnimatedSplash.tsx # Animated loading screen (5 rising bars + "Vertical" logo)
 │           ├── BlockDetailSheet.tsx  # Floating glass card for block details + climb logging
 │           └── SearchScreen.tsx      # Search with filter chips, starred, recent, My Climbs
 ├── .env.example             # Template — copy to .env.local
@@ -44,18 +45,21 @@ vertical/
 ```
 
 Built features include:
-- **Map pins** colored by height tier (blue 1-10, orange 11-20, red 21-30, dark red 31-39, purple 40+) with zoom-based sizing and gold stroke for climbed blocks.
+- **Map pins** colored by height tier (blue 1-10, orange 11-20, red 21-30, dark red 31-39, purple 40+) with fixed 5px radius and gold stroke for climbed blocks.
 - **Cycling filter toggle** — tap to cycle 21+ → 31+ → 40+ → All, pins re-filter instantly.
-- **Water cooler markers** — individual `<Marker>` components using Ionicons (`water-outline`) with verified/unverified/ticketed status colors. Tap shows a floating info card.
+- **Water cooler markers** — ~131 individual `<Marker>` components using Ionicons (`water-outline`) with verified/unverified/ticketed status colors. Tap shows a floating info card.
+- **Amenity markers** — 120 toilet and food/shop markers (purple/orange Ionicons) rendered at zoom >= 13 for performance.
+- **Interactive amenity placement** — tap amber `+` button, pick category (Water Cooler/Toilet/Food & Shop), crosshair overlay to position on map, add optional description, submit. Saved to AsyncStorage, appears immediately as unverified marker.
+- **Pending/unverified markers** — gray dashed-border markers with semi-transparent background, tappable to view status and get directions. Only rendered at zoom >= 13.
 - **Search screen** — full-height modal with debounced address search, filter chips (40+/31+/21+/All), starred blocks, recent blocks (3 with "See more"), and My Climbs history with stats.
 - **Floating glass card** — translucent card positioned near the tapped pin showing storeys, height, distance, address, quantity selector for climbs, and a directions link.
-- **Climb logging** — `+`/`-` quantity selector with local storage persistence. My Climbs section shows total climbs/floors/meters.
-- **Report/alert system** — modal with 6 amenity categories (Water Cooler, Toilet, Food/Shop, Hazard, Closed Access, Other), saved to local storage.
-- **Day/night auto-switching** — switches between light and dark map styles based on local time (7pm-6am). Dark style needs visual fixes.
+- **Climb logging** — `+`/`-` quantity selector with AsyncStorage persistence. My Climbs section shows total climbs/floors/meters.
+- **Animated splash screen** — 5 height-tier colored bars rise sequentially on launch, then the "Vertical" logo fades in with subtitle. Uses native driver for 60fps.
+- **Day/night auto-switching** — switches between light and dark map styles based on local time (7pm-6am).
 - **Singapore bounds restriction** — camera locked to Singapore island via `maxBounds` and `minZoom`.
 - **My Location button** — re-centers map on user's current GPS position.
 - **Height legend** — colored dots at top-right showing the 5 tier colors.
-- **Pin scaling by zoom** — pins grow larger as you zoom in (4px at zoom <12 up to 14px at zoom 15+).
+- **Fixed pin sizes** — constant 5px radius (no zoom scaling) for smooth performance.
 
 ---
 
@@ -154,6 +158,7 @@ See [Expo Development Builds](https://docs.expo.dev/develop/development-builds/i
 | Directions | Deep-link to Google Maps | No API key, no routing logic to maintain |
 | Geocoding | OneMap API (free, SG-specific) | Single-pass OneMap Search API — all geocoding goes through OneMap |
 | Auth (MVP) | None | Read-only app, no user accounts needed |
+| Amenity reporting | Local AsyncStorage, unverified markers | Reports saved to device, appear as pending gray markers immediately |
 
 ---
 
@@ -163,8 +168,8 @@ See [Expo Development Builds](https://docs.expo.dev/develop/development-builds/i
 |---|---|---|
 | **0** | Data ingestion pipeline | ✅ Built |
 | **1** | MVP app (browse map, filter/search, star blocks, climb logging, water cooler markers, report/alert system) | ✅ Built |
-| **2** | Crowdsourced verification & condition reports | ❓ Scoped, not built |
-| **3** | Advanced moderation, server-synced climbs, community amenities | ❓ Unscoped |
+| **2** | Social & community features (accounts, social feed, leaderboard, in-app routing, photo submissions, building detail expansion, tab navigation) | ❓ Scoped, not built |
+| **3** | Gamification & advanced moderation (badges, streaks, amenity verification, trust-weighted scoring) | ❓ Unscoped |
 
 ---
 
