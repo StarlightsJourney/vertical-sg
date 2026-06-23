@@ -15,12 +15,15 @@ export default function AnimatedSplash({ onFinish }: AnimatedSplashProps) {
 
   useEffect(() => {
     Animated.sequence([
-      // All bars rise simultaneously
+      // Brief pause, then bars ripple up with tight stagger
+      Animated.delay(200),
       Animated.parallel(
         barHeights.map((bar, i) =>
-          Animated.timing(bar, {
+          Animated.spring(bar, {
             toValue: BAR_MAX[i],
-            duration: 600,
+            friction: 7,
+            tension: 60,
+            delay: i * 60,
             useNativeDriver: false,
           }),
         ),
