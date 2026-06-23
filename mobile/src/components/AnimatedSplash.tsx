@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Animated, Easing } from 'react-native';
+import { View, Text, StyleSheet, Animated } from 'react-native';
 
 interface AnimatedSplashProps {
   onFinish: () => void;
@@ -8,34 +8,31 @@ interface AnimatedSplashProps {
 const TIERS = ['#4A90D9', '#FF9500', '#FF3B30', '#8B0000', '#7C3AED'];
 const BAR_MAX = [48, 72, 96, 120, 144];
 
+/** Animated splash — 5 bars scale up from bottom with native driver (60fps). */
 export default function AnimatedSplash({ onFinish }: AnimatedSplashProps) {
   const fadeOut = useRef(new Animated.Value(1)).current;
   const titleOpacity = useRef(new Animated.Value(0)).current;
-  const barHeights = useRef(BAR_MAX.map(() => new Animated.Value(0))).current;
+  // scaleY: 0→1, native-driver compatible, bars grow from bottom
+  const scales = useRef(BAR_MAX.map(() => new Animated.Value(0))).current;
 
   useEffect(() => {
     Animated.sequence([
-      // Bars rise immediately, tight stagger, smooth ease-out
       Animated.parallel(
-        barHeights.map((bar, i) =>
-          Animated.timing(bar, {
-            toValue: BAR_MAX[i],
-            duration: 450,
-            delay: i * 50,
-            easing: Easing.out(Easing.cubic),
-            useNativeDriver: false,
+        scales.map((s, i) =>
+          Animated.timing(s, {
+            toValue: 1,
+            duration: 400,
+            delay: i * 40,
+            useNativeDriver: true,
           }),
         ),
       ),
-      // Title fades in
       Animated.timing(titleOpacity, {
         toValue: 1,
         duration: 300,
         useNativeDriver: true,
       }),
-      // Hold
       Animated.delay(600),
-      // Fade out
       Animated.timing(fadeOut, {
         toValue: 0,
         duration: 600,
@@ -48,10 +45,17 @@ export default function AnimatedSplash({ onFinish }: AnimatedSplashProps) {
     <Animated.View style={[styles.container, { opacity: fadeOut }]}>
       <View style={styles.barsRow}>
         {TIERS.map((color, i) => (
-          <Animated.View
-            key={color}
-            style={[styles.bar, { backgroundColor: color, height: barHeights[i] }]}
-          />
+          <View key={color} style={[styles.barWrap, { height: BAR_MAX[i] }]}>
+            <Animated.View
+              style={[
+                styles.bar,
+                {
+                  backgroundColor: color,
+                  transform: [{ scaleY: Animated.add(0.001, scales[i]) }],
+                },
+              ]}
+            />
+          </View>
         ))}
       </View>
       <Animated.View style={[styles.titleWrap, { opacity: titleOpacity }]}>
@@ -76,12 +80,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-end',
     gap: 8,
-    height: 150,
     marginBottom: 28,
+  },
+  barWrap: {
+    width: 28,
+    justifyContent: 'flex-end',
+    overflow: 'hidden',
   },
   bar: {
     width: 28,
+    height: 200, // taller than any wrap — clipped by overflow: hidden
     borderRadius: 4,
+    transformOrigin: 'bottom',
   },
   titleWrap: { alignItems: 'center' },
   title: { fontSize: 32, fontWeight: '800', color: '#111827', letterSpacing: -0.5 },
