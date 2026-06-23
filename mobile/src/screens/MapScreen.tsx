@@ -415,8 +415,11 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
           duration={500}
         />
 
-        {/* Water cooler icons — capped by zoom level */}
-        {zoom >= 11 && WATER_COOLERS_RAW.filter(wc => wc.lat && wc.lng).slice(0, zoom < 13 ? 25 : 80).map((wc, i) => (
+        {/* Water cooler icons — nearest to map center, capped by zoom */}
+        {zoom >= 11 && WATER_COOLERS_RAW.filter(wc => wc.lat && wc.lng).sort((a, b) => {
+          const [clng, clat] = placementCenter;
+          return ((a.lat - clat) ** 2 + (a.lng - clng) ** 2) - ((b.lat - clat) ** 2 + (b.lng - clng) ** 2);
+        }).slice(0, zoom < 13 ? 25 : 80).map((wc, i) => (
           <Marker key={`wc-${i}`} lngLat={[wc.lng, wc.lat]} anchor="center"
             onPress={() => setSelectedWaterCooler({ name: wc.name, type: wc.status, lat: wc.lat, lng: wc.lng })}>
             <View style={mStyles.marker}>
@@ -424,8 +427,11 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
             </View>
           </Marker>
         ))}
-        {/* Amenity icons (toilets, shops) — capped by zoom */}
-        {zoom >= 11 && AMENITIES_RAW.filter(a => a.lat && a.lng).slice(0, zoom < 13 ? 15 : 60).map((a, i) => (
+        {/* Amenity icons (toilets, shops) — nearest to center, capped by zoom */}
+        {zoom >= 11 && AMENITIES_RAW.filter(a => a.lat && a.lng).sort((a, b) => {
+          const [clng, clat] = placementCenter;
+          return ((a.lat - clat) ** 2 + (a.lng - clng) ** 2) - ((b.lat - clat) ** 2 + (b.lng - clng) ** 2);
+        }).slice(0, zoom < 13 ? 15 : 60).map((a, i) => (
           <Marker key={`am-${i}`} lngLat={[a.lng, a.lat]} anchor="center"
             onPress={() => setSelectedWaterCooler({ name: a.name, type: a.type, lat: a.lat, lng: a.lng })}>
             <View style={mStyles.marker}>
