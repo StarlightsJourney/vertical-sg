@@ -88,6 +88,7 @@ export default function MapScreen() {
   const [error, setError] = useState<string | null>(null);
   const [minFilter, setMinFilter] = useState(21);
   const [pinRadius, setPinRadius] = useState(8);
+  const [zoom, setZoom] = useState(13);
   const [pulsePhase, setPulsePhase] = useState(0);
   const [searchVisible, setSearchVisible] = useState(false);
   const [alertVisible, setAlertVisible] = useState(false);
@@ -192,6 +193,7 @@ export default function MapScreen() {
       }
       if (typeof zoom === 'number') {
         zoomRef.current = zoom;
+        setZoom(zoom);
         // Update pin radius based on zoom level — all same size at same zoom
         if (zoom < 12) setPinRadius(3);
         else if (zoom < 13) setPinRadius(5);
@@ -415,7 +417,7 @@ export default function MapScreen() {
         />
 
         {/* Water cooler markers — Ionicons rendered as Marker components */}
-        {WATER_COOLERS_RAW.filter(wc => wc.lat && wc.lng).map((wc, i) => (
+        {zoom >= 13 && WATER_COOLERS_RAW.filter(wc => wc.lat && wc.lng).map((wc, i) => (
           <Marker
             key={`wc-${i}`}
             lngLat={[wc.lng, wc.lat]}
@@ -448,7 +450,7 @@ export default function MapScreen() {
         ))}
 
         {/* Amenity markers — toilets, shops, medical */}
-        {AMENITIES_RAW.filter(a => a.lat && a.lng).map((a, i) => {
+        {zoom >= 13 && AMENITIES_RAW.filter(a => a.lat && a.lng).map((a, i) => {
           const iconName = a.type === 'toilet' ? 'male-female-outline' :
                            a.type === 'shop' ? 'cafe-outline' : 'cafe-outline';
           const iconColor = a.type === 'toilet' ? '#8B5CF6' :
@@ -888,14 +890,13 @@ const styles = StyleSheet.create({
   },
   alertGridItems: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
     justifyContent: 'center',
-    gap: 16,
+    gap: 12,
   },
   alertGridItem: {
-    width: 80,
+    width: 90,
     alignItems: 'center',
-    paddingVertical: 10,
+    paddingVertical: 12,
     borderRadius: 12,
   },
   alertGridIcon: {
