@@ -387,6 +387,10 @@ export default function MapScreen() {
         compass={false}
         onPress={handleMapPress}
         onRegionDidChange={handleRegionDidChange}
+        onRegionIsChanging={() => {
+          if (selectedBlock) handleCloseDetail();
+          if (selectedWaterCooler) setSelectedWaterCooler(null);
+        }}
       >
         <Camera
           ref={cameraRef}
@@ -416,7 +420,7 @@ export default function MapScreen() {
               width: Math.round(28 * wcScale),
               height: Math.round(28 * wcScale),
               borderRadius: Math.round(14 * wcScale),
-              backgroundColor: '#FFFFFF',
+              backgroundColor: isDark ? 'rgba(30,30,30,0.9)' : '#FFFFFF',
               justifyContent: 'center',
               alignItems: 'center',
               elevation: 3,
@@ -604,7 +608,7 @@ export default function MapScreen() {
               selectedWaterCooler.type === 'unverified' ? '#EC4899' : '#F59E0B'
             }}>
               {selectedWaterCooler.type === 'verified' ? '✓ Verified' :
-               selectedWaterCooler.type === 'unverified' ? '? Unverified' : 'Ticketed'}
+               selectedWaterCooler.type === 'unverified' ? '✗ Unverified' : 'Ticketed'}
             </Text>
             <Text style={{ fontSize: 13, fontWeight: '700', color: '#111827', marginTop: 2 }}>Water Cooler</Text>
             {selectedWaterCooler.name && (
