@@ -155,6 +155,33 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
     };
   }, [location.latitude, location.longitude, location.loading]);
 
+  const waterCoolerGeojson = useMemo(() => ({
+    type: 'FeatureCollection' as const,
+    features: WATER_COOLERS_RAW.filter(wc => wc.lat && wc.lng).map(wc => ({
+      type: 'Feature' as const,
+      geometry: { type: 'Point' as const, coordinates: [wc.lng, wc.lat] as [number, number] },
+      properties: { name: wc.name, status: wc.status, water_type: wc.status },
+    })),
+  }), []);
+
+  const amenityGeojson = useMemo(() => ({
+    type: 'FeatureCollection' as const,
+    features: AMENITIES_RAW.filter(a => a.lat && a.lng).map(a => ({
+      type: 'Feature' as const,
+      geometry: { type: 'Point' as const, coordinates: [a.lng, a.lat] as [number, number] },
+      properties: { name: a.name, type: a.type },
+    })),
+  }), []);
+
+  const pendingGeojson = useMemo(() => ({
+    type: 'FeatureCollection' as const,
+    features: pendingReports.filter(r => r.lat && r.lng).map(r => ({
+      type: 'Feature' as const,
+      geometry: { type: 'Point' as const, coordinates: [r.lng, r.lat] as [number, number] },
+      properties: { name: r.name, type: r.type, pending: true },
+    })),
+  }), [pendingReports]);
+
   // Fetch blocks within visible map bounds
   const fetchBounds = useCallback(
     async (
@@ -414,17 +441,7 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
 
         {/* Water cooler markers — Ionicons rendered as Marker components */}
         {/* Water cooler markers — native layers for smooth panning */}
-        <GeoJSONSource
-          id="water-coolers"
-          data={useMemo(() => ({
-            type: 'FeatureCollection' as const,
-            features: WATER_COOLERS_RAW.filter(wc => wc.lat && wc.lng).map(wc => ({
-              type: 'Feature' as const,
-              geometry: { type: 'Point' as const, coordinates: [wc.lng, wc.lat] as [number, number] },
-              properties: { name: wc.name, status: wc.status, water_type: wc.status },
-            })),
-          }), [])}
-        >
+        <GeoJSONSource id="water-coolers" data={waterCoolerGeojson}>
           {/* White outer ring */}
           <Layer id="wc-outer" source="water-coolers" filter={['has', 'water_type']} type="circle" minzoom={13}
             paint={{
@@ -447,17 +464,7 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
         </GeoJSONSource>
 
         {/* Amenity markers — toilets, shops (native layers) */}
-        <GeoJSONSource
-          id="amenities"
-          data={useMemo(() => ({
-            type: 'FeatureCollection' as const,
-            features: AMENITIES_RAW.filter(a => a.lat && a.lng).map(a => ({
-              type: 'Feature' as const,
-              geometry: { type: 'Point' as const, coordinates: [a.lng, a.lat] as [number, number] },
-              properties: { name: a.name, type: a.type },
-            })),
-          }), [])}
-        >
+        <GeoJSONSource id="amenities" data={amenityGeojson}>
           <Layer id="am-outer" source="amenities" filter={['has', 'type']} type="circle" minzoom={13}
             paint={{
               'circle-radius': 10,
@@ -479,17 +486,7 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
 
         {/* Pending reports — native layer, gray, zoom >= 13 */}
         {pendingReports.length > 0 && (
-          <GeoJSONSource
-            id="pending-reports"
-            data={useMemo(() => ({
-              type: 'FeatureCollection' as const,
-              features: pendingReports.filter(r => r.lat && r.lng).map(r => ({
-                type: 'Feature' as const,
-                geometry: { type: 'Point' as const, coordinates: [r.lng, r.lat] as [number, number] },
-                properties: { name: r.name, type: r.type, pending: true },
-              })),
-            }), [pendingReports])}
-          >
+          <GeoJSONSource id="pending-reports" data={pendingGeojson}>
             <Layer id="pending-outer" source="pending-reports" filter={['has', 'pending']} type="circle" minzoom={13}
               paint={{
                 'circle-radius': 8,
