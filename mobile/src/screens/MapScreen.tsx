@@ -5,6 +5,7 @@ import {
   StyleSheet,
   ActivityIndicator,
   TouchableOpacity,
+  TextInput,
   Modal,
   Alert,
 } from 'react-native';
@@ -498,29 +499,32 @@ export default function MapScreen() {
           </Marker>
         )})}
 
-        {/* Pending report markers — semi-transparent until verified */}
-        {pendingReports.filter(r => r.lat && r.lng).map((r, i) => (
+        {/* Pending report markers — amber, semi-transparent, tappable */}
+        {pendingReports.filter(r => r.lat && r.lng).map((r, i) => {
+          const pIcon = r.type === 'Toilet' ? 'male-female-outline' :
+                        r.type === 'Food / Shop' ? 'cafe-outline' : 'water-outline';
+          return (
           <Marker
             key={`pending-${i}`}
             lngLat={[r.lng, r.lat]}
             anchor="center"
+            onPress={() => setSelectedWaterCooler({
+              name: r.name, type: `unverified-${r.type}`,
+              lat: r.lat, lng: r.lng,
+            })}
           >
             <View style={{
               width: Math.max(14, Math.round(pinRadius * 2.5)),
               height: Math.max(14, Math.round(pinRadius * 2.5)),
               borderRadius: Math.max(7, Math.round(pinRadius * 1.25)),
-              backgroundColor: isDark ? 'rgba(30,30,30,0.7)' : 'rgba(255,255,255,0.7)',
+              backgroundColor: isDark ? 'rgba(30,30,30,0.8)' : 'rgba(255,255,255,0.8)',
               justifyContent: 'center', alignItems: 'center',
-              borderWidth: 2, borderColor: '#F59E0B', borderStyle: 'dashed',
+              borderWidth: 2, borderColor: '#F59E0B',
             }}>
-              <Ionicons
-                name="add-circle-outline"
-                size={Math.max(10, Math.round(pinRadius * 1.6))}
-                color="#F59E0B"
-              />
+              <Ionicons name={pIcon as any} size={Math.max(10, Math.round(pinRadius * 1.6))} color="#F59E0B" />
             </View>
           </Marker>
-        ))}
+        )})}
 
         {userLocationGeojson && (
           <GeoJSONSource id="user-location" data={userLocationGeojson}>
@@ -695,13 +699,14 @@ export default function MapScreen() {
             <Text style={{ fontSize: 13, color: '#6B7280', marginBottom: 16 }}>
               This will appear as unverified until confirmed by the community.
             </Text>
-            <View style={{ backgroundColor: '#F3F4F6', borderRadius: 10, padding: 12, marginBottom: 16 }}>
-              <Text style={{ fontSize: 13, color: '#374151', fontWeight: '500' }}>Description (optional)</Text>
-              <View style={{ height: 1, backgroundColor: '#E5E7EB', marginVertical: 8 }} />
-              <Text style={{ fontSize: 13, color: '#9CA3AF' }}>
-                e.g. "Level 1 void deck, near lift B"
-              </Text>
-            </View>
+            <TextInput
+              style={{ backgroundColor: '#F3F4F6', borderRadius: 10, padding: 14, fontSize: 14, color: '#111827', marginBottom: 16 }}
+              placeholder='e.g. "Level 1 void deck, near lift B"'
+              placeholderTextColor="#9CA3AF"
+              value={descText}
+              onChangeText={setDescText}
+              maxLength={120}
+            />
             <View style={{ flexDirection: 'row', gap: 10 }}>
               <TouchableOpacity
                 style={{ flex: 1, padding: 14, borderRadius: 12, backgroundColor: '#F3F4F6', alignItems: 'center' }}
@@ -764,15 +769,15 @@ export default function MapScreen() {
             elevation: 6,
           }}>
             <Text style={{ fontSize: 11, fontWeight: '600', color:
+              selectedWaterCooler.type?.startsWith('unverified-') ? '#F59E0B' :
               selectedWaterCooler.type === 'toilet' ? '#8B5CF6' :
               selectedWaterCooler.type === 'shop' ? '#F59E0B' :
-              selectedWaterCooler.type === 'medical' ? '#EF4444' :
               selectedWaterCooler.type === 'verified' ? '#06B6D4' :
               selectedWaterCooler.type === 'unverified' ? '#EC4899' : '#F59E0B'
             }}>
-              {selectedWaterCooler.type === 'toilet' ? 'Toilet' :
+              {selectedWaterCooler.type?.startsWith('unverified-') ? `✗ Unverified ${selectedWaterCooler.type.replace('unverified-', '')}` :
+               selectedWaterCooler.type === 'toilet' ? 'Toilet' :
                selectedWaterCooler.type === 'shop' ? 'Food / Shop' :
-               selectedWaterCooler.type === 'medical' ? 'Medical' :
                selectedWaterCooler.type === 'verified' ? '✓ Verified Water Cooler' :
                selectedWaterCooler.type === 'unverified' ? '✗ Unverified Water Cooler' : 'Water Cooler'}
             </Text>
