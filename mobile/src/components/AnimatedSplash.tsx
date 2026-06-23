@@ -48,7 +48,7 @@ export default function AnimatedSplash({ onFinish }: AnimatedSplashProps) {
     <View style={styles.container}>
       <Animated.View style={[styles.logoWrap, { opacity, transform: [{ scale }] }]}>
         <Image
-          source={require('../assets/splash-icon.png')}
+          source={require('../../assets/splash-icon.png')}
           style={styles.logo}
           resizeMode="contain"
         />
