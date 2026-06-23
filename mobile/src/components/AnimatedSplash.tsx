@@ -8,38 +8,43 @@ interface AnimatedSplashProps {
 const TIERS = ['#4A90D9', '#FF9500', '#FF3B30', '#8B0000', '#7C3AED'];
 
 /**
- * Animated loading screen — 5 colored bars ascend like stair steps,
- * the app name fades in, then everything fades out to the main screen.
- * Total duration: ~2s. No external image dependency.
+ * Animated splash — pin logo + 5 rising bars + app name.
+ * White opaque screen, no map UI visible underneath. ~2s total.
  */
 export default function AnimatedSplash({ onFinish }: AnimatedSplashProps) {
   const fadeOut = useRef(new Animated.Value(1)).current;
+  const logoOpacity = useRef(new Animated.Value(0)).current;
   const titleOpacity = useRef(new Animated.Value(0)).current;
   const barHeights = useRef(TIERS.map(() => new Animated.Value(0))).current;
 
   useEffect(() => {
-    // Stagger the bars rising upward
-    const barAnimations = barHeights.map((bar, i) =>
-      Animated.timing(bar, {
-        toValue: 1,
-        duration: 600,
-        delay: i * 120,
-        useNativeDriver: false,
-      }),
-    );
-
     Animated.sequence([
-      // Phase 1: bars rise in sequence
-      Animated.parallel(barAnimations),
-      // Phase 2: title fades in
+      // Logo fades in
+      Animated.timing(logoOpacity, {
+        toValue: 1,
+        duration: 400,
+        useNativeDriver: true,
+      }),
+      // Bars rise
+      Animated.parallel(
+        barHeights.map((bar, i) =>
+          Animated.timing(bar, {
+            toValue: 1,
+            duration: 500,
+            delay: i * 100,
+            useNativeDriver: false,
+          }),
+        ),
+      ),
+      // Title fades in
       Animated.timing(titleOpacity, {
         toValue: 1,
         duration: 300,
         useNativeDriver: true,
       }),
-      // Phase 3: hold
-      Animated.delay(500),
-      // Phase 4: everything fades out
+      // Hold
+      Animated.delay(400),
+      // Fade out
       Animated.timing(fadeOut, {
         toValue: 0,
         duration: 400,
@@ -50,6 +55,13 @@ export default function AnimatedSplash({ onFinish }: AnimatedSplashProps) {
 
   return (
     <Animated.View style={[styles.container, { opacity: fadeOut }]}>
+      {/* Pin logo */}
+      <Animated.Image
+        source={require('../../assets/splash-icon.png')}
+        style={[styles.logo, { opacity: logoOpacity }]}
+        resizeMode="contain"
+      />
+
       {/* Stair bars */}
       <View style={styles.barsRow}>
         {TIERS.map((color, i) => (
@@ -61,7 +73,7 @@ export default function AnimatedSplash({ onFinish }: AnimatedSplashProps) {
                 backgroundColor: color,
                 height: barHeights[i].interpolate({
                   inputRange: [0, 1],
-                  outputRange: [4, 80 + i * 16],
+                  outputRange: [4, 64 + i * 12],
                 }),
               },
             ]}
@@ -80,18 +92,28 @@ export default function AnimatedSplash({ onFinish }: AnimatedSplashProps) {
 
 const styles = StyleSheet.create({
   container: {
-    ...StyleSheet.absoluteFill,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     backgroundColor: '#FFFFFF',
     justifyContent: 'center',
     alignItems: 'center',
-    zIndex: 999,
+    zIndex: 9999,
+    elevation: 9999,
+  },
+  logo: {
+    width: 160,
+    height: 80,
+    marginBottom: 24,
   },
   barsRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',
     gap: 8,
-    marginBottom: 32,
-    height: 120,
+    marginBottom: 28,
+    height: 100,
   },
   bar: {
     width: 28,
