@@ -445,16 +445,14 @@ export default function MapScreen() {
             })}
           >
             <View style={{
-              width: Math.max(14, Math.round(pinRadius * 2.5)),
-              height: Math.max(14, Math.round(pinRadius * 2.5)),
-              borderRadius: Math.max(7, Math.round(pinRadius * 1.25)),
+              width: 22, height: 22, borderRadius: 11,
               backgroundColor: isDark ? 'rgba(30,30,30,0.9)' : '#FFFFFF',
               justifyContent: 'center', alignItems: 'center',
               elevation: 3,
             }}>
               <Ionicons
                 name="water-outline"
-                size={Math.max(10, Math.round(pinRadius * 1.6))}
+                size={14}
                 color={
                   wc.status === 'verified' ? '#06B6D4' :
                   wc.status === 'unverified' ? '#EC4899' : '#F59E0B'
@@ -483,16 +481,14 @@ export default function MapScreen() {
             })}
           >
             <View style={{
-              width: Math.max(14, Math.round(pinRadius * 2.5)),
-              height: Math.max(14, Math.round(pinRadius * 2.5)),
-              borderRadius: Math.max(7, Math.round(pinRadius * 1.25)),
+              width: 22, height: 22, borderRadius: 11,
               backgroundColor: isDark ? 'rgba(30,30,30,0.9)' : '#FFFFFF',
               justifyContent: 'center', alignItems: 'center',
               elevation: 3,
             }}>
               <Ionicons
                 name={iconName as any}
-                size={Math.max(10, Math.round(pinRadius * 1.6))}
+                size={14}
                 color={iconColor}
               />
             </View>
@@ -514,14 +510,12 @@ export default function MapScreen() {
             })}
           >
             <View style={{
-              width: Math.max(14, Math.round(pinRadius * 2.5)),
-              height: Math.max(14, Math.round(pinRadius * 2.5)),
-              borderRadius: Math.max(7, Math.round(pinRadius * 1.25)),
+              width: 22, height: 22, borderRadius: 11,
               backgroundColor: isDark ? 'rgba(30,30,30,0.8)' : 'rgba(255,255,255,0.8)',
               justifyContent: 'center', alignItems: 'center',
-              borderWidth: 2, borderColor: '#F59E0B',
+              borderWidth: 2, borderColor: '#9CA3AF',
             }}>
-              <Ionicons name={pIcon as any} size={Math.max(10, Math.round(pinRadius * 1.6))} color="#F59E0B" />
+              <Ionicons name={pIcon as any} size={14} color="#9CA3AF" />
             </View>
           </Marker>
         )})}
@@ -670,9 +664,10 @@ export default function MapScreen() {
       {/* Placement mode: crosshair + confirm */}
       {placementType && (
         <>
-          {/* Crosshair */}
+          {/* Crosshair — thin lines */}
           <View style={styles.crosshair} pointerEvents="none">
-            <Text style={{ fontSize: 32, color: '#EF4444' }}>✚</Text>
+            <View style={styles.crosshairLineH} />
+            <View style={styles.crosshairLineV} />
           </View>
           {/* Confirm / Cancel buttons */}
           <View style={styles.placementBar}>
@@ -1030,9 +1025,27 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: '50%',
     left: '50%',
-    marginLeft: -16,
-    marginTop: -16,
+    width: 28,
+    height: 28,
+    marginLeft: -14,
+    marginTop: -14,
     zIndex: 15,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  crosshairLineH: {
+    position: 'absolute',
+    width: 24,
+    height: 2,
+    backgroundColor: '#EF4444',
+    borderRadius: 1,
+  },
+  crosshairLineV: {
+    position: 'absolute',
+    width: 2,
+    height: 24,
+    backgroundColor: '#EF4444',
+    borderRadius: 1,
   },
   placementBar: {
     position: 'absolute',
