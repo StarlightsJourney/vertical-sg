@@ -6,25 +6,23 @@ interface AnimatedSplashProps {
 }
 
 const TIERS = ['#4A90D9', '#FF9500', '#FF3B30', '#8B0000', '#7C3AED'];
+const BAR_MAX = [48, 72, 96, 120, 144];
 
 export default function AnimatedSplash({ onFinish }: AnimatedSplashProps) {
   const fadeOut = useRef(new Animated.Value(1)).current;
   const titleOpacity = useRef(new Animated.Value(0)).current;
-
-  // Each bar scales up from the bottom using transform (native-driver friendly)
-  const barScales = useRef(TIERS.map(() => new Animated.Value(0.05))).current;
+  const barHeights = useRef(BAR_MAX.map(() => new Animated.Value(0))).current;
 
   useEffect(() => {
     Animated.sequence([
-      // Bars rise in sequence using native driver (transform, not height)
+      // Bars rise
       Animated.parallel(
-        barScales.map((bar, i) =>
-          Animated.spring(bar, {
-            toValue: 1,
-            friction: 6,
-            tension: 60,
+        barHeights.map((bar, i) =>
+          Animated.timing(bar, {
+            toValue: BAR_MAX[i],
+            duration: 500,
             delay: i * 80,
-            useNativeDriver: true,
+            useNativeDriver: false,
           }),
         ),
       ),
@@ -47,24 +45,14 @@ export default function AnimatedSplash({ onFinish }: AnimatedSplashProps) {
 
   return (
     <Animated.View style={[styles.container, { opacity: fadeOut }]}>
-      {/* Stair bars — animated with scaleY from bottom */}
       <View style={styles.barsRow}>
         {TIERS.map((color, i) => (
-          <View key={color} style={styles.barWrap}>
-            <Animated.View
-              style={[
-                styles.bar,
-                {
-                  backgroundColor: color,
-                  transform: [{ scaleY: barScales[i] }],
-                },
-              ]}
-            />
-          </View>
+          <Animated.View
+            key={color}
+            style={[styles.bar, { backgroundColor: color, height: barHeights[i] }]}
+          />
         ))}
       </View>
-
-      {/* App name */}
       <Animated.View style={[styles.titleWrap, { opacity: titleOpacity }]}>
         <Text style={styles.title}>Vertical</Text>
         <Text style={styles.subtitle}>Find your next climb</Text>
@@ -76,10 +64,7 @@ export default function AnimatedSplash({ onFinish }: AnimatedSplashProps) {
 const styles = StyleSheet.create({
   container: {
     position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
+    top: 0, left: 0, right: 0, bottom: 0,
     backgroundColor: '#FFFFFF',
     justifyContent: 'center',
     alignItems: 'center',
@@ -90,33 +75,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-end',
     gap: 8,
-    height: 100,
+    height: 150,
     marginBottom: 28,
-  },
-  barWrap: {
-    width: 28,
-    height: 100,
-    justifyContent: 'flex-end',
-    overflow: 'hidden',
   },
   bar: {
     width: 28,
-    height: 100,
     borderRadius: 4,
   },
-  titleWrap: {
-    alignItems: 'center',
-  },
-  title: {
-    fontSize: 32,
-    fontWeight: '800',
-    color: '#111827',
-    letterSpacing: -0.5,
-  },
-  subtitle: {
-    fontSize: 14,
-    color: '#6B7280',
-    marginTop: 4,
-    fontWeight: '500',
-  },
+  titleWrap: { alignItems: 'center' },
+  title: { fontSize: 32, fontWeight: '800', color: '#111827', letterSpacing: -0.5 },
+  subtitle: { fontSize: 14, color: '#6B7280', marginTop: 4, fontWeight: '500' },
 });
