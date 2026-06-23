@@ -33,6 +33,7 @@ const DARK_STYLE = require('../../assets/map-style-dark.json');
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const WATER_COOLERS_RAW: Array<{ name: string; lat: number; lng: number; status: string; level: string; temperature: string; operator: string }> = require('../../assets/water-coolers.json');
+const AMENITIES_RAW: Array<{ name: string; lat: number; lng: number; type: string; category: string }> = require('../../assets/amenities.json');
 
 // Default Singapore bounds for initial fetch before map camera settles
 const SG_BOUNDS: BoundsRect = { sw: [103.6, 1.2], ne: [104.0, 1.48] };
@@ -449,6 +450,41 @@ export default function MapScreen() {
           </Marker>
         )})}
 
+        {/* Amenity markers — toilets, shops, medical */}
+        {AMENITIES_RAW.filter(a => a.lat && a.lng).map((a, i) => {
+          const iconName = a.type === 'toilet' ? 'accessibility-outline' :
+                           a.type === 'shop' ? 'cafe-outline' : 'medkit-outline';
+          const iconColor = a.type === 'toilet' ? '#8B5CF6' :
+                            a.type === 'shop' ? '#F59E0B' : '#EF4444';
+          return (
+          <Marker
+            key={`am-${i}`}
+            lngLat={[a.lng, a.lat]}
+            anchor="center"
+            onPress={() => setSelectedWaterCooler({
+              name: a.name,
+              type: a.type,
+              lat: a.lat,
+              lng: a.lng,
+            })}
+          >
+            <View style={{
+              width: Math.max(14, Math.round(pinRadius * 2.5)),
+              height: Math.max(14, Math.round(pinRadius * 2.5)),
+              borderRadius: Math.max(7, Math.round(pinRadius * 1.25)),
+              backgroundColor: isDark ? 'rgba(30,30,30,0.9)' : '#FFFFFF',
+              justifyContent: 'center', alignItems: 'center',
+              elevation: 3,
+            }}>
+              <Ionicons
+                name={iconName as any}
+                size={Math.max(10, Math.round(pinRadius * 1.6))}
+                color={iconColor}
+              />
+            </View>
+          </Marker>
+        )})}
+
         {userLocationGeojson && (
           <GeoJSONSource id="user-location" data={userLocationGeojson}>
             {/* Outer pulsing ring */}
@@ -598,10 +634,9 @@ export default function MapScreen() {
         tapY={tapY}
       />
 
-      {/* Water cooler info card — tiny, near tap */}
+      {/* Amenity info card — tiny, near tap, doesn't block panning */}
       {selectedWaterCooler && (
-        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 20 }}>
-          <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setSelectedWaterCooler(null)} activeOpacity={1} />
+        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 20 }} pointerEvents="box-none">
           <View style={{
             position: 'absolute',
             top: Math.max(60, (tapY || 300) - 80),
@@ -615,13 +650,18 @@ export default function MapScreen() {
             elevation: 6,
           }}>
             <Text style={{ fontSize: 11, fontWeight: '600', color:
+              selectedWaterCooler.type === 'toilet' ? '#8B5CF6' :
+              selectedWaterCooler.type === 'shop' ? '#F59E0B' :
+              selectedWaterCooler.type === 'medical' ? '#EF4444' :
               selectedWaterCooler.type === 'verified' ? '#06B6D4' :
               selectedWaterCooler.type === 'unverified' ? '#EC4899' : '#F59E0B'
             }}>
-              {selectedWaterCooler.type === 'verified' ? '✓ Verified' :
-               selectedWaterCooler.type === 'unverified' ? '✗ Unverified' : 'Ticketed'}
+              {selectedWaterCooler.type === 'toilet' ? 'Toilet' :
+               selectedWaterCooler.type === 'shop' ? 'Food / Shop' :
+               selectedWaterCooler.type === 'medical' ? 'Medical' :
+               selectedWaterCooler.type === 'verified' ? '✓ Verified Water Cooler' :
+               selectedWaterCooler.type === 'unverified' ? '✗ Unverified Water Cooler' : 'Water Cooler'}
             </Text>
-            <Text style={{ fontSize: 13, fontWeight: '700', color: '#111827', marginTop: 2 }}>Water Cooler</Text>
             {selectedWaterCooler.name && (
               <Text style={{ fontSize: 10, color: '#6B7280', marginTop: 4, textAlign: 'center' }} numberOfLines={2}>
                 {selectedWaterCooler.name}
