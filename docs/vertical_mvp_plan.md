@@ -4,6 +4,8 @@
 
 **Product summary:** Mobile app (iOS + Android) that maps Singapore HDB (public housing) blocks, showing building height/storey count, so people can find tall blocks nearby to train stair-climbing on. MVP is read-only browsing. Crowdsourced condition reports (ventilation, dust, photos) and routing are explicitly out of scope for MVP.
 
+**Current State (as of 2026-06-24):** Phase 1 (read-only browse map, filter/search, climb logging) and Phase 1.5 (bottom tab navigation, amenity markers, interactive placement, animated splash, performance fixes, dark mode) are shipped. The app features MapLibre rendering with local style JSONs, 131 water cooler + 120 toilet/shop markers rendered as Ionicons on Marker components, and a custom tab bar (Social/My Climbs/Map/Profile). Phase 2 (accounts, social, leaderboard) is under consideration.
+
 ---
 
 ## Locked Tech Stack ✅
@@ -142,10 +144,12 @@ create index blocks_geom_idx on blocks using gist (geom);
    - Tap water cooler marker → floating info card with name and status.
 
 2. **Water cooler markers** (individual `<Marker>` components via MapLibre)
-   - ~175 water cooler locations from a bundled `water-coolers.json` file.
+   - 131 water cooler locations from a bundled `water-coolers.json` file.
    - Each marker renders an Ionicons `water-outline` icon inside a white circle with elevation shadow.
    - Status color: verified = cyan (`#06B6D4`), unverified = pink (`#EC4899`), ticketed = amber (`#F59E0B`).
    - Uses `@expo/vector-icons/Ionicons` — no custom marker images needed.
+   - Zoom-gated: 25 rendered at zoom < 13, all 80 at zoom >= 13.
+   - Sorted by distance from map center, showing nearest markers first.
 
 3. **Floating glass card** (replaces bottom sheet)
    - Translucent card (`rgba(255,255,255,0.92)`) with rounded corners and shadow, positioned near the tapped pin.
@@ -168,11 +172,11 @@ create index blocks_geom_idx on blocks using gist (geom);
    - Applied client-side to the map's GeoJSON source — only blocks at or above the threshold are rendered.
    - **Height legend** at top-right shows all 5 tier colors with labels.
 
-6. **Report/alert system** (centered icon grid modal)
-   - Triggered by an amber `+` button in the bottom bar.
-   - 6 amenity/report categories: Water Cooler, Toilet, Food/Shop, Hazard, Closed Access, Other — each with an Ionicons icon and category color.
-   - Tapping a category saves a report to local storage `{type, lat, lng, timestamp, status: 'pending'}` and shows a confirmation `Alert`.
-   - Reports persist in memory for the session.
+6. **Report modal** (centered icon grid)
+   - Triggered by an amber `+` button in the Map tab.
+   - 3 amenity categories: Water Cooler, Toilet, Food/Shop — each with an Ionicons icon and category color.
+   - Selecting a category enters the placement flow: crosshair overlay → pan to position → confirm location → optional description → submit.
+   - Reports save to AsyncStorage as `{type, lat, lng, timestamp, status: 'pending'}` and appear immediately as unverified gray markers.
 
 7. **Bottom bar** (persistent, translucent glass effect)
    - Search input (tappable, opens SearchScreen)
@@ -223,7 +227,9 @@ Features added after the initial Phase 1 MVP shipped, during ongoing development
 
 4. **Toilet + food/shop markers**
    - 120 bundled amenity locations (61 toilets, 59 food/shops) from `amenities.json`.
-   - Rendered as individual `<Marker>` components with Ionicons, only at zoom >= 13 for performance.
+   - Rendered as individual `<Marker>` components with Ionicons: toilets use `male-female-outline` (purple), food/shops use `cafe-outline` (amber).
+   - Zoom-gated: 15 rendered at zoom < 13, 60 at zoom >= 13.
+   - Sorted by distance from map center, showing nearest markers first.
 
 5. **Performance: fixed pin sizes & bounds caching**
    - Block pins use a constant 5px `circle-radius` (no zoom scaling) for smooth rendering.
@@ -335,3 +341,7 @@ Features added after the initial Phase 1 MVP shipped, during ongoing development
 | Performance: amenity rendering | Conditional rendering at zoom >= 13 | Water coolers, amenities, and pending markers only render when zoomed in enough to be useful. |
 | Day/night switching | Local time check (7pm-6am = dark), 60s interval | Switches between `map-style.json` and `map-style-dark.json`. No API call needed. |
 | App name | "Vertical" (formerly StairTrain) | Changed during development. `expo.name` in `app.json` is "Vertical". |
+| Tab navigation | Custom touchable-based tabs (no react-navigation) | Avoids native module linking, works instantly with no Expo dev-build dependency |
+| Marker components for amenities | Ionicons on MapLibre `<Marker>` components | Tradeoff: minor visual jitter during map interaction for proper icon rendering (no native SymbolLayer limitations) |
+| Zoom-gated rendering | State-based visibility thresholds (zoom < 13 vs >= 13) | Reduces clutter at low zoom levels: 25 water + 15 non-water at zoom<13, 80 water + 60 non-water at zoom>=13 |
+| Distance-sorted markers | Nearest N markers shown based on map center | Sorted by Haversine distance from camera center, ensuring nearby amenities are always prioritized |

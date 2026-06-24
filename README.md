@@ -45,21 +45,21 @@ vertical/
 ```
 
 Built features include:
-- **Map pins** colored by height tier (blue 1-10, orange 11-20, red 21-30, dark red 31-39, purple 40+) with fixed 5px radius and gold stroke for climbed blocks.
-- **Cycling filter toggle** — tap to cycle 21+ → 31+ → 40+ → All, pins re-filter instantly.
-- **Water cooler markers** — ~131 individual `<Marker>` components using Ionicons (`water-outline`) with verified/unverified/ticketed status colors. Tap shows a floating info card.
-- **Amenity markers** — 120 toilet and food/shop markers (purple/orange Ionicons) rendered at zoom >= 13 for performance.
-- **Interactive amenity placement** — tap amber `+` button, pick category (Water Cooler/Toilet/Food & Shop), crosshair overlay to position on map, add optional description, submit. Saved to AsyncStorage, appears immediately as unverified marker.
-- **Pending/unverified markers** — gray dashed-border markers with semi-transparent background, tappable to view status and get directions. Only rendered at zoom >= 13.
-- **Search screen** — full-height modal with debounced address search, filter chips (40+/31+/21+/All), starred blocks, recent blocks (3 with "See more"), and My Climbs history with stats.
-- **Floating glass card** — translucent card positioned near the tapped pin showing storeys, height, distance, address, quantity selector for climbs, and a directions link.
-- **Climb logging** — `+`/`-` quantity selector with AsyncStorage persistence. My Climbs section shows total climbs/floors/meters.
+- **Bottom tab navigation** — 4 custom tabs (Social, My Climbs, Map, Profile) implemented with touchable icons and Animated transitions. No native dependencies or react-navigation required.
+- **Map screen** — MapLibre with local Liberty style JSONs (light + dark). Building pins colored by height tier (blue 1-10, orange 11-20, red 21-30, dark red 31-39, purple 40+) with fixed 5px radius and gold stroke for climbed blocks. Single cycling filter toggle (21+ → 31+ → 40+ → All).
+- **Amenity markers** — Ionicons on MapLibre Marker components: water coolers (`water-outline`, cyan/pink), toilets (`male-female-outline`, purple), shops (`cafe-outline`, amber). Zoom-gated: 25 water + 15 non-water at zoom<13, 80 water + 60 non-water at zoom>=13. Sorted by distance from map center.
+- **Pending amenity markers** — gray Ionicons with dashed border, submitted via placement flow. Tappable to view status and get directions. Only rendered at zoom >= 13.
+- **Interactive amenity placement** — amber `+` button → category picker → crosshair overlay to pan position → confirm → optional description → submit as unverified. Saved to AsyncStorage, appears immediately.
 - **Animated splash screen** — 5 height-tier colored bars rise sequentially on launch, then the "Vertical" logo fades in with subtitle. Uses native driver for 60fps.
-- **Day/night auto-switching** — switches between light and dark map styles based on local time (7pm-6am).
-- **Singapore bounds restriction** — camera locked to Singapore island via `maxBounds` and `minZoom`.
+- **Dark mode** — auto day/night via `isDark` state passed from `App.tsx`. Tab bar and map elements adapt. Map style switches between light and dark variants.
+- **Climb logging** — `+`/`-` quantity selector with AsyncStorage persistence. My Climbs tab shows total climbs/floors/meters and last 5 entries.
+- **Search** — debounced address search with filter chips (40+/31+/21+/All), starred blocks, recent blocks (3 with "See more"), and My Climbs history.
+- **Report modal** — 3 amenity categories (Water Cooler, Toilet, Food/Shop) in an icon grid, triggered from the Map tab. Saves to AsyncStorage as pending reports.
+- **Floating glass card** — translucent card positioned near the tapped pin showing storeys, height, distance, address, quantity selector, and directions link.
+- **Performance** — fixed pin sizes (5px), fixed Marker sizes (20px), no zoom-tied state for amenities. Bounds caching with 600ms debounce + 300m movement threshold.
+- **Singapore bounds restriction** — camera locked to Singapore via `maxBounds` and `minZoom`.
 - **My Location button** — re-centers map on user's current GPS position.
 - **Height legend** — colored dots at top-right showing the 5 tier colors.
-- **Fixed pin sizes** — constant 5px radius (no zoom scaling) for smooth performance.
 
 ---
 
@@ -158,6 +158,7 @@ See [Expo Development Builds](https://docs.expo.dev/develop/development-builds/i
 | Directions | Deep-link to Google Maps | No API key, no routing logic to maintain |
 | Geocoding | OneMap API (free, SG-specific) | Single-pass OneMap Search API — all geocoding goes through OneMap |
 | Auth (MVP) | None | Read-only app, no user accounts needed |
+| Tab navigation | Custom touchable-based tabs (no react-navigation) | Avoids native module linking, works instantly with no Expo dev-build dependency |
 | Amenity reporting | Local AsyncStorage, unverified markers | Reports saved to device, appear as pending gray markers immediately |
 
 ---
@@ -167,9 +168,10 @@ See [Expo Development Builds](https://docs.expo.dev/develop/development-builds/i
 | Phase | Scope | Status |
 |---|---|---|
 | **0** | Data ingestion pipeline | ✅ Built |
-| **1** | MVP app (browse map, filter/search, star blocks, climb logging, water cooler markers, report/alert system) | ✅ Built |
-| **2** | Social & community features (accounts, social feed, leaderboard, in-app routing, photo submissions, building detail expansion, tab navigation) | ❓ Scoped, not built |
-| **3** | Gamification & advanced moderation (badges, streaks, amenity verification, trust-weighted scoring) | ❓ Unscoped |
+| **1** | MVP app (browse map, filter/search, star blocks, climb logging, water cooler markers) | ✅ Complete |
+| **1.5** | Bottom tab navigation, amenity markers (toilets, shops), interactive placement, animated splash, performance fixes, dark mode, pending/unverified markers | ✅ Built |
+| **2** | Social & community features (auth, social feed, leaderboard, in-app routing, photo submissions, building detail expansion) | Planned, not built |
+| **3** | Gamification & advanced moderation (badges, streaks, amenity verification, trust-weighted scoring) | Unscoped |
 
 ---
 
