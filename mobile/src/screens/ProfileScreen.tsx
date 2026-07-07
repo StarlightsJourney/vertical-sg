@@ -15,12 +15,12 @@ import { supabase } from '../config/supabase';
 import storage from '../utils/storage';
 import MascotAvatar from '../components/MascotAvatar';
 import BadgeDetailModal from '../components/BadgeDetailModal';
+import SettingsModal from '../components/SettingsModal';
 import { computeXP, computeLevelProgress } from '../utils/leveling';
 import type { ClimbLog, UserBadge, Profile, BadgeDef } from '../types';
 import { BADGE_DEFS } from '../types';
 import AuthPrompt from '../components/AuthPrompt';
 
-const RECENT_CLIMBS_COLLAPSED = 3;
 const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 function formatClimbDateTime(iso: string): string {
@@ -30,23 +30,40 @@ function formatClimbDateTime(iso: string): string {
   return `${date}, ${time}`;
 }
 
-/** Current consecutive-day streak, counting back from today (or yesterday,
- * so a climb from earlier today doesn't reset until the day is fully missed). */
-function computeStreak(isoDates: string[]): number {
-  const days = new Set(isoDates.map((d) => new Date(d).toDateString()));
-  const today = new Date();
+/** Monday-aligned start of the week containing `d`. */
+function mondayOfWeek(d: Date): Date {
+  const monday = new Date(d);
+  const day = monday.getDay(); // 0 = Sunday
+  monday.setDate(monday.getDate() + (day === 0 ? -6 : 1 - day));
+  monday.setHours(0, 0, 0, 0);
+  return monday;
+}
+
+/** Consecutive calendar weeks (Mon–Sun), counting back from this week, with at least one climb. */
+function computeWeeklyStreak(isoDates: string[]): number {
+  const weekKeys = new Set(isoDates.map((d) => mondayOfWeek(new Date(d)).getTime()));
   let streak = 0;
-  const cursor = new Date(today);
-
-  if (!days.has(cursor.toDateString())) {
-    cursor.setDate(cursor.getDate() - 1);
-  }
-
-  while (days.has(cursor.toDateString())) {
+  const cursor = mondayOfWeek(new Date());
+  while (weekKeys.has(cursor.getTime())) {
     streak++;
-    cursor.setDate(cursor.getDate() - 1);
+    cursor.setDate(cursor.getDate() - 7);
   }
+  return streak;
+}
 
+/** Consecutive calendar months, counting back from this month, with at least one climb. */
+function computeMonthlyStreak(isoDates: string[]): number {
+  const monthKeys = new Set(isoDates.map((d) => {
+    const dt = new Date(d);
+    return dt.getFullYear() * 12 + dt.getMonth();
+  }));
+  const now = new Date();
+  let streak = 0;
+  let cursor = now.getFullYear() * 12 + now.getMonth();
+  while (monthKeys.has(cursor)) {
+    streak++;
+    cursor--;
+  }
   return streak;
 }
 
@@ -114,21 +131,29 @@ const c = StyleSheet.create({
   barLabel: { fontSize: 11, fontWeight: '600', color: '#9CA3AF', marginTop: 6 },
 });
 
-export default function ProfileScreen({ isDark = false }: { isDark?: boolean }) {
-  const { user, isAnonymous, loading: authLoading, signOut } = useAuth();
+interface ProfileScreenProps {
+  isDark?: boolean;
+  themeMode?: 'light' | 'dark' | 'auto';
+  onSetThemeMode?: (mode: 'light' | 'dark' | 'auto') => void;
+}
+
+export default function ProfileScreen({ isDark = false, themeMode = 'auto', onSetThemeMode }: ProfileScreenProps) {
+  const { user, isAnonymous, loading: authLoading } = useAuth();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [editingHandle, setEditingHandle] = useState(false);
   const [handleInput, setHandleInput] = useState('');
   const [climbHistory, setClimbHistory] = useState<ClimbLog[]>([]);
   const [badges, setBadges] = useState<UserBadge[]>([]);
   const [climbStats, setClimbStats] = useState({ climbs: 0, floors: 0, tallest: 0 });
-  const [streak, setStreak] = useState(0);
+  const [weeklyStreak, setWeeklyStreak] = useState(0);
+  const [monthlyStreak, setMonthlyStreak] = useState(0);
   const [dailyFloors, setDailyFloors] = useState<number[]>(new Array(7).fill(0));
   const [weeklyGoal, setWeeklyGoal] = useState<number | null>(null);
   const [verifiedCount, setVerifiedCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [authPromptVisible, setAuthPromptVisible] = useState(false);
-  const [showAllClimbs, setShowAllClimbs] = useState(false);
+  const [settingsVisible, setSettingsVisible] = useState(false);
+  const [profileTab, setProfileTab] = useState<'overview' | 'climbs'>('overview');
   const [selectedBadge, setSelectedBadge] = useState<BadgeDef | null>(null);
 
   const loadData = useCallback(async () => {
@@ -145,7 +170,8 @@ export default function ProfileScreen({ isDark = false }: { isDark?: boolean }) 
       const floors = history.reduce((s, c) => s + c.floors, 0);
       const tallest = history.reduce((m, c) => Math.max(m, c.storeys), 0);
       setClimbStats({ climbs: history.length, floors, tallest });
-      setStreak(computeStreak(history.map((c) => c.climbedAt)));
+      setWeeklyStreak(computeWeeklyStreak(history.map((c) => c.climbedAt)));
+      setMonthlyStreak(computeMonthlyStreak(history.map((c) => c.climbedAt)));
       setDailyFloors(computeDailyFloors(history.map((c) => ({ climbedAt: c.climbedAt, floors: c.floors }))));
       setLoading(false);
       return;
@@ -180,6 +206,7 @@ export default function ProfileScreen({ isDark = false }: { isDark?: boolean }) 
             : c.floors_climbed;
 
         const history: ClimbLog[] = climbs.map((c: any) => ({
+          climb_id: c.climb_id,
           block_id: c.block_id,
           blk_no: c.blocks?.blk_no ?? '',
           street: c.blocks?.street ?? '',
@@ -191,7 +218,8 @@ export default function ProfileScreen({ isDark = false }: { isDark?: boolean }) 
         const floors = climbs.reduce((s: number, c: any) => s + c.floors_climbed, 0);
         const tallest = climbs.reduce((m: number, c: any) => Math.max(m, storeysOf(c)), 0);
         setClimbStats({ climbs: climbs.length, floors, tallest });
-        setStreak(computeStreak(climbs.map((c: any) => c.created_at)));
+        setWeeklyStreak(computeWeeklyStreak(climbs.map((c: any) => c.created_at)));
+        setMonthlyStreak(computeMonthlyStreak(climbs.map((c: any) => c.created_at)));
         setDailyFloors(computeDailyFloors(climbs.map((c: any) => ({ climbedAt: c.created_at, floors: c.floors_climbed }))));
       }
 
@@ -220,11 +248,40 @@ export default function ProfileScreen({ isDark = false }: { isDark?: boolean }) 
     loadData();
   }, [loadData]);
 
-  const handleChangeSkin = async () => {
+  const handleChangeSkin = async (idx: number) => {
     if (!user || !profile) return;
-    const nextSkin = (profile.avatar_idx + 1) % 5;
-    setProfile({ ...profile, avatar_idx: nextSkin }); // optimistic
-    await supabase.from('profiles').update({ avatar_idx: nextSkin }).eq('user_id', user.id);
+    setProfile({ ...profile, avatar_idx: idx }); // optimistic
+    await supabase.from('profiles').update({ avatar_idx: idx }).eq('user_id', user.id);
+  };
+
+  const handleDeleteClimb = (climb: ClimbLog, index: number) => {
+    Alert.alert('Delete this climb?', 'This removes it from your stats and history. This can\'t be undone.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          const next = climbHistory.filter((_, i) => i !== index);
+          setClimbHistory(next);
+          setClimbStats({
+            climbs: next.length,
+            floors: next.reduce((s, c) => s + c.floors, 0),
+            tallest: next.reduce((m, c) => Math.max(m, c.storeys), 0),
+          });
+          setWeeklyStreak(computeWeeklyStreak(next.map((c) => c.climbedAt)));
+          setMonthlyStreak(computeMonthlyStreak(next.map((c) => c.climbedAt)));
+          setDailyFloors(computeDailyFloors(next.map((c) => ({ climbedAt: c.climbedAt, floors: c.floors }))));
+
+          if (climb.climb_id && user) {
+            await supabase.from('climbs').delete().eq('climb_id', climb.climb_id).eq('user_id', user.id);
+          } else if (!user) {
+            // addClimb unshifts, so replay oldest-first to preserve newest-first order
+            await storage.clearClimbHistory();
+            for (const c of [...next].reverse()) await storage.addClimb(c);
+          }
+        },
+      },
+    ]);
   };
 
   const handleSaveHandle = async () => {
@@ -247,7 +304,6 @@ export default function ProfileScreen({ isDark = false }: { isDark?: boolean }) 
     const d = new Date(c.climbedAt);
     return Date.now() - d.getTime() < 7 * 86400000;
   }).length;
-  const visibleClimbs = showAllClimbs ? climbHistory : climbHistory.slice(0, RECENT_CLIMBS_COLLAPSED);
 
   const xp = computeXP(climbStats.floors, badges.length, verifiedCount);
   const levelInfo = computeLevelProgress(xp);
@@ -272,19 +328,20 @@ export default function ProfileScreen({ isDark = false }: { isDark?: boolean }) 
         contentContainerStyle={s.scrollContent}
         showsVerticalScrollIndicator={false}
       >
+        {/* LinkedIn-style banner with avatar overlapping the bottom edge */}
+        <View style={[s.banner, isDark && { backgroundColor: '#1E3A8A' }]} />
+
         {/* Profile header */}
         <View style={s.header}>
           <TouchableOpacity
             style={s.avatarTouchable}
-            onPress={isAnonymous ? undefined : handleChangeSkin}
-            activeOpacity={isAnonymous ? 1 : 0.7}
+            onPress={() => setSettingsVisible(true)}
+            activeOpacity={0.7}
           >
             <MascotAvatar skinIdx={profile?.avatar_idx ?? 0} size={72} />
-            {!isAnonymous && (
-              <View style={s.avatarEditBadge}>
-                <Ionicons name="sync-outline" size={12} color="#FFF" />
-              </View>
-            )}
+            <View style={s.avatarEditBadge}>
+              <Ionicons name="settings-outline" size={13} color="#FFF" />
+            </View>
             {!isAnonymous && (
               <View style={s.levelChip}>
                 <Text style={s.levelChipText}>Lv {levelInfo.level}</Text>
@@ -359,106 +416,127 @@ export default function ProfileScreen({ isDark = false }: { isDark?: boolean }) 
           </TouchableOpacity>
         )}
 
-        {/* Stats card */}
-        <View style={[s.statsCard, isDark && { backgroundColor: '#1F2937' }]}>
-          <View style={s.statItem}>
-            <Text style={[s.statNumber, isDark && { color: '#F9FAFB' }]}>{climbStats.climbs}</Text>
-            <Text style={s.statLabel}>Climbs</Text>
-          </View>
-          <View style={[s.statDivider, isDark && { backgroundColor: '#374151' }]} />
-          <View style={s.statItem}>
-            <Text style={[s.statNumber, isDark && { color: '#F9FAFB' }]}>{climbStats.floors}</Text>
-            <Text style={s.statLabel}>Floors</Text>
-          </View>
-          <View style={[s.statDivider, isDark && { backgroundColor: '#374151' }]} />
-          <View style={s.statItem}>
-            <Text style={[s.statNumber, isDark && { color: '#F9FAFB' }]}>
-              {climbStats.tallest > 0 ? climbStats.tallest : '—'}
-            </Text>
-            <Text style={s.statLabel}>Tallest</Text>
-          </View>
-          <View style={[s.statDivider, isDark && { backgroundColor: '#374151' }]} />
-          <View style={s.statItem}>
-            <View style={s.streakRow}>
-              {streak > 0 && <Ionicons name="flame" size={16} color="#F59E0B" />}
-              <Text style={[s.statNumber, isDark && { color: '#F9FAFB' }, streak > 0 && { color: '#F59E0B' }]}>
-                {streak}
+        {/* Overview / Climbs sub-navigation */}
+        <View style={[s.tabBar, isDark && { backgroundColor: '#1F2937' }]}>
+          {(['overview', 'climbs'] as const).map((t) => (
+            <TouchableOpacity
+              key={t}
+              style={[s.tabBtn, profileTab === t && s.tabBtnActive, profileTab === t && isDark && { backgroundColor: '#374151' }]}
+              onPress={() => setProfileTab(t)}
+            >
+              <Text style={[s.tabBtnText, profileTab === t && s.tabBtnTextActive, isDark && { color: profileTab === t ? '#F9FAFB' : '#9CA3AF' }]}>
+                {t === 'overview' ? 'Overview' : `Climbs (${climbStats.climbs})`}
               </Text>
-            </View>
-            <Text style={s.statLabel}>Streak</Text>
-          </View>
+            </TouchableOpacity>
+          ))}
         </View>
 
-        {/* Your Week — moved here from Social, with a MacroFactor-style trend chart */}
-        <View style={s.section}>
-          <Text style={[s.sectionTitle, isDark && { color: '#D1D5DB' }]}>Your Week</Text>
-          <View style={[s.card, isDark && { backgroundColor: '#1F2937' }]}>
-            <View style={s.weekStatsRow}>
-              <View>
-                <Text style={[s.weekBigNumber, isDark && { color: '#F9FAFB' }]}>{weeklyFloors}</Text>
-                <Text style={s.weekBigLabel}>floors this week · {weeklyClimbTotal} climbs</Text>
+        {profileTab === 'overview' && (
+          <>
+            {/* Stats card */}
+            <View style={[s.statsCard, isDark && { backgroundColor: '#1F2937' }]}>
+              <View style={s.statItem}>
+                <Text style={[s.statNumber, isDark && { color: '#F9FAFB' }]}>{climbStats.climbs}</Text>
+                <Text style={s.statLabel}>Climbs</Text>
+              </View>
+              <View style={[s.statDivider, isDark && { backgroundColor: '#374151' }]} />
+              <View style={s.statItem}>
+                <Text style={[s.statNumber, isDark && { color: '#F9FAFB' }]}>{climbStats.floors}</Text>
+                <Text style={s.statLabel}>Floors</Text>
+              </View>
+              <View style={[s.statDivider, isDark && { backgroundColor: '#374151' }]} />
+              <View style={s.statItem}>
+                <Text style={[s.statNumber, isDark && { color: '#F9FAFB' }]}>
+                  {climbStats.tallest > 0 ? climbStats.tallest : '—'}
+                </Text>
+                <Text style={s.statLabel}>Tallest</Text>
               </View>
             </View>
-            <WeeklyChart dailyFloors={dailyFloors} isDark={isDark} />
 
-            {weeklyGoal != null && (
-              <View style={s.goalBlock}>
-                <View style={s.goalRow}>
-                  <Text style={[s.goalLabel, isDark && { color: '#9CA3AF' }]}>Weekly goal</Text>
-                  <Text style={[s.goalValue, isDark && { color: '#F9FAFB' }]}>{weeklyFloors} / {weeklyGoal} fl</Text>
-                </View>
-                <View style={[s.goalTrack, isDark && { backgroundColor: '#374151' }]}>
-                  <View style={[s.goalFill, { width: `${Math.min(100, Math.round((weeklyFloors / weeklyGoal) * 100))}%` }]} />
-                </View>
+            {/* Weekly / monthly streak chips */}
+            <View style={s.streakChipsRow}>
+              <View style={[s.streakChip, isDark && { backgroundColor: '#1F2937' }]}>
+                {weeklyStreak > 0 && <Ionicons name="flame" size={18} color="#F59E0B" />}
+                <Text style={[s.streakChipNumber, isDark && { color: '#F9FAFB' }, weeklyStreak > 0 && { color: '#F59E0B' }]}>{weeklyStreak}</Text>
+                <Text style={s.streakChipLabel}>week streak</Text>
               </View>
-            )}
-          </View>
-        </View>
+              <View style={[s.streakChip, isDark && { backgroundColor: '#1F2937' }]}>
+                {monthlyStreak > 0 && <Ionicons name="flame" size={18} color="#7C3AED" />}
+                <Text style={[s.streakChipNumber, isDark && { color: '#F9FAFB' }, monthlyStreak > 0 && { color: '#7C3AED' }]}>{monthlyStreak}</Text>
+                <Text style={s.streakChipLabel}>month streak</Text>
+              </View>
+            </View>
 
-        {/* Badges section */}
-        <View style={s.section}>
-          <View style={s.sectionHeaderRow}>
-            <Text style={[s.sectionTitle, { marginBottom: 0 }, isDark && { color: '#D1D5DB' }]}>Badges</Text>
-            <Text style={s.badgeCount}>{badges.length} of {BADGE_DEFS.length} earned</Text>
-          </View>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.badgesRow}>
-            {BADGE_DEFS.map((def) => {
-              const earned = earnedBadges.has(def.key);
-              // Hidden badges stay a mystery until earned — discovered, not chased.
-              const isMystery = def.hidden && !earned;
-              return (
-                <TouchableOpacity
-                  key={def.key}
-                  style={[s.badgeItem, !earned && s.badgeLocked, isDark && !earned && { backgroundColor: '#1F2937' }]}
-                  onPress={() => setSelectedBadge(def)}
-                  activeOpacity={0.7}
-                >
-                  <Ionicons
-                    name={isMystery ? 'help-outline' : (def.icon as any)}
-                    size={28}
-                    color={earned ? '#60A5FA' : (isDark ? '#4B5563' : '#D1D5DB')}
-                  />
-                  <Text
-                    style={[s.badgeName, isDark && { color: '#D1D5DB' }, !earned && s.badgeNameLocked]}
-                    numberOfLines={1}
-                  >
-                    {isMystery ? '???' : def.name}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-        </View>
+            {/* Your Week — MacroFactor-style trend chart */}
+            <View style={s.section}>
+              <Text style={[s.sectionTitle, isDark && { color: '#D1D5DB' }]}>Your Week</Text>
+              <View style={[s.card, isDark && { backgroundColor: '#1F2937' }]}>
+                <View style={s.weekStatsRow}>
+                  <View>
+                    <Text style={[s.weekBigNumber, isDark && { color: '#F9FAFB' }]}>{weeklyFloors}</Text>
+                    <Text style={s.weekBigLabel}>floors this week · {weeklyClimbTotal} climbs</Text>
+                  </View>
+                </View>
+                <WeeklyChart dailyFloors={dailyFloors} isDark={isDark} />
 
-        {/* Climb history (from My Climbs) */}
-        <View style={s.section}>
-          <Text style={[s.sectionTitle, isDark && { color: '#D1D5DB' }]}>Recent Climbs</Text>
-          {climbHistory.length > 0 ? (
-            <>
-              {visibleClimbs.map((climb, i) => {
+                {weeklyGoal != null && (
+                  <View style={s.goalBlock}>
+                    <View style={s.goalRow}>
+                      <Text style={[s.goalLabel, isDark && { color: '#9CA3AF' }]}>Weekly goal</Text>
+                      <Text style={[s.goalValue, isDark && { color: '#F9FAFB' }]}>{weeklyFloors} / {weeklyGoal} fl</Text>
+                    </View>
+                    <View style={[s.goalTrack, isDark && { backgroundColor: '#374151' }]}>
+                      <View style={[s.goalFill, { width: `${Math.min(100, Math.round((weeklyFloors / weeklyGoal) * 100))}%` }]} />
+                    </View>
+                  </View>
+                )}
+              </View>
+            </View>
+
+            {/* Badges section */}
+            <View style={s.section}>
+              <View style={s.sectionHeaderRow}>
+                <Text style={[s.sectionTitle, { marginBottom: 0 }, isDark && { color: '#D1D5DB' }]}>Badges</Text>
+                <Text style={s.badgeCount}>{badges.length} of {BADGE_DEFS.length} earned</Text>
+              </View>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.badgesRow}>
+                {BADGE_DEFS.map((def) => {
+                  const earned = earnedBadges.has(def.key);
+                  // Hidden badges stay a mystery until earned — discovered, not chased.
+                  const isMystery = def.hidden && !earned;
+                  return (
+                    <TouchableOpacity
+                      key={def.key}
+                      style={[s.badgeItem, !earned && s.badgeLocked, isDark && !earned && { backgroundColor: '#1F2937' }]}
+                      onPress={() => setSelectedBadge(def)}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons
+                        name={isMystery ? 'help-outline' : (def.icon as any)}
+                        size={28}
+                        color={earned ? '#60A5FA' : (isDark ? '#4B5563' : '#D1D5DB')}
+                      />
+                      <Text
+                        style={[s.badgeName, isDark && { color: '#D1D5DB' }, !earned && s.badgeNameLocked]}
+                        numberOfLines={1}
+                      >
+                        {isMystery ? '???' : def.name}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          </>
+        )}
+
+        {profileTab === 'climbs' && (
+          <View style={s.section}>
+            {climbHistory.length > 0 ? (
+              climbHistory.map((climb, i) => {
                 const tierColor = getTierColor(climb.storeys);
                 return (
-                  <View key={i} style={[s.climbRow, isDark && { backgroundColor: '#1F2937' }]}>
+                  <View key={climb.climb_id ?? i} style={[s.climbRow, isDark && { backgroundColor: '#1F2937' }]}>
                     <View style={[s.tierDot, { backgroundColor: tierColor }]} />
                     <View style={s.climbContent}>
                       <Text style={[s.climbAddr, isDark && { color: '#F9FAFB' }]} numberOfLines={1}>
@@ -470,50 +548,21 @@ export default function ProfileScreen({ isDark = false }: { isDark?: boolean }) 
                       <Text style={[s.climbFloors, { color: tierColor }]}>{climb.floors}</Text>
                       <Text style={s.climbFloorsLabel}>fl</Text>
                     </View>
+                    <TouchableOpacity style={s.climbDeleteBtn} onPress={() => handleDeleteClimb(climb, i)} hitSlop={8}>
+                      <Ionicons name="trash-outline" size={17} color="#EF4444" />
+                    </TouchableOpacity>
                   </View>
                 );
-              })}
-              {climbHistory.length > RECENT_CLIMBS_COLLAPSED && (
-                <TouchableOpacity style={s.showMoreBtn} onPress={() => setShowAllClimbs(!showAllClimbs)}>
-                  <Text style={s.showMoreText}>
-                    {showAllClimbs ? 'Show less' : `Show ${climbHistory.length - RECENT_CLIMBS_COLLAPSED} more`}
-                  </Text>
-                  <Ionicons name={showAllClimbs ? 'chevron-up' : 'chevron-down'} size={14} color="#2563EB" />
-                </TouchableOpacity>
-              )}
-            </>
-          ) : (
-            <View style={s.emptyState}>
-              <Ionicons name="trending-up-outline" size={32} color={isDark ? '#4B5563' : '#D1D5DB'} />
-              <Text style={[s.emptyText, isDark && { color: '#9CA3AF' }]}>
-                Log a climb to see it here.
-              </Text>
-            </View>
-          )}
-        </View>
-
-        {/* Sign out (accounts only) / Sign in (guests) */}
-        {isAnonymous ? (
-          <TouchableOpacity
-            style={s.signInBtn}
-            onPress={() => setAuthPromptVisible(true)}
-            activeOpacity={0.8}
-          >
-            <Text style={s.signInBtnText}>Sign In / Create Account</Text>
-          </TouchableOpacity>
-        ) : (
-          <TouchableOpacity
-            style={s.signOutBtn}
-            onPress={() => {
-              Alert.alert('Sign out', 'Are you sure?', [
-                { text: 'Cancel', style: 'cancel' },
-                { text: 'Sign Out', style: 'destructive', onPress: signOut },
-              ]);
-            }}
-            activeOpacity={0.7}
-          >
-            <Text style={s.signOutText}>Sign Out</Text>
-          </TouchableOpacity>
+              })
+            ) : (
+              <View style={s.emptyState}>
+                <Ionicons name="trending-up-outline" size={32} color={isDark ? '#4B5563' : '#D1D5DB'} />
+                <Text style={[s.emptyText, isDark && { color: '#9CA3AF' }]}>
+                  Log a climb to see it here.
+                </Text>
+              </View>
+            )}
+          </View>
         )}
       </ScrollView>
 
@@ -532,6 +581,17 @@ export default function ProfileScreen({ isDark = false }: { isDark?: boolean }) 
         onSetFeatured={selectedBadge && earnedBadges.has(selectedBadge.key) ? () => handleSetFeatured(selectedBadge.key) : undefined}
         onClose={() => setSelectedBadge(null)}
       />
+
+      <SettingsModal
+        visible={settingsVisible}
+        onClose={() => setSettingsVisible(false)}
+        isDark={isDark}
+        themeMode={themeMode}
+        onSetThemeMode={onSetThemeMode ?? (() => {})}
+        profile={profile}
+        onChangeSkin={handleChangeSkin}
+        onRequestSignIn={() => setAuthPromptVisible(true)}
+      />
     </View>
   );
 }
@@ -545,19 +605,6 @@ const s = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 32,
-  },
-  signInBtn: {
-    marginTop: 32,
-    marginHorizontal: 16,
-    backgroundColor: '#2563EB',
-    paddingVertical: 14,
-    borderRadius: 12,
-    alignItems: 'center',
-  },
-  signInBtnText: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '700',
   },
   signInBanner: {
     flexDirection: 'row',
@@ -581,12 +628,16 @@ const s = StyleSheet.create({
   },
   scrollContent: {
     paddingBottom: 48,
-    paddingTop: 56,
+  },
+  banner: {
+    height: 96,
+    backgroundColor: '#2563EB',
   },
   header: {
     alignItems: 'center',
     paddingHorizontal: 20,
     paddingBottom: 20,
+    marginTop: -44,
   },
   avatarTouchable: {
     marginBottom: 12,
@@ -703,11 +754,49 @@ const s = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
   },
-  streakRow: {
+  streakChipsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginHorizontal: 16,
+    marginTop: 10,
+  },
+  streakChip: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 3,
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    paddingVertical: 12,
+    elevation: 1,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
   },
+  streakChipNumber: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#111827',
+  },
+  streakChipLabel: {
+    fontSize: 11.5,
+    fontWeight: '600',
+    color: '#9CA3AF',
+  },
+  tabBar: {
+    flexDirection: 'row',
+    backgroundColor: '#F3F4F6',
+    borderRadius: 12,
+    padding: 3,
+    marginHorizontal: 16,
+    marginBottom: 16,
+  },
+  tabBtn: { flex: 1, paddingVertical: 9, alignItems: 'center', borderRadius: 9 },
+  tabBtnActive: { backgroundColor: '#FFFFFF', elevation: 1 },
+  tabBtnText: { fontSize: 13, fontWeight: '700', color: '#9CA3AF' },
+  tabBtnTextActive: { color: '#111827' },
   statNumber: {
     fontSize: 22,
     fontWeight: '800',
@@ -841,17 +930,9 @@ const s = StyleSheet.create({
     fontWeight: '500',
     marginLeft: 2,
   },
-  showMoreBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
-    paddingVertical: 10,
-  },
-  showMoreText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#2563EB',
+  climbDeleteBtn: {
+    marginLeft: 10,
+    padding: 4,
   },
   emptyState: {
     alignItems: 'center',
@@ -866,18 +947,5 @@ const s = StyleSheet.create({
     color: '#9CA3AF',
     textAlign: 'center',
     marginTop: 8,
-  },
-  signOutBtn: {
-    marginTop: 32,
-    marginHorizontal: 16,
-    paddingVertical: 14,
-    borderRadius: 12,
-    backgroundColor: '#FEE2E2',
-    alignItems: 'center',
-  },
-  signOutText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#EF4444',
   },
 });

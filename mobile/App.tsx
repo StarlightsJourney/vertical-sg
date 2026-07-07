@@ -39,20 +39,41 @@ export default function App() {
     setActiveTab(tab);
     setVisitedTabs((prev) => (prev.has(tab) ? prev : new Set(prev).add(tab)));
   }, []);
+
+  // Appearance: 'auto' follows time of day (night hours = dark), or the user
+  // can pin it to 'light'/'dark' from Settings. Persisted across launches.
+  const [themeMode, setThemeMode] = useState<'light' | 'dark' | 'auto'>('auto');
   const [isDark, setIsDark] = useState(() => {
     const h = new Date().getHours();
     return h < 6 || h >= 19;
   });
 
+  useEffect(() => {
+    storage.getItem('theme_mode').then((val) => {
+      if (val === 'light' || val === 'dark' || val === 'auto') setThemeMode(val);
+    });
+  }, []);
+
+  const handleSetThemeMode = useCallback((mode: 'light' | 'dark' | 'auto') => {
+    setThemeMode(mode);
+    storage.setItem('theme_mode', mode);
+  }, []);
+
   const handleSplashFinish = useCallback(() => setSplashDone(true), []);
 
   useEffect(() => {
-    const t = setInterval(() => {
+    if (themeMode !== 'auto') {
+      setIsDark(themeMode === 'dark');
+      return;
+    }
+    const applyAuto = () => {
       const h = new Date().getHours();
       setIsDark(h < 6 || h >= 19);
-    }, 60000);
+    };
+    applyAuto();
+    const t = setInterval(applyAuto, 60000);
     return () => clearInterval(t);
-  }, []);
+  }, [themeMode]);
 
   // Edge-swipe gesture handling for tab switching
   // Leftmost ~10% → swipe right → Social. Rightmost ~10% → swipe left → Profile.
@@ -148,7 +169,7 @@ export default function App() {
           )}
           {visitedTabs.has('profile') && (
             <View style={[styles.screen, activeTab !== 'profile' && styles.hidden]}>
-              <ProfileScreen isDark={isDark} />
+              <ProfileScreen isDark={isDark} themeMode={themeMode} onSetThemeMode={handleSetThemeMode} />
             </View>
           )}
 

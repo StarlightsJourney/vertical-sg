@@ -20,6 +20,7 @@ export interface BoundsRect {
 }
 
 export interface ClimbLog {
+  climb_id?: string; // present for Supabase-backed climbs (signed-in users); absent for local-only anonymous history
   block_id: string;
   blk_no: string;
   street: string;
