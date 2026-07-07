@@ -274,8 +274,11 @@ export default function ProfileScreen({ isDark = false, themeMode = 'auto', onSe
 
           if (climb.climb_id && user) {
             await supabase.from('climbs').delete().eq('climb_id', climb.climb_id).eq('user_id', user.id);
-          } else if (!user) {
-            // addClimb unshifts, so replay oldest-first to preserve newest-first order
+          } else {
+            // Local-only climb (no climb_id) — could be a rare pre-auth-bootstrap
+            // read, or an offline-queued entry. Key off climb_id, not `user`,
+            // so it's still cleaned out of AsyncStorage even once `user` is set.
+            // addClimb unshifts, so replay oldest-first to preserve newest-first order.
             await storage.clearClimbHistory();
             for (const c of [...next].reverse()) await storage.addClimb(c);
           }
