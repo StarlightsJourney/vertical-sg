@@ -3,6 +3,7 @@
     "name": "Vertical",
     "slug": "vertical",
     "version": "1.0.0",
+    "scheme": "vertical",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "splash": {
@@ -12,7 +13,12 @@
     },
     "userInterfaceStyle": "light",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "usesAppleSignIn": true,
+      "infoPlist": {
+        "NSPhotoLibraryUsageDescription": "Allow Vertical to access your photo library to add photos of buildings and watch verification shots.",
+        "NSCameraUsageDescription": "Allow Vertical to use the camera to take photos of buildings and watch verification shots."
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -33,6 +39,15 @@
     },
     "plugins": [
       "@maplibre/maplibre-react-native",
+      "expo-apple-authentication",
+      "@react-native-google-signin/google-signin",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Vertical to access your photo library to add building photos.",
+          "cameraPermission": "Allow Vertical to use the camera to take building photos."
+        }
+      ],
       [
         "expo-location",
         {

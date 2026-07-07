@@ -1,12 +1,15 @@
 import { useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import * as Linking from 'expo-linking';
+import ClimbTrackerModal from './ClimbTrackerModal';
 import type { Block } from '../types';
 
 interface Props {
   block: Block | null;
   distanceKm: number | null;
-  onLogClimb?: (block: Block, qty: number) => void;
+  onLogClimb?: (block: Block, qty: number, partialFloors: number) => void;
+  onViewDetails?: (block: Block) => void;
   tapY?: number;
 }
 
@@ -23,11 +26,16 @@ function formatDistance(km: number | null): string {
   return km < 1 ? `${Math.round(km * 1000)}m` : `${km.toFixed(1)}km`;
 }
 
-export default function BlockDetailSheet({ block, distanceKm, onLogClimb, tapY }: Props) {
+export default function BlockDetailSheet({ block, distanceKm, onLogClimb, onViewDetails, tapY }: Props) {
+  const [climbing, setClimbing] = useState(false); // manual entry panel
+  const [trackerVisible, setTrackerVisible] = useState(false); // live barometer tracker
+  const [climbQty, setClimbQty] = useState(1);
+  const [partialFloors, setPartialFloors] = useState(0);
+  const [justLogged, setJustLogged] = useState(false);
+
   if (!block) return null;
 
   const tier = getTier(block.storeys);
-  const [climbQty, setClimbQty] = useState(1);
 
   const handleDirections = () => {
     if (block.lat != null && block.lng != null) {
@@ -35,9 +43,30 @@ export default function BlockDetailSheet({ block, distanceKm, onLogClimb, tapY }
     }
   };
 
-  const handleLogClimb = () => {
-    onLogClimb?.(block, climbQty);
-    setClimbQty(1); // Reset after log
+  const handleConfirmClimb = () => {
+    // Logging a climb never requires an account — anonymous sessions already
+    // have a real (if anonymous) user id, so climbs attach and sync fine.
+    // Only Verify Height and Add Photo (in View Details) are gated behind sign-in.
+    onLogClimb?.(block, climbQty, partialFloors);
+
+    // Immediate visual confirmation — don't wait on the network round trip
+    // (that's what made it feel unresponsive) to tell the user it registered.
+    setJustLogged(true);
+    setTimeout(() => {
+      setJustLogged(false);
+      setClimbing(false);
+      setClimbQty(1);
+      setPartialFloors(0);
+    }, 1400);
+  };
+
+  const handleTrackerSave = (floorsClimbed: number) => {
+    // floorsClimbed is a real barometer-measured total (always >= 1, see
+    // ClimbTrackerModal's Save button) — split it into full sets + a partial
+    // remainder the same way manual entry does, so it reconstructs identically.
+    const qty = Math.floor(floorsClimbed / block.storeys);
+    const partial = floorsClimbed % block.storeys;
+    onLogClimb?.(block, qty, partial);
   };
 
   return (
@@ -61,7 +90,7 @@ export default function BlockDetailSheet({ block, distanceKm, onLogClimb, tapY }
                 <View style={styles.addressRow}>
                   <Text style={styles.address}>Blk {block.blk_no}</Text>
                   <TouchableOpacity onPress={handleDirections} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                    <Text style={styles.dirArrow}>↗</Text>
+                    <Ionicons name="navigate-outline" size={18} color="#2563EB" />
                   </TouchableOpacity>
                 </View>
                 <Text style={styles.street}>{block.street}</Text>
@@ -79,31 +108,111 @@ export default function BlockDetailSheet({ block, distanceKm, onLogClimb, tapY }
                 <Text style={styles.statValue}>{formatDistance(distanceKm)}</Text>
                 <Text style={styles.statLabel}>Away</Text>
               </View>
+              {block.height_source === 'verified' && (
+                <View style={[styles.stat, styles.verifiedStat]}>
+                  <View style={styles.verifiedBadge}>
+                    <Ionicons name="checkmark-circle" size={12} color="#10B981" />
+                    <Text style={styles.verifiedText}>Verified</Text>
+                  </View>
+                </View>
+              )}
             </View>
 
-            {/* Quantity selector */}
-            <View style={styles.qtyRow}>
-              <TouchableOpacity onPress={() => setClimbQty(Math.max(1, climbQty - 1))} activeOpacity={0.7}>
-                <Text style={styles.qtyBtn}>−</Text>
-              </TouchableOpacity>
-              <Text style={styles.qtyValue}>{climbQty}</Text>
-              <TouchableOpacity onPress={() => setClimbQty(climbQty + 1)} activeOpacity={0.7}>
-                <Text style={styles.qtyBtn}>+</Text>
-              </TouchableOpacity>
-              <Text style={styles.qtyLabel}>climbs</Text>
-            </View>
+            {!climbing ? (
+              /* Default state: glance + two actions. Verify Height lives in
+                 View Details only now — this card is just the quick-glance view. */
+              <View style={styles.actionRow}>
+                <TouchableOpacity
+                  style={styles.startBtn}
+                  onPress={() => setTrackerVisible(true)}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="footsteps-outline" size={16} color="#FFF" />
+                  <Text style={styles.startBtnText}>Start Climb</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.detailsBtn}
+                  onPress={() => onViewDetails?.(block)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.detailsBtnText}>View Details</Text>
+                  <Ionicons name="chevron-forward" size={14} color="#2563EB" />
+                </TouchableOpacity>
+              </View>
+            ) : (
+              /* Expanded logging panel — only shown once you've committed to Start Climb */
+              <View style={styles.logPanel}>
+                <View style={styles.qtyRow}>
+                  <TouchableOpacity onPress={() => setClimbQty(Math.max(1, climbQty - 1))} activeOpacity={0.7}>
+                    <Text style={styles.qtyBtn}>−</Text>
+                  </TouchableOpacity>
+                  <Text style={styles.qtyValue}>{climbQty}</Text>
+                  <TouchableOpacity onPress={() => setClimbQty(climbQty + 1)} activeOpacity={0.7}>
+                    <Text style={styles.qtyBtn}>+</Text>
+                  </TouchableOpacity>
+                  <Text style={styles.qtyLabel}>full sets</Text>
+                </View>
 
-            {/* Main action: Log a Climb */}
-            <TouchableOpacity
-              style={styles.logBtn}
-              onPress={handleLogClimb}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.logBtnText}>Log Climb</Text>
-            </TouchableOpacity>
+                <View style={styles.partialRow}>
+                  <TouchableOpacity
+                    onPress={() => setPartialFloors(Math.max(0, partialFloors - 1))}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.partialBtn}>−</Text>
+                  </TouchableOpacity>
+                  <Text style={styles.partialValue}>{partialFloors}</Text>
+                  <TouchableOpacity
+                    onPress={() => setPartialFloors(Math.min(block.storeys - 1, partialFloors + 1))}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.partialBtn}>+</Text>
+                  </TouchableOpacity>
+                  <Text style={styles.partialLabel}>+ partial floors last set</Text>
+                </View>
+
+                <Text style={styles.totalPreview}>
+                  Total: {climbQty * block.storeys + partialFloors} floors
+                  {' '}(~{Math.round((climbQty * block.storeys + partialFloors) * 2.8)}m)
+                </Text>
+
+                <View style={styles.actionRow}>
+                  <TouchableOpacity
+                    style={styles.cancelBtn}
+                    onPress={() => { setClimbing(false); setClimbQty(1); setPartialFloors(0); }}
+                    activeOpacity={0.8}
+                    disabled={justLogged}
+                  >
+                    <Text style={styles.cancelBtnText}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.startBtn, justLogged && styles.startBtnConfirmed]}
+                    onPress={handleConfirmClimb}
+                    activeOpacity={0.8}
+                    disabled={justLogged}
+                  >
+                    {justLogged ? (
+                      <View style={styles.logBtnConfirmedRow}>
+                        <Ionicons name="checkmark-circle" size={16} color="#FFF" />
+                        <Text style={styles.startBtnText}>Logged!</Text>
+                      </View>
+                    ) : (
+                      <Text style={styles.startBtnText}>Confirm Climb</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
           </View>
         </View>
       </View>
+
+      <ClimbTrackerModal
+        block={block}
+        visible={trackerVisible}
+        onClose={() => setTrackerVisible(false)}
+        onSave={handleTrackerSave}
+        onUseManualEntry={() => setClimbing(true)}
+      />
     </View>
   );
 }
@@ -138,14 +247,22 @@ const styles = StyleSheet.create({
   storeyLabel: { fontSize: 10, color: '#9CA3AF', marginTop: 1, letterSpacing: 0.5 },
   addressBlock: { flex: 1 },
   addressRow: { flexDirection: 'row', alignItems: 'center' },
-  dirArrow: { fontSize: 18, color: '#2563EB', marginLeft: 6 },
-  address: { fontSize: 14, fontWeight: '700', color: '#111827' },
+  address: { fontSize: 14, fontWeight: '700', color: '#111827', flex: 1 },
   street: { fontSize: 12, color: '#6B7280', marginTop: 1 },
   town: { fontSize: 12, color: '#9CA3AF', marginTop: 1 },
-  statsRow: { flexDirection: 'row', marginBottom: 8 },
+  statsRow: { flexDirection: 'row', marginBottom: 12, flexWrap: 'wrap' },
   stat: { marginRight: 16 },
   statValue: { fontSize: 13, fontWeight: '700', color: '#111827' },
   statLabel: { fontSize: 9, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 1 },
+  verifiedStat: { justifyContent: 'center' },
+  verifiedBadge: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  verifiedText: { fontSize: 10, fontWeight: '700', color: '#10B981' },
+  logPanel: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#E5E7EB',
+    paddingTop: 12,
+    marginTop: 2,
+  },
   qtyRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -178,9 +295,93 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     marginLeft: 2,
   },
-  logBtn: {
-    backgroundColor: '#10B981', borderRadius: 12,
-    paddingVertical: 10, alignItems: 'center', marginTop: 4,
+  partialRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+    gap: 6,
   },
-  logBtnText: { fontSize: 14, fontWeight: '700', color: '#FFF' },
+  partialBtn: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#6B7280',
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#F3F4F6',
+    textAlign: 'center',
+    lineHeight: 24,
+    overflow: 'hidden',
+  },
+  partialValue: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#374151',
+    minWidth: 20,
+    textAlign: 'center',
+  },
+  partialLabel: {
+    fontSize: 11,
+    color: '#9CA3AF',
+    fontWeight: '500',
+    marginLeft: 2,
+  },
+  totalPreview: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#111827',
+    textAlign: 'center',
+    marginBottom: 10,
+  },
+  actionRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  startBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#10B981',
+    borderRadius: 12,
+    paddingVertical: 10,
+  },
+  startBtnConfirmed: {
+    backgroundColor: '#059669',
+  },
+  logBtnConfirmedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  startBtnText: { fontSize: 14, fontWeight: '700', color: '#FFF' },
+  cancelBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    backgroundColor: '#F3F4F6',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cancelBtnText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#6B7280',
+  },
+  detailsBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    backgroundColor: '#EFF6FF',
+  },
+  detailsBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#2563EB',
+  },
 });

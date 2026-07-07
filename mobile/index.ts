@@ -1,3 +1,6 @@
+// CRITICAL: polyfill crypto.subtle for Hermes BEFORE any supabase import
+import './src/utils/crypto-shim';
+
 import { registerRootComponent } from 'expo';
 
 import App from './App';

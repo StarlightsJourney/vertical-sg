@@ -14,18 +14,24 @@ import {
   Camera,
   GeoJSONSource,
   Layer,
-  Marker,
+  Images,
   type MapRef,
   type CameraRef,
 } from '@maplibre/maplibre-react-native';
 import { useLocation } from '../hooks/useLocation';
 import { fetchBlocksInBounds } from '../services/blocks';
+import { logClimb, checkRecentBadges } from '../services/climbs';
+import BadgeCelebration from '../components/BadgeCelebration';
 import type { Block, BoundsRect, ClimbLog } from '../types';
 import BlockDetailSheet from '../components/BlockDetailSheet';
+import BuildingDetailSheet from '../components/BuildingDetailSheet';
+import NotificationsModal from '../components/NotificationsModal';
 import SearchScreen from '../components/SearchScreen';
+import UserLocationRing from '../components/UserLocationRing';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import storage from '../utils/storage';
 import * as Linking from 'expo-linking';
+import { useAuth } from '../contexts/AuthContext';
 
 // Light (default) and dark map styles for day/night auto-switching
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -82,6 +88,7 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
   const zoomRef = useRef(13);
   const boundsRef = useRef<BoundsRect | null>(null);
   const prevBoundsRef = useRef<BoundsRect | null>(null);
+  const { user, isAnonymous } = useAuth();
 
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [selectedBlock, setSelectedBlock] = useState<Block | null>(null);
@@ -90,7 +97,6 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
   const [error, setError] = useState<string | null>(null);
   const [minFilter, setMinFilter] = useState(21);
   const [zoom, setZoom] = useState(13);
-  const [pulsePhase, setPulsePhase] = useState(0);
   const [searchVisible, setSearchVisible] = useState(false);
   const [alertVisible, setAlertVisible] = useState(false);
   const [placementType, setPlacementType] = useState<string | null>(null);
@@ -102,6 +108,7 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
   const [starredIds, setStarredIds] = useState<Set<string>>(new Set());
   const [climbCounts, setClimbCounts] = useState<Map<string, number>>(new Map());
   const [climbHistory, setClimbHistory] = useState<ClimbLog[]>([]);
+  const [celebratingBadges, setCelebratingBadges] = useState<string[]>([]);
   const [tapY, setTapY] = useState<number>(0);
   const [selectedWaterCooler, setSelectedWaterCooler] = useState<{
     name: string;
@@ -109,6 +116,14 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
     lat: number;
     lng: number;
   } | null>(null);
+
+  // Building detail sheet (expanded view)
+  const [detailBlock, setDetailBlock] = useState<Block | null>(null);
+  const [detailVisible, setDetailVisible] = useState(false);
+
+  // Notifications
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [notifVisible, setNotifVisible] = useState(false);
 
   // Use prop if provided (from App.tsx tab bar), otherwise auto-detect
   const isDark = isDarkProp ?? (() => {
@@ -145,17 +160,65 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
       })),
   }), [blocks, minFilter, climbCounts]);
 
-  const userLocationGeojson = useMemo((): GeoJSON.FeatureCollection | null => {
-    if (location.loading || !location.latitude) return null;
-    return {
-      type: 'FeatureCollection',
-      features: [{
+  // Combined water coolers + amenities + pending reports as one native GeoJSON
+  // source. No distance-sort/cap needed — GPU-rendered circle+symbol layers
+  // handle hundreds of points fine, unlike the old per-point <Marker> views.
+  const amenitiesGeojson = useMemo((): GeoJSON.FeatureCollection => {
+    const features: GeoJSON.Feature[] = [];
+
+    for (const wc of WATER_COOLERS_RAW) {
+      if (!wc.lat || !wc.lng) continue;
+      features.push({
         type: 'Feature',
-        geometry: { type: 'Point', coordinates: [location.longitude, location.latitude] },
-        properties: {},
-      }],
-    };
-  }, [location.latitude, location.longitude, location.loading]);
+        geometry: { type: 'Point', coordinates: [wc.lng, wc.lat] },
+        properties: {
+          amenity_type: wc.status,
+          icon: 'water-outline',
+          color: wc.status === 'verified' ? '#06B6D4' : '#EC4899',
+          pending: false,
+          name: wc.name,
+          lat: wc.lat,
+          lng: wc.lng,
+        },
+      });
+    }
+
+    for (const a of AMENITIES_RAW) {
+      if (!a.lat || !a.lng) continue;
+      features.push({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [a.lng, a.lat] },
+        properties: {
+          amenity_type: a.type,
+          icon: a.type === 'toilet' ? 'male-female-outline' : 'cafe-outline',
+          color: a.type === 'toilet' ? '#8B5CF6' : '#F59E0B',
+          pending: false,
+          name: a.name,
+          lat: a.lat,
+          lng: a.lng,
+        },
+      });
+    }
+
+    for (const r of pendingReports) {
+      if (!r.lat || !r.lng) continue;
+      features.push({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [r.lng, r.lat] },
+        properties: {
+          amenity_type: `unverified-${r.type}`,
+          icon: r.type === 'Toilet' ? 'male-female-outline' : r.type === 'Food / Shop' ? 'cafe-outline' : 'water-outline',
+          color: '#9CA3AF',
+          pending: true,
+          name: r.name,
+          lat: r.lat,
+          lng: r.lng,
+        },
+      });
+    }
+
+    return { type: 'FeatureCollection', features };
+  }, [pendingReports]);
 
   // Fetch blocks within visible map bounds
   const fetchBounds = useCallback(
@@ -257,10 +320,10 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
           setSelectedBlockDist(null);
         }
       }
-    } else if (props.water_type) {
+    } else if (props.amenity_type) {
       setSelectedWaterCooler({
         name: props.name,
-        type: props.water_type,
+        type: props.amenity_type,
         lat: props.lat,
         lng: props.lng,
       });
@@ -275,6 +338,11 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
     setTapY(0);
   }, []);
 
+  const handleViewDetails = useCallback((block: Block) => {
+    setDetailBlock(block);
+    setDetailVisible(true);
+  }, []);
+
   const handleToggleStar = useCallback((block: Block) => {
     setStarredIds((prev) => {
       const next = new Set(prev);
@@ -285,28 +353,35 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
     });
   }, []);
 
-  const handleLogClimb = useCallback((block: Block, qty: number) => {
-    const timestamp = new Date().toISOString();
-    const promises: Promise<void>[] = [];
-    for (let i = 0; i < qty; i++) {
-      promises.push(storage.addClimb({
-        block_id: block.block_id,
-        blk_no: block.blk_no,
-        street: block.street,
-        storeys: block.storeys,
-        climbedAt: timestamp,
-      }));
-    }
-    Promise.all(promises).then(() => {
-      setClimbCounts((prev) => {
-        const next = new Map(prev);
-        next.set(block.block_id, (next.get(block.block_id) || 0) + qty);
-        return next;
-      });
-      // Refresh climb history
-      storage.getClimbHistory().then(setClimbHistory);
+  const handleLogClimb = useCallback(async (block: Block, qty: number, partialFloors: number) => {
+    if (!user) return;
+
+    await logClimb(
+      user.id,
+      block.block_id,
+      block.blk_no,
+      block.street,
+      block.storeys,
+      qty,
+      partialFloors,
+    );
+
+    // Update local state immediately (optimistic)
+    setClimbCounts((prev) => {
+      const next = new Map(prev);
+      next.set(block.block_id, (next.get(block.block_id) || 0) + qty);
+      return next;
     });
-  }, []);
+
+    // Refresh climb history
+    storage.getClimbHistory().then(setClimbHistory);
+
+    // Show a celebration if this climb just earned a badge — the DB trigger
+    // awards badges synchronously with the insert, so it's already there.
+    checkRecentBadges(user.id).then((keys) => {
+      if (keys.length > 0) setCelebratingBadges(keys);
+    });
+  }, [user]);
 
   const handleSelectSearchBlock = useCallback((block: Block) => {
     setSearchVisible(false);
@@ -374,18 +449,18 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
     });
   }, []);
 
-  // Smooth pulse for user location ring using sine wave
+  // Poll unread notification count when authenticated
   useEffect(() => {
-    const start = Date.now();
-    const timer = setInterval(() => {
-      setPulsePhase((Date.now() - start) / 1500 * Math.PI * 2);
-    }, 50);
-    return () => clearInterval(timer);
-  }, []);
+    if (!user || isAnonymous) return;
+    const { getUnreadNotificationCount } = require('../services/climbs');
+    const poll = () => {
+      getUnreadNotificationCount(user.id).then((count: number) => setUnreadCount(count));
+    };
+    poll();
+    const t = setInterval(poll, 30000); // every 30s
+    return () => clearInterval(t);
+  }, [user, isAnonymous]);
 
-  // Compute pulse values for smooth location ring animation
-  const pulseOpacity = 0.15 + 0.15 * Math.sin(pulsePhase);
-  const pulseRadius = 18 + 4 * Math.sin(pulsePhase);
 
   // Cycling filter: find current index and label
   const currentFilterIdx = FILTER_OPTIONS.findIndex(f => f.value === minFilter);
@@ -415,63 +490,44 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
           duration={500}
         />
 
-        {/* Water cooler icons — nearest to map center, capped by zoom */}
-        {zoom >= 11 && WATER_COOLERS_RAW.filter(wc => wc.lat && wc.lng).sort((a, b) => {
-          const [clng, clat] = placementCenter;
-          return ((a.lat - clat) ** 2 + (a.lng - clng) ** 2) - ((b.lat - clat) ** 2 + (b.lng - clng) ** 2);
-        }).slice(0, zoom < 13 ? 25 : 80).map((wc, i) => (
-          <Marker key={`wc-${i}`} lngLat={[wc.lng, wc.lat]} anchor="center"
-            onPress={() => setSelectedWaterCooler({ name: wc.name, type: wc.status, lat: wc.lat, lng: wc.lng })}>
-            <View style={mStyles.marker}>
-              <Ionicons name="water-outline" size={13} color={wc.status === 'verified' ? '#06B6D4' : '#EC4899'} />
-            </View>
-          </Marker>
-        ))}
-        {/* Amenity icons (toilets, shops) — nearest to center, capped by zoom */}
-        {zoom >= 11 && AMENITIES_RAW.filter(a => a.lat && a.lng).sort((a, b) => {
-          const [clng, clat] = placementCenter;
-          return ((a.lat - clat) ** 2 + (a.lng - clng) ** 2) - ((b.lat - clat) ** 2 + (b.lng - clng) ** 2);
-        }).slice(0, zoom < 13 ? 15 : 60).map((a, i) => (
-          <Marker key={`am-${i}`} lngLat={[a.lng, a.lat]} anchor="center"
-            onPress={() => setSelectedWaterCooler({ name: a.name, type: a.type, lat: a.lat, lng: a.lng })}>
-            <View style={mStyles.marker}>
-              <Ionicons name={a.type === 'toilet' ? 'male-female-outline' as any : 'cafe-outline' as any} size={13} color={a.type === 'toilet' ? '#8B5CF6' : '#F59E0B'} />
-            </View>
-          </Marker>
-        ))}
-        {/* Pending report icons */}
-        {zoom >= 11 && pendingReports.filter(r => r.lat && r.lng).map((r, i) => (
-          <Marker key={`pending-${i}`} lngLat={[r.lng, r.lat]} anchor="center"
-            onPress={() => setSelectedWaterCooler({ name: r.name, type: `unverified-${r.type}`, lat: r.lat, lng: r.lng })}>
-            <View style={mStyles.markerPending}>
-              <Ionicons name={r.type === 'Toilet' ? 'male-female-outline' as any : r.type === 'Food / Shop' ? 'cafe-outline' as any : 'water-outline' as any} size={13} color="#9CA3AF" />
-            </View>
-          </Marker>
-        ))}
-
-        {userLocationGeojson && (
-          <GeoJSONSource id="user-location" data={userLocationGeojson}>
-            {/* Outer pulsing ring */}
-            <Layer id="user-location-ring" source="user-location" type="circle"
+        {/* Amenity icons — native circle+symbol layers (GPU-rendered, stay
+            perfectly locked to the map during pan/zoom, unlike the old
+            <Marker> views which were separate RN views repositioned over the
+            bridge on every camera frame and visibly drifted/lagged behind). */}
+        <Images
+          images={{
+            'water-outline': { source: require('../../assets/markers/water-outline.png'), sdf: true },
+            'male-female-outline': { source: require('../../assets/markers/male-female-outline.png'), sdf: true },
+            'cafe-outline': { source: require('../../assets/markers/cafe-outline.png'), sdf: true },
+          }}
+        />
+        {zoom >= 11 && (
+          <GeoJSONSource id="amenities" data={amenitiesGeojson}>
+            <Layer id="amenity-bg" source="amenities" type="circle"
               paint={{
-                'circle-radius': pulseRadius,
-                'circle-color': '#14B8A6',
-                'circle-opacity': pulseOpacity,
-                'circle-stroke-width': 2,
-                'circle-stroke-color': '#14B8A6',
-                'circle-stroke-opacity': 0.5,
+                'circle-radius': 10,
+                'circle-color': '#FFFFFF',
+                'circle-opacity': ['case', ['get', 'pending'], 0.85, 1],
+                'circle-stroke-width': ['case', ['get', 'pending'], 1.5, 1],
+                'circle-stroke-color': ['case', ['get', 'pending'], '#9CA3AF', '#FFFFFF'],
               }}
             />
-            {/* Inner dot */}
-            <Layer id="user-location-dot" source="user-location" type="circle"
+            <Layer id="amenity-icon" source="amenities" type="symbol"
+              layout={{
+                'icon-image': ['get', 'icon'],
+                'icon-size': 0.15,
+                'icon-allow-overlap': true,
+                'icon-ignore-placement': true,
+              }}
               paint={{
-                'circle-radius': 8,
-                'circle-color': '#14B8A6',
-                'circle-stroke-width': 3,
-                'circle-stroke-color': '#FFFFFF',
+                'icon-color': ['get', 'color'],
               }}
             />
           </GeoJSONSource>
+        )}
+
+        {!location.loading && location.latitude != null && (
+          <UserLocationRing longitude={location.longitude} latitude={location.latitude} />
         )}
 
         <GeoJSONSource
@@ -552,6 +608,22 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
           </View>
         ))}
       </View>
+
+      {/* Notification bell (authenticated users only) */}
+      {!isAnonymous && user && (
+        <TouchableOpacity
+          style={[mStyles.notifBell, { backgroundColor: isDark ? 'rgba(30,30,30,0.88)' : 'rgba(255,255,255,0.88)' }]}
+          onPress={() => setNotifVisible(true)}
+          activeOpacity={0.8}
+        >
+          <Ionicons name="notifications-outline" size={20} color={isDark ? '#D1D5DB' : '#374151'} />
+          {unreadCount > 0 && (
+            <View style={mStyles.notifBadge}>
+              <Text style={mStyles.notifBadgeText}>{unreadCount > 9 ? '9+' : unreadCount}</Text>
+            </View>
+          )}
+        </TouchableOpacity>
+      )}
 
       {/* Bottom bar */}
       <View style={[styles.bottomBar, { backgroundColor: isDark ? 'rgba(30,30,30,0.95)' : 'rgba(255,255,255,0.95)' }]}>
@@ -674,8 +746,31 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
         block={selectedBlock}
         distanceKm={selectedBlockDist}
         onLogClimb={handleLogClimb}
+        onViewDetails={handleViewDetails}
         tapY={tapY}
       />
+
+      {/* Building Detail Sheet (expanded view) */}
+      <BuildingDetailSheet
+        block={detailBlock}
+        visible={detailVisible}
+        onClose={() => { setDetailVisible(false); setDetailBlock(null); }}
+      />
+
+      {/* Notifications modal */}
+      <NotificationsModal
+        visible={notifVisible}
+        onClose={() => setNotifVisible(false)}
+        isDark={isDark}
+      />
+
+      {/* Badge celebration toast — pops up right after a climb earns one */}
+      {celebratingBadges.length > 0 && (
+        <BadgeCelebration
+          badgeKeys={celebratingBadges}
+          onDismiss={() => setCelebratingBadges([])}
+        />
+      )}
 
       {/* Amenity info card — tiny, near tap, doesn't block panning */}
       {selectedWaterCooler && (
@@ -1030,16 +1125,38 @@ const styles = StyleSheet.create({
 
 // Shared marker styles — small fixed size, no zoom deps
 const mStyles = StyleSheet.create({
-  marker: {
-    width: 20, height: 20, borderRadius: 10,
-    backgroundColor: '#FFFFFF',
-    justifyContent: 'center', alignItems: 'center',
-    elevation: 2,
+  // Notification bell
+  notifBell: {
+    position: 'absolute',
+    top: 96,
+    right: 16,
+    zIndex: 10,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 4,
   },
-  markerPending: {
-    width: 20, height: 20, borderRadius: 10,
-    backgroundColor: 'rgba(255,255,255,0.85)',
-    justifyContent: 'center', alignItems: 'center',
-    borderWidth: 1.5, borderColor: '#9CA3AF',
+  notifBadge: {
+    position: 'absolute',
+    top: 0,
+    right: -2,
+    backgroundColor: '#EF4444',
+    borderRadius: 9,
+    minWidth: 18,
+    height: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 4,
+  },
+  notifBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
 });
