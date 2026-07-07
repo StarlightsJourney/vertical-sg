@@ -705,20 +705,18 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
         </ScrollView>
       )}
 
-      {/* Height filter chip — pushed down below the search/saved cluster */}
-      <TouchableOpacity
-        style={[styles.filterToggle, { backgroundColor: FILTER_COLORS[minFilter] || '#6B7280' }, savedBlocks.length === 0 && styles.filterToggleNoSaved]}
-        onPress={() => {
-          const next = (currentFilterIdx + 1) % FILTER_OPTIONS.length;
-          setMinFilter(FILTER_OPTIONS[next].value);
-        }}
-        activeOpacity={0.8}
-      >
-        <Text style={styles.filterToggleText}>{currentLabel}</Text>
-      </TouchableOpacity>
-
-      {/* Right-side vertical icon stack: layers, alert/report, location */}
+      {/* Right-side vertical icon stack: height filter, layers, alert/report, location */}
       <View style={styles.rightIconStack}>
+        <TouchableOpacity
+          style={[styles.stackBtn, { backgroundColor: FILTER_COLORS[minFilter] || '#6B7280' }]}
+          onPress={() => {
+            const next = (currentFilterIdx + 1) % FILTER_OPTIONS.length;
+            setMinFilter(FILTER_OPTIONS[next].value);
+          }}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.filterToggleText}>{currentLabel}</Text>
+        </TouchableOpacity>
         <TouchableOpacity style={[styles.stackBtn, { backgroundColor: '#6B7280' }]} onPress={() => setLayersVisible(true)} activeOpacity={0.8}>
           <Ionicons name="layers-outline" size={21} color="#FFFFFF" />
         </TouchableOpacity>
@@ -1105,31 +1103,14 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 
-  // Cycling height filter chip, pushed below the search/saved cluster
-  filterToggle: {
-    position: 'absolute',
-    top: 156,
-    left: 16,
-    zIndex: 10,
-    paddingVertical: 6,
-    paddingHorizontal: 14,
-    borderRadius: 16,
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 4,
-  },
-  filterToggleNoSaved: {
-    top: 104,
-  },
+  // Cycling height filter chip text — button itself now lives in the right icon stack
   filterToggleText: {
     fontSize: 13,
     fontWeight: '700',
     color: '#FFFFFF',
   },
 
-  // Right-side vertical icon stack (layers / alert / location)
+  // Right-side vertical icon stack (height filter / layers / alert / location)
   rightIconStack: {
     position: 'absolute',
     right: 16,
