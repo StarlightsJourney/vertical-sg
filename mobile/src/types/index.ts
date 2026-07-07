@@ -59,6 +59,17 @@ export interface KudosRecord {
   created_at: string;
 }
 
+export interface Challenge {
+  challenge_id: string;
+  title: string;
+  description: string;
+  difficulty: 'easy' | 'medium' | 'hard' | 'insane';
+  period: 'weekly' | 'monthly';
+  target_floors: number;
+  reward_icon: string;
+  reward_label: string;
+}
+
 export interface HeightVerification {
   verification_id: string;
   block_id: string;

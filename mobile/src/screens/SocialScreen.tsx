@@ -25,7 +25,7 @@ import MascotAvatar from '../components/MascotAvatar';
 import PublicProfileModal from '../components/PublicProfileModal';
 import LeaderboardModal from '../components/LeaderboardModal';
 import NotificationsModal from '../components/NotificationsModal';
-import type { Profile } from '../types';
+import type { Profile, Challenge } from '../types';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const MOCK_PHOTOS = [
@@ -65,17 +65,7 @@ interface LeaderboardRow {
   best_single_climb: number;
 }
 
-interface Challenge {
-  challenge_id: string;
-  title: string;
-  description: string;
-  difficulty: 'easy' | 'medium' | 'hard';
-  target_floors: number;
-  reward_icon: string;
-  reward_label: string;
-}
-
-const DIFFICULTY_COLOR: Record<string, string> = { easy: '#10B981', medium: '#F59E0B', hard: '#EF4444' };
+const DIFFICULTY_COLOR: Record<string, string> = { easy: '#10B981', medium: '#F59E0B', hard: '#EF4444', insane: '#7C3AED' };
 
 // Client-side only — never written to the database. Real "other users" need
 // real accounts, which isn't something to fake in a live database. This is
@@ -295,7 +285,9 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile }: So
   }, [user]);
 
   const loadChallenges = useCallback(async () => {
-    const { data: challengeData } = await supabase.from('challenges').select('*').eq('is_active', true);
+    // Only the 3 weekly challenges show here — the monthly "SG Special" lives
+    // on the Groups tab alongside clubs/events.
+    const { data: challengeData } = await supabase.from('challenges').select('*').eq('is_active', true).eq('period', 'weekly');
     if (challengeData) setChallenges(challengeData as Challenge[]);
 
     if (!user) return;

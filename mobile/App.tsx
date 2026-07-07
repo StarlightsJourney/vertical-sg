@@ -6,19 +6,21 @@ import AnimatedSplash from './src/components/AnimatedSplash';
 import OnboardingScreen from './src/screens/OnboardingScreen';
 import MapScreen from './src/screens/MapScreen';
 import SocialScreen from './src/screens/SocialScreen';
+import GroupsScreen from './src/screens/GroupsScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
 import { AuthProvider } from './src/contexts/AuthContext';
 import storage from './src/utils/storage';
 
-// Phase 2a: 3-tab layout (My Climbs merged into Profile)
-// Order: Social — Map — Profile (Map is center anchor)
+// Phase 2a: 4-tab layout (My Climbs merged into Profile)
+// Order: Social — Map — Groups — Profile (Map is center anchor)
 const TABS = [
   { key: 'social', label: 'Social', icon: 'people-outline' as const, index: 0 },
   { key: 'map', label: 'Map', icon: 'map-outline' as const, index: 1 },
-  { key: 'profile', label: 'Profile', icon: 'person-outline' as const, index: 2 },
+  { key: 'groups', label: 'Groups', icon: 'flag-outline' as const, index: 2 },
+  { key: 'profile', label: 'Profile', icon: 'person-outline' as const, index: 3 },
 ];
 
-const TABS_BY_INDEX = ['social', 'map', 'profile'] as const;
+const TABS_BY_INDEX = ['social', 'map', 'groups', 'profile'] as const;
 const SWIPE_DISTANCE_THRESHOLD = 60; // px horizontal drag to trigger tab change
 
 export default function App() {
@@ -99,7 +101,7 @@ export default function App() {
 
         if (dx < -SWIPE_DISTANCE_THRESHOLD) {
           // Swipe left → next tab
-          const nextIdx = Math.min(currentIdx + 1, 2);
+          const nextIdx = Math.min(currentIdx + 1, TABS_BY_INDEX.length - 1);
           goToTab(TABS_BY_INDEX[nextIdx]);
         } else if (dx > SWIPE_DISTANCE_THRESHOLD) {
           // Swipe right → previous tab
@@ -137,6 +139,11 @@ export default function App() {
           {visitedTabs.has('map') && (
             <View style={[styles.screen, activeTab !== 'map' && styles.hidden]}>
               <MapScreen isDark={isDark} />
+            </View>
+          )}
+          {visitedTabs.has('groups') && (
+            <View style={[styles.screen, activeTab !== 'groups' && styles.hidden]}>
+              <GroupsScreen isDark={isDark} />
             </View>
           )}
           {visitedTabs.has('profile') && (
