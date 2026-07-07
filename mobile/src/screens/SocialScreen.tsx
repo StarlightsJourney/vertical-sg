@@ -10,6 +10,8 @@ import {
   ActivityIndicator,
   Alert,
   RefreshControl,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import * as ImagePicker from 'expo-image-picker';
@@ -17,6 +19,16 @@ import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../config/supabase';
 import { base64ToUint8Array } from '../utils/base64';
 import AuthPrompt from '../components/AuthPrompt';
+import MascotAvatar from '../components/MascotAvatar';
+import PublicProfileModal from '../components/PublicProfileModal';
+import type { Profile } from '../types';
+
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const MOCK_PHOTOS = [
+  require('../../assets/mock/mock-stairwell.png'),
+  require('../../assets/mock/mock-hdb-facade.png'),
+  require('../../assets/mock/mock-rooftop.png'),
+];
 
 interface FeedItem {
   climb_id: string;
@@ -24,6 +36,9 @@ interface FeedItem {
   floors_climbed: number;
   caption: string | null;
   photo_path: string | null;
+  /** Local require() source for mock items — takes priority over photo_path
+   * when set, since mock items don't have a real Supabase Storage path. */
+  photoSource?: any;
   created_at: string;
   blk_no: string;
   street: string;
@@ -50,6 +65,7 @@ const MOCK_FEED_ITEMS: FeedItem[] = [
     floors_climbed: 96,
     caption: 'First time trying this one — legs are jelly 😅',
     photo_path: null,
+    photoSource: MOCK_PHOTOS[0],
     created_at: new Date(Date.now() - 45 * 60000).toISOString(),
     blk_no: '212',
     street: 'Toa Payoh Lorong 8',
@@ -62,6 +78,7 @@ const MOCK_FEED_ITEMS: FeedItem[] = [
     floors_climbed: 156,
     caption: 'Chasing the weekly goal, 2 more sessions to go.',
     photo_path: null,
+    photoSource: MOCK_PHOTOS[2],
     created_at: new Date(Date.now() - 3 * 3600000).toISOString(),
     blk_no: '88',
     street: 'Redhill Close',
@@ -74,6 +91,7 @@ const MOCK_FEED_ITEMS: FeedItem[] = [
     floors_climbed: 40,
     caption: null,
     photo_path: null,
+    photoSource: MOCK_PHOTOS[1],
     created_at: new Date(Date.now() - 26 * 3600000).toISOString(),
     blk_no: '5',
     street: 'Tanjong Pagar Plaza',
@@ -94,13 +112,12 @@ function formatRelativeTime(iso: string): string {
 
 export default function SocialScreen({ isDark = false }: { isDark?: boolean }) {
   const { user, isAnonymous, loading: authLoading } = useAuth();
-  const [weeklyFloors, setWeeklyFloors] = useState(0);
-  const [weeklyClimbs, setWeeklyClimbs] = useState(0);
   const [authPromptVisible, setAuthPromptVisible] = useState(false);
   const [feed, setFeed] = useState<FeedItem[]>([]);
   const [feedLoading, setFeedLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [leaderboard, setLeaderboard] = useState<LeaderboardRow[]>([]);
+  const [profilesMap, setProfilesMap] = useState<Record<string, Profile>>({});
 
   // "Add photo/note" modal state
   const [editingClimbId, setEditingClimbId] = useState<string | null>(null);
@@ -113,19 +130,26 @@ export default function SocialScreen({ isDark = false }: { isDark?: boolean }) {
   const [unpostedClimbs, setUnpostedClimbs] = useState<FeedItem[]>([]);
   const [pickerLoading, setPickerLoading] = useState(false);
 
-  const loadWeekly = useCallback(async () => {
-    if (!user) return;
-    const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-    const { data } = await supabase
-      .from('climbs')
-      .select('floors_climbed')
-      .eq('user_id', user.id)
-      .gte('created_at', weekAgo);
+  // Search for other climbers by handle
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<Profile[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [viewingProfileId, setViewingProfileId] = useState<string | null>(null);
+
+  /** Batch-fetch profiles for a set of user ids (merges into the existing map;
+   * unknown/mock ids simply won't resolve and fall back to "Climber{id}"). */
+  const loadProfilesFor = useCallback(async (userIds: string[]) => {
+    const real = [...new Set(userIds)].filter((id) => !id.startsWith('mock-'));
+    if (real.length === 0) return;
+    const { data } = await supabase.from('profiles').select('*').in('user_id', real);
     if (data) {
-      setWeeklyClimbs(data.length);
-      setWeeklyFloors(data.reduce((s, c) => s + (c.floors_climbed || 0), 0));
+      setProfilesMap((prev) => {
+        const next = { ...prev };
+        for (const p of data as Profile[]) next[p.user_id] = p;
+        return next;
+      });
     }
-  }, [user]);
+  }, []);
 
   const loadFeed = useCallback(async () => {
     const { data: climbs } = await supabase
@@ -169,7 +193,27 @@ export default function SocialScreen({ isDark = false }: { isDark?: boolean }) {
     setFeed(merged);
     setFeedLoading(false);
     setRefreshing(false);
-  }, [user]);
+    loadProfilesFor(items.map((i) => i.user_id));
+  }, [user, loadProfilesFor]);
+
+  const handleSearch = async (query: string) => {
+    setSearchQuery(query);
+    if (query.trim().length < 2) {
+      setSearchResults([]);
+      return;
+    }
+    setSearching(true);
+    const { data } = await supabase
+      .from('profiles')
+      .select('*')
+      .ilike('display_name', `%${query.trim()}%`)
+      .limit(15);
+    setSearchResults((data ?? []) as Profile[]);
+    setSearching(false);
+  };
+
+  const nameFor = (userId: string) => profilesMap[userId]?.display_name ?? `Climber${userId.slice(0, 4)}`;
+  const skinFor = (userId: string) => profilesMap[userId]?.avatar_idx ?? 0;
 
   const loadLeaderboard = useCallback(async () => {
     const { data } = await supabase
@@ -177,17 +221,18 @@ export default function SocialScreen({ isDark = false }: { isDark?: boolean }) {
       .select('*')
       .order('total_floors', { ascending: false })
       .limit(5);
-    if (data) setLeaderboard(data as LeaderboardRow[]);
-  }, []);
+    if (data) {
+      setLeaderboard(data as LeaderboardRow[]);
+      loadProfilesFor((data as LeaderboardRow[]).map((r) => r.user_id));
+    }
+  }, [loadProfilesFor]);
 
-  useEffect(() => { loadWeekly(); }, [loadWeekly]);
   useEffect(() => { loadFeed(); }, [loadFeed]);
   useEffect(() => { loadLeaderboard(); }, [loadLeaderboard]);
 
   const handleRefresh = () => {
     setRefreshing(true);
     loadFeed();
-    loadWeekly();
     loadLeaderboard();
   };
 
@@ -321,19 +366,35 @@ export default function SocialScreen({ isDark = false }: { isDark?: boolean }) {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor="#2563EB" />}
         ListHeaderComponent={
           <>
-            {user && (
+            {/* Search for other climbers by handle */}
+            <View style={[s.searchBox, isDark && { backgroundColor: '#1F2937' }]}>
+              <Ionicons name="search" size={16} color="#9CA3AF" />
+              <TextInput
+                style={[s.searchInput, isDark && { color: '#F9FAFB' }]}
+                placeholder="Find climbers by handle..."
+                placeholderTextColor="#9CA3AF"
+                value={searchQuery}
+                onChangeText={handleSearch}
+              />
+              {searching && <ActivityIndicator size="small" color="#2563EB" />}
+            </View>
+
+            {searchQuery.trim().length >= 2 && (
               <View style={[s.card, isDark && { backgroundColor: '#1F2937' }]}>
-                <Text style={[s.cardTitle, isDark && { color: '#F9FAFB' }]}>Your Week</Text>
-                <View style={s.statsRow}>
-                  <View style={s.statItem}>
-                    <Text style={[s.statValue, isDark && { color: '#F9FAFB' }]}>{weeklyClimbs}</Text>
-                    <Text style={s.statLabel}>Climbs</Text>
-                  </View>
-                  <View style={s.statItem}>
-                    <Text style={[s.statValue, isDark && { color: '#F9FAFB' }]}>{weeklyFloors}</Text>
-                    <Text style={s.statLabel}>Floors</Text>
-                  </View>
-                </View>
+                {searchResults.length > 0 ? (
+                  searchResults.map((p) => (
+                    <TouchableOpacity
+                      key={p.user_id}
+                      style={s.searchResultRow}
+                      onPress={() => setViewingProfileId(p.user_id)}
+                    >
+                      <MascotAvatar skinIdx={p.avatar_idx} size={32} />
+                      <Text style={[s.searchResultName, isDark && { color: '#F9FAFB' }]}>{p.display_name}</Text>
+                    </TouchableOpacity>
+                  ))
+                ) : !searching ? (
+                  <Text style={[s.emptyFeedText, isDark && { color: '#9CA3AF' }]}>No climbers found with that handle.</Text>
+                ) : null}
               </View>
             )}
 
@@ -343,13 +404,19 @@ export default function SocialScreen({ isDark = false }: { isDark?: boolean }) {
                 {leaderboard.map((row, i) => {
                   const isMe = user && row.user_id === user.id;
                   return (
-                    <View key={row.user_id} style={[s.lbRow, isMe && s.lbRowMe]}>
+                    <TouchableOpacity
+                      key={row.user_id}
+                      style={[s.lbRow, isMe && s.lbRowMe]}
+                      onPress={() => !isMe && setViewingProfileId(row.user_id)}
+                      disabled={!!isMe}
+                    >
                       <Text style={[s.lbRank, i < 3 && s.lbRankTop]}>{i + 1}</Text>
+                      <MascotAvatar skinIdx={skinFor(row.user_id)} size={26} />
                       <Text style={[s.lbName, isDark && { color: '#F9FAFB' }]}>
-                        {isMe ? 'You' : `Climber${row.user_id.slice(0, 4)}`}
+                        {isMe ? 'You' : nameFor(row.user_id)}
                       </Text>
                       <Text style={s.lbFloors}>{row.total_floors} fl</Text>
-                    </View>
+                    </TouchableOpacity>
                   );
                 })}
               </View>
@@ -372,17 +439,19 @@ export default function SocialScreen({ isDark = false }: { isDark?: boolean }) {
         }
         renderItem={({ item }) => (
           <View style={[s.feedCard, isDark && { backgroundColor: '#1F2937' }]}>
-            <View style={s.feedHeader}>
-              <View style={s.feedAvatar}>
-                <Text style={s.feedAvatarText}>{item.user_id.slice(0, 1).toUpperCase()}</Text>
-              </View>
+            <TouchableOpacity
+              style={s.feedHeader}
+              onPress={() => !item.user_id.startsWith('mock-') && user?.id !== item.user_id && setViewingProfileId(item.user_id)}
+              activeOpacity={0.7}
+            >
+              <MascotAvatar skinIdx={skinFor(item.user_id)} size={36} />
               <View style={{ flex: 1 }}>
                 <Text style={[s.feedName, isDark && { color: '#F9FAFB' }]}>
-                  Climber{item.user_id.slice(0, 4)}
+                  {user?.id === item.user_id ? 'You' : nameFor(item.user_id)}
                 </Text>
                 <Text style={s.feedTime}>{formatRelativeTime(item.created_at)}</Text>
               </View>
-            </View>
+            </TouchableOpacity>
 
             <Text style={[s.feedBody, isDark && { color: '#D1D5DB' }]}>
               climbed <Text style={s.feedFloors}>{item.floors_climbed} floors</Text>
@@ -393,9 +462,9 @@ export default function SocialScreen({ isDark = false }: { isDark?: boolean }) {
               <Text style={[s.feedCaption, isDark && { color: '#F9FAFB' }]}>{item.caption}</Text>
             )}
 
-            {item.photo_path && (
+            {(item.photoSource || item.photo_path) && (
               <Image
-                source={{ uri: supabase.storage.from('building-photos').getPublicUrl(item.photo_path).data.publicUrl }}
+                source={item.photoSource ?? { uri: supabase.storage.from('building-photos').getPublicUrl(item.photo_path!).data.publicUrl }}
                 style={s.feedPhoto}
               />
             )}
@@ -463,7 +532,10 @@ export default function SocialScreen({ isDark = false }: { isDark?: boolean }) {
 
       {/* Add photo/note modal */}
       {editingClimbId && (
-        <View style={s.postModalOverlay}>
+        <KeyboardAvoidingView
+          style={s.postModalOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        >
           <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setEditingClimbId(null)} />
           <View style={[s.postModal, isDark && { backgroundColor: '#1F2937' }]}>
             <Text style={[s.postModalTitle, isDark && { color: '#F9FAFB' }]}>Add to this climb</Text>
@@ -508,13 +580,19 @@ export default function SocialScreen({ isDark = false }: { isDark?: boolean }) {
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       )}
 
       <AuthPrompt
         visible={authPromptVisible}
         reason="give kudos and post to the feed"
         onClose={() => setAuthPromptVisible(false)}
+      />
+
+      <PublicProfileModal
+        userId={viewingProfileId}
+        visible={!!viewingProfileId}
+        onClose={() => setViewingProfileId(null)}
       />
     </View>
   );
@@ -560,27 +638,31 @@ const s = StyleSheet.create({
     color: '#111827',
     marginBottom: 12,
   },
-  statsRow: {
+  searchBox: {
     flexDirection: 'row',
-    gap: 16,
-  },
-  statItem: {
-    flex: 1,
     alignItems: 'center',
-    paddingVertical: 8,
+    gap: 8,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 12,
   },
-  statValue: {
-    fontSize: 28,
-    fontWeight: '800',
+  searchInput: {
+    flex: 1,
+    fontSize: 14,
     color: '#111827',
   },
-  statLabel: {
-    fontSize: 12,
+  searchResultRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 10,
+  },
+  searchResultName: {
+    fontSize: 14,
     fontWeight: '600',
-    color: '#6B7280',
-    marginTop: 4,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    color: '#111827',
   },
   lbRow: {
     flexDirection: 'row',
@@ -631,12 +713,6 @@ const s = StyleSheet.create({
     gap: 10,
     marginBottom: 10,
   },
-  feedAvatar: {
-    width: 36, height: 36, borderRadius: 18,
-    backgroundColor: '#EFF6FF',
-    alignItems: 'center', justifyContent: 'center',
-  },
-  feedAvatarText: { fontSize: 14, fontWeight: '700', color: '#2563EB' },
   feedName: { fontSize: 14, fontWeight: '700', color: '#111827' },
   feedTime: { fontSize: 11, color: '#9CA3AF', marginTop: 1 },
   feedBody: { fontSize: 14, color: '#374151', lineHeight: 20, marginBottom: 4 },

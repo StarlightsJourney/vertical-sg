@@ -10,6 +10,8 @@ import {
   TextInput,
   Alert,
   Image,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import * as Linking from 'expo-linking';
@@ -420,7 +422,10 @@ export default function BuildingDetailSheet({ block, visible, onClose }: Props) 
       <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
         <View style={styles.overlay}>
           <TouchableOpacity style={styles.backdropArea} activeOpacity={1} onPress={onClose} />
-          <View style={styles.sheet}>
+          <KeyboardAvoidingView
+            style={styles.sheet}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          >
             {/* Handle */}
             <View style={styles.handle} />
 
@@ -671,13 +676,16 @@ export default function BuildingDetailSheet({ block, visible, onClose }: Props) 
                 )}
               </View>
             </ScrollView>
-          </View>
+          </KeyboardAvoidingView>
         </View>
       </Modal>
 
       {/* Verification submission modal */}
       <Modal visible={verifyVisible} transparent animationType="fade" onRequestClose={() => setVerifyVisible(false)}>
-        <View style={styles.verifyModalOverlay}>
+        <KeyboardAvoidingView
+          style={styles.verifyModalOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        >
           <View style={styles.verifyModal}>
             <Text style={styles.verifyModalTitle}>Verify Building Height</Text>
             <Text style={styles.verifyModalSub}>
@@ -741,7 +749,7 @@ export default function BuildingDetailSheet({ block, visible, onClose }: Props) 
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       <AuthPrompt

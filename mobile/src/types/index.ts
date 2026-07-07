@@ -30,6 +30,14 @@ export interface ClimbLog {
 
 // --- Phase 2a types ---
 
+export interface Profile {
+  user_id: string;
+  display_name: string;
+  avatar_idx: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ClimbRecord {
   climb_id: string;
   user_id: string;

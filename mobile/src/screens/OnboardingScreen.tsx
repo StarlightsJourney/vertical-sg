@@ -14,7 +14,9 @@ import { useLocation } from '../hooks/useLocation';
 import { fetchBlocksInBounds } from '../services/blocks';
 import { logClimb } from '../services/climbs';
 import { useAuth } from '../contexts/AuthContext';
+import { supabase } from '../config/supabase';
 import storage from '../utils/storage';
+import MascotAvatar from '../components/MascotAvatar';
 import type { Block } from '../types';
 
 interface Props {
@@ -51,7 +53,6 @@ const FITNESS_OPTIONS = [
 ];
 
 const GOAL_BASE_FLOORS = [120, 200, 320];
-const AVATAR_MARKS = ['B1', '▲', '◆', '●', '■'];
 
 function Mascot() {
   const bob = useRef(new Animated.Value(0)).current;
@@ -155,6 +156,17 @@ export default function OnboardingScreen({ onComplete }: Props) {
       avatarIdx,
       weeklyGoal,
     }));
+
+    // Persist to the real profiles table too — anonymous sessions have a
+    // real user id, so their handle/skin is visible to others right away,
+    // not just stored locally.
+    if (user) {
+      await supabase.from('profiles').upsert(
+        { user_id: user.id, display_name: handle, avatar_idx: avatarIdx },
+        { onConflict: 'user_id' },
+      );
+    }
+
     onComplete();
   };
 
@@ -232,16 +244,16 @@ export default function OnboardingScreen({ onComplete }: Props) {
         {step === 'profile' && (
           <View style={styles.stepBox}>
             <Text style={styles.eyebrow}>Make it yours</Text>
-            <Text style={styles.h2}>Pick a mark and a handle.</Text>
+            <Text style={styles.h2}>Pick your climber and a handle.</Text>
             <Text style={styles.sub}>No real name needed — climbers go by a handle here.</Text>
             <View style={styles.avatarRow}>
-              {AVATAR_MARKS.map((mark, i) => (
+              {[0, 1, 2, 3, 4].map((i) => (
                 <TouchableOpacity
-                  key={mark}
+                  key={i}
                   style={[styles.avatarBox, avatarIdx === i && { borderColor: '#111827' }]}
                   onPress={() => setAvatarIdx(i)}
                 >
-                  <Text style={[styles.avatarText, { color: TIERS[i] }]}>{mark}</Text>
+                  <MascotAvatar skinIdx={i} size={40} />
                 </TouchableOpacity>
               ))}
             </View>
