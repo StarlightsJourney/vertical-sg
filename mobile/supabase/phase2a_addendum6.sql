@@ -9,6 +9,9 @@
 -- work without an account, so profiles should too), searchable by handle.
 -- ============================================================================
 
+-- Needed before the trigram index below can use gin_trgm_ops — must run first.
+create extension if not exists pg_trgm;
+
 create table if not exists profiles (
   user_id uuid primary key references auth.users(id) on delete cascade,
   display_name text not null,
@@ -17,7 +20,7 @@ create table if not exists profiles (
   updated_at timestamptz default now()
 );
 
-create index idx_profiles_display_name on profiles using gin (display_name gin_trgm_ops);
+create index if not exists idx_profiles_display_name on profiles using gin (display_name gin_trgm_ops);
 
 alter table profiles enable row level security;
 
@@ -37,8 +40,6 @@ create policy "Users can update own profile"
 -- Auto-create a profile (random pseudonym, default avatar) the moment any
 -- account is created — anonymous sign-in included, matching the app's
 -- "browse and climb without an account" philosophy.
-create extension if not exists pg_trgm;
-
 create or replace function handle_new_user_profile()
 returns trigger as $$
 begin
