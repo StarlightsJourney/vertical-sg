@@ -115,11 +115,15 @@ export async function syncQueuedClimbs(userId: string): Promise<number> {
 
     let synced = 0;
     for (const climb of queue) {
+      // Reconstruct qty/partial from the total so it matches the server-side
+      // floors_climbed = climb_qty*storeys + partial_floors consistency check.
+      const qty = Math.floor(climb.floors / climb.storeys);
+      const partial = climb.floors % climb.storeys;
       const { error } = await supabase.from('climbs').insert({
         user_id: userId,
         block_id: climb.block_id,
-        climb_qty: 1,
-        partial_floors: 0,
+        climb_qty: qty,
+        partial_floors: partial,
         floors_climbed: climb.floors,
         synced: true,
         created_at: climb.climbedAt, // preserve original timestamp
@@ -154,11 +158,13 @@ export async function migrateLocalClimbs(userId: string): Promise<number> {
 
   let migrated = 0;
   for (const climb of history) {
+    const qty = Math.floor(climb.floors / climb.storeys);
+    const partial = climb.floors % climb.storeys;
     const { error } = await supabase.from('climbs').insert({
       user_id: userId,
       block_id: climb.block_id,
-      climb_qty: 1,
-      partial_floors: 0,
+      climb_qty: qty,
+      partial_floors: partial,
       floors_climbed: climb.floors,
       synced: true,
       created_at: climb.climbedAt,
