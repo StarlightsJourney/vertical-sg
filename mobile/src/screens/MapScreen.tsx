@@ -8,6 +8,8 @@ import {
   TextInput,
   Modal,
   Alert,
+  ScrollView,
+  Switch,
 } from 'react-native';
 import {
   Map as MapView,
@@ -19,6 +21,7 @@ import {
   type CameraRef,
 } from '@maplibre/maplibre-react-native';
 import { useLocation } from '../hooks/useLocation';
+import { supabase } from '../config/supabase';
 import { fetchBlocksInBounds } from '../services/blocks';
 import { logClimb, checkRecentBadges } from '../services/climbs';
 import BadgeCelebration from '../components/BadgeCelebration';
@@ -79,6 +82,15 @@ const FILTER_OPTIONS = [
 
 const FILTER_COLORS: Record<number, string> = { 21: '#FF3B30', 31: '#8B0000', 40: '#7C3AED', 0: '#6B7280' };
 
+/** Bucket a building's storey count into the same 5 tiers as HEIGHT_TIERS. */
+function tierIndex(storeys: number): number {
+  if (storeys <= 10) return 0;
+  if (storeys <= 20) return 1;
+  if (storeys <= 30) return 2;
+  if (storeys <= 39) return 3;
+  return 4;
+}
+
 export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) {
   const location = useLocation();
   const mapRef = useRef<MapRef>(null);
@@ -125,6 +137,14 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
   const [unreadCount, setUnreadCount] = useState(0);
   const [notifVisible, setNotifVisible] = useState(false);
 
+  // Saved (starred) buildings — full records, refetched whenever starredIds changes,
+  // independent of whatever's currently in the viewport-scoped `blocks` state.
+  const [savedBlocks, setSavedBlocks] = useState<Block[]>([]);
+
+  // Map layers panel — amenity visibility toggles + shortcut to the height filter
+  const [layersVisible, setLayersVisible] = useState(false);
+  const [amenityVisibility, setAmenityVisibility] = useState({ water: true, toilet: true, foodShop: true });
+
   // Use prop if provided (from App.tsx tab bar), otherwise auto-detect
   const isDark = isDarkProp ?? (() => {
     const hour = new Date().getHours();
@@ -166,25 +186,29 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
   const amenitiesGeojson = useMemo((): GeoJSON.FeatureCollection => {
     const features: GeoJSON.Feature[] = [];
 
-    for (const wc of WATER_COOLERS_RAW) {
-      if (!wc.lat || !wc.lng) continue;
-      features.push({
-        type: 'Feature',
-        geometry: { type: 'Point', coordinates: [wc.lng, wc.lat] },
-        properties: {
-          amenity_type: wc.status,
-          icon: 'water-outline',
-          color: wc.status === 'verified' ? '#06B6D4' : '#EC4899',
-          pending: false,
-          name: wc.name,
-          lat: wc.lat,
-          lng: wc.lng,
-        },
-      });
+    if (amenityVisibility.water) {
+      for (const wc of WATER_COOLERS_RAW) {
+        if (!wc.lat || !wc.lng) continue;
+        features.push({
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [wc.lng, wc.lat] },
+          properties: {
+            amenity_type: wc.status,
+            icon: 'water-outline',
+            color: wc.status === 'verified' ? '#06B6D4' : '#EC4899',
+            pending: false,
+            name: wc.name,
+            lat: wc.lat,
+            lng: wc.lng,
+          },
+        });
+      }
     }
 
     for (const a of AMENITIES_RAW) {
       if (!a.lat || !a.lng) continue;
+      const category = a.type === 'toilet' ? 'toilet' : 'foodShop';
+      if (!amenityVisibility[category]) continue;
       features.push({
         type: 'Feature',
         geometry: { type: 'Point', coordinates: [a.lng, a.lat] },
@@ -202,6 +226,8 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
 
     for (const r of pendingReports) {
       if (!r.lat || !r.lng) continue;
+      const category = r.type === 'Toilet' ? 'toilet' : r.type === 'Food / Shop' ? 'foodShop' : 'water';
+      if (!amenityVisibility[category]) continue;
       features.push({
         type: 'Feature',
         geometry: { type: 'Point', coordinates: [r.lng, r.lat] },
@@ -218,7 +244,35 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
     }
 
     return { type: 'FeatureCollection', features };
-  }, [pendingReports]);
+  }, [pendingReports, amenityVisibility]);
+
+  // Suggested climbs banner — nearest buildings, spread across as many different
+  // height tiers as are available nearby, so the suggestions vary in difficulty
+  // rather than just being "the 3 closest" (which tend to cluster in one tier).
+  const recommendations = useMemo(() => {
+    if (location.loading || location.latitude == null || blocks.length === 0) return [];
+    const withDist = blocks
+      .filter((b) => b.lat != null && b.lng != null)
+      .map((b) => ({ block: b, dist: haversineKm(location.latitude, location.longitude, b.lat!, b.lng!) }))
+      .sort((a, b) => a.dist - b.dist);
+
+    const picked: typeof withDist = [];
+    const usedTiers = new Set<number>();
+    for (const cand of withDist) {
+      if (usedTiers.has(tierIndex(cand.block.storeys))) continue;
+      usedTiers.add(tierIndex(cand.block.storeys));
+      picked.push(cand);
+      if (picked.length === 3) break;
+    }
+    if (picked.length < 3) {
+      for (const cand of withDist) {
+        if (picked.length === 3) break;
+        if (picked.some((p) => p.block.block_id === cand.block.block_id)) continue;
+        picked.push(cand);
+      }
+    }
+    return picked;
+  }, [blocks, location.loading, location.latitude, location.longitude]);
 
   // Fetch blocks within visible map bounds
   const fetchBounds = useCallback(
@@ -437,6 +491,22 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
     });
   }, []);
 
+  // Fetch full records for starred blocks (for the "Saved" row up top) whenever
+  // the starred set changes — independent of the current viewport's `blocks`.
+  useEffect(() => {
+    if (starredIds.size === 0) {
+      setSavedBlocks([]);
+      return;
+    }
+    supabase
+      .from('blocks')
+      .select('*')
+      .in('block_id', Array.from(starredIds))
+      .then(({ data }) => {
+        if (data) setSavedBlocks(data as Block[]);
+      });
+  }, [starredIds]);
+
   // Load climb history on mount
   useEffect(() => {
     storage.getClimbHistory().then((history) => {
@@ -587,9 +657,57 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
         </View>
       )}
 
-      {/* Single cycling filter toggle at top-left */}
+      {/* Strava-style top search bar */}
       <TouchableOpacity
-        style={[styles.filterToggle, { backgroundColor: FILTER_COLORS[minFilter] || '#6B7280' }]}
+        style={[styles.topSearchBar, { backgroundColor: isDark ? 'rgba(30,30,30,0.95)' : 'rgba(255,255,255,0.95)' }]}
+        onPress={() => setSearchVisible(true)}
+        activeOpacity={0.8}
+      >
+        <Ionicons name="search" size={18} color="#9CA3AF" style={{ marginRight: 8 }} />
+        <Text style={styles.searchPlaceholder}>Search blocks...</Text>
+        {!isAnonymous && user && (
+          <TouchableOpacity
+            style={mStyles.notifBellInline}
+            onPress={(e) => { e.stopPropagation?.(); setNotifVisible(true); }}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="notifications-outline" size={20} color={isDark ? '#D1D5DB' : '#374151'} />
+            {unreadCount > 0 && (
+              <View style={mStyles.notifBadge}>
+                <Text style={mStyles.notifBadgeText}>{unreadCount > 9 ? '9+' : unreadCount}</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+        )}
+      </TouchableOpacity>
+
+      {/* Saved buildings row — starred blocks, tap to fly the camera there */}
+      {savedBlocks.length > 0 && (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.savedRow}
+          contentContainerStyle={styles.savedRowContent}
+        >
+          {savedBlocks.map((b) => (
+            <TouchableOpacity
+              key={b.block_id}
+              style={[styles.savedChip, { backgroundColor: isDark ? 'rgba(30,30,30,0.95)' : 'rgba(255,255,255,0.95)' }]}
+              onPress={() => handleSelectSearchBlock(b)}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="star" size={13} color="#F59E0B" />
+              <Text style={[styles.savedChipText, { color: isDark ? '#F9FAFB' : '#111827' }]}>
+                Blk {b.blk_no} · {b.storeys}fl
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      )}
+
+      {/* Height filter chip — pushed down below the search/saved cluster */}
+      <TouchableOpacity
+        style={[styles.filterToggle, { backgroundColor: FILTER_COLORS[minFilter] || '#6B7280' }, savedBlocks.length === 0 && styles.filterToggleNoSaved]}
         onPress={() => {
           const next = (currentFilterIdx + 1) % FILTER_OPTIONS.length;
           setMinFilter(FILTER_OPTIONS[next].value);
@@ -599,68 +717,53 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
         <Text style={styles.filterToggleText}>{currentLabel}</Text>
       </TouchableOpacity>
 
-      {/* Height legend */}
-      <View style={[styles.legend, { backgroundColor: isDark ? 'rgba(30,30,30,0.88)' : 'rgba(255,255,255,0.88)' }]}>
-        {HEIGHT_TIERS.map((t) => (
-          <View key={t.label} style={styles.legendItem}>
-            <View style={[styles.legendDot, { backgroundColor: t.color }]} />
-            <Text style={[styles.legendLabel, { color: isDark ? '#D1D5DB' : '#374151' }]}>{t.label}</Text>
-          </View>
-        ))}
-      </View>
-
-      {/* Notification bell (authenticated users only) */}
-      {!isAnonymous && user && (
-        <TouchableOpacity
-          style={[mStyles.notifBell, { backgroundColor: isDark ? 'rgba(30,30,30,0.88)' : 'rgba(255,255,255,0.88)' }]}
-          onPress={() => setNotifVisible(true)}
-          activeOpacity={0.8}
-        >
-          <Ionicons name="notifications-outline" size={20} color={isDark ? '#D1D5DB' : '#374151'} />
-          {unreadCount > 0 && (
-            <View style={mStyles.notifBadge}>
-              <Text style={mStyles.notifBadgeText}>{unreadCount > 9 ? '9+' : unreadCount}</Text>
-            </View>
-          )}
+      {/* Right-side vertical icon stack: layers, alert/report, location */}
+      <View style={styles.rightIconStack}>
+        <TouchableOpacity style={[styles.stackBtn, { backgroundColor: '#6B7280' }]} onPress={() => setLayersVisible(true)} activeOpacity={0.8}>
+          <Ionicons name="layers-outline" size={21} color="#FFFFFF" />
         </TouchableOpacity>
-      )}
-
-      {/* Bottom bar */}
-      <View style={[styles.bottomBar, { backgroundColor: isDark ? 'rgba(30,30,30,0.95)' : 'rgba(255,255,255,0.95)' }]}>
-        {/* Search input — tapping opens SearchScreen */}
-        <TouchableOpacity
-          style={[styles.searchInput, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : '#F3F4F6' }]}
-          onPress={() => setSearchVisible(true)}
-          activeOpacity={0.8}
-        >
-          <Ionicons name="search" size={18} color="#9CA3AF" style={{ marginRight: 8 }} />
-          <Text style={styles.searchPlaceholder}>Search blocks...</Text>
+        <TouchableOpacity style={[styles.stackBtn, { backgroundColor: '#F59E0B' }]} onPress={() => setAlertVisible(true)} activeOpacity={0.8}>
+          <Ionicons name="add-circle" size={21} color="#FFFFFF" />
         </TouchableOpacity>
-
-        {/* Alert/report button — PLUS icon, distinct from location */}
         <TouchableOpacity
-          style={styles.alertBtn}
-          onPress={() => setAlertVisible(true)}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="add-circle" size={22} color="#FFFFFF" />
-        </TouchableOpacity>
-
-        {/* Location button — BLUE, separate */}
-        <TouchableOpacity
-          style={styles.locBtn}
+          style={[styles.stackBtn, { backgroundColor: '#2563EB' }]}
           onPress={() => {
-            cameraRef.current?.easeTo({
-              center: cameraCenter,
-              zoom: 15,
-              duration: 500,
-            });
+            cameraRef.current?.easeTo({ center: cameraCenter, zoom: 15, duration: 500 });
           }}
-          activeOpacity={0.7}
+          activeOpacity={0.8}
         >
-          <Ionicons name="locate" size={22} color="#FFFFFF" />
+          <Ionicons name="locate" size={21} color="#FFFFFF" />
         </TouchableOpacity>
       </View>
+
+      {/* Suggested climbs banner — just above the tab bar */}
+      {recommendations.length > 0 && (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.recBanner}
+          contentContainerStyle={styles.recBannerContent}
+        >
+          {recommendations.map(({ block, dist }) => (
+            <TouchableOpacity
+              key={block.block_id}
+              style={[styles.recCard, { backgroundColor: isDark ? 'rgba(30,30,30,0.95)' : 'rgba(255,255,255,0.95)' }]}
+              onPress={() => handleSelectSearchBlock(block)}
+              activeOpacity={0.85}
+            >
+              <View style={[styles.recCardDot, { backgroundColor: HEIGHT_TIERS[tierIndex(block.storeys)].color }]} />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.recCardTitle, { color: isDark ? '#F9FAFB' : '#111827' }]} numberOfLines={1}>
+                  Blk {block.blk_no} {block.street}
+                </Text>
+                <Text style={styles.recCardMeta}>
+                  {block.storeys} storeys · {dist < 1 ? `${Math.round(dist * 1000)}m` : `${dist.toFixed(1)}km`} away
+                </Text>
+              </View>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      )}
 
       {/* Placement mode: crosshair + confirm */}
       {placementType && (
@@ -857,6 +960,59 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
           </View>
         </TouchableOpacity>
       </Modal>
+
+      {/* Layers panel — amenity visibility toggles + building height legend/filter */}
+      <Modal visible={layersVisible} transparent animationType="fade" onRequestClose={() => setLayersVisible(false)}>
+        <TouchableOpacity style={styles.alertBackdrop} onPress={() => setLayersVisible(false)} activeOpacity={1}>
+          <TouchableOpacity activeOpacity={1} style={[styles.layersPanel, isDark && { backgroundColor: '#1F2937' }]}>
+            <Text style={[styles.alertGridTitle, isDark && { color: '#F9FAFB' }]}>Map Layers</Text>
+
+            <Text style={[styles.layersSectionLabel, isDark && { color: '#9CA3AF' }]}>Amenities</Text>
+            {[
+              { key: 'water' as const, icon: 'water-outline', label: 'Water Coolers', color: '#06B6D4' },
+              { key: 'toilet' as const, icon: 'male-female-outline', label: 'Toilets', color: '#8B5CF6' },
+              { key: 'foodShop' as const, icon: 'cafe-outline', label: 'Food / Shop', color: '#F59E0B' },
+            ].map((item) => (
+              <View key={item.key} style={styles.layersRow}>
+                <Ionicons name={item.icon as any} size={18} color={item.color} style={{ marginRight: 10 }} />
+                <Text style={[styles.layersRowLabel, isDark && { color: '#F9FAFB' }]}>{item.label}</Text>
+                <Switch
+                  value={amenityVisibility[item.key]}
+                  onValueChange={(val) => setAmenityVisibility((prev) => ({ ...prev, [item.key]: val }))}
+                  trackColor={{ true: item.color }}
+                />
+              </View>
+            ))}
+
+            <Text style={[styles.layersSectionLabel, isDark && { color: '#9CA3AF' }, { marginTop: 16 }]}>Building Height</Text>
+            <View style={styles.layersFilterRow}>
+              {FILTER_OPTIONS.map((f) => (
+                <TouchableOpacity
+                  key={f.value}
+                  style={[
+                    styles.layersFilterChip,
+                    { borderColor: FILTER_COLORS[f.value] },
+                    minFilter === f.value && { backgroundColor: FILTER_COLORS[f.value] },
+                  ]}
+                  onPress={() => setMinFilter(f.value)}
+                >
+                  <Text style={[styles.layersFilterChipText, { color: minFilter === f.value ? '#FFFFFF' : FILTER_COLORS[f.value] }]}>
+                    {f.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <View style={styles.legendWrap}>
+              {HEIGHT_TIERS.map((t) => (
+                <View key={t.label} style={styles.legendItem}>
+                  <View style={[styles.legendDot, { backgroundColor: t.color }]} />
+                  <Text style={[styles.legendLabel, { color: isDark ? '#D1D5DB' : '#374151' }]}>{t.label} storeys</Text>
+                </View>
+              ))}
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
     </View>
   );
 }
@@ -895,38 +1051,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     zIndex: 10,
   },
-  // Single cycling filter toggle at top-left
-  filterToggle: {
+  // Strava-style top search bar
+  topSearchBar: {
     position: 'absolute',
     top: 52,
-    left: 16,
-    zIndex: 10,
-    paddingVertical: 6,
-    paddingHorizontal: 14,
-    borderRadius: 16,
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 4,
-  },
-  filterToggleText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#FFFFFF',
-  },
-
-  // Bottom bar
-  bottomBar: {
-    position: 'absolute',
-    bottom: 8,
     left: 16,
     right: 16,
     flexDirection: 'row',
     alignItems: 'center',
-    borderRadius: 16,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
     zIndex: 10,
     elevation: 6,
     shadowColor: '#000',
@@ -934,49 +1069,185 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.15,
     shadowRadius: 8,
   },
-  searchInput: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderRadius: 12,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    marginRight: 10,
-  },
   searchPlaceholder: {
     fontSize: 15,
     color: '#9CA3AF',
     flex: 1,
   },
-  locBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: '#2563EB',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
 
-  // Height legend
-  legend: {
+  // Saved buildings row, directly under the search bar
+  savedRow: {
     position: 'absolute',
-    top: 52,
-    right: 16,
-    flexDirection: 'row',
-    borderRadius: 20,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
+    top: 104,
+    left: 0,
+    right: 0,
     zIndex: 10,
+  },
+  savedRowContent: {
+    paddingHorizontal: 16,
+    gap: 8,
+  },
+  savedChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderRadius: 14,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
     elevation: 4,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.12,
     shadowRadius: 4,
   },
+  savedChipText: {
+    fontSize: 12.5,
+    fontWeight: '600',
+  },
+
+  // Cycling height filter chip, pushed below the search/saved cluster
+  filterToggle: {
+    position: 'absolute',
+    top: 156,
+    left: 16,
+    zIndex: 10,
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    borderRadius: 16,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+  },
+  filterToggleNoSaved: {
+    top: 104,
+  },
+  filterToggleText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+
+  // Right-side vertical icon stack (layers / alert / location)
+  rightIconStack: {
+    position: 'absolute',
+    right: 16,
+    bottom: 112,
+    zIndex: 10,
+    gap: 10,
+  },
+  stackBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+  },
+
+  // Suggested climbs banner, just above the tab bar
+  recBanner: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 8,
+    zIndex: 10,
+  },
+  recBannerContent: {
+    paddingHorizontal: 16,
+    gap: 10,
+  },
+  recCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    width: 210,
+    borderRadius: 14,
+    padding: 12,
+    gap: 10,
+    elevation: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+  },
+  recCardDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  recCardTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  recCardMeta: {
+    fontSize: 11,
+    color: '#9CA3AF',
+    marginTop: 2,
+    fontWeight: '500',
+  },
+
+  // Layers panel (modal)
+  layersPanel: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 24,
+    width: '85%',
+    maxWidth: 360,
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 12,
+  },
+  layersSectionLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#9CA3AF',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 8,
+  },
+  layersRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  layersRowLabel: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111827',
+  },
+  layersFilterRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 14,
+  },
+  layersFilterChip: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1.5,
+  },
+  layersFilterChipText: {
+    fontSize: 12.5,
+    fontWeight: '700',
+  },
+  legendWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
   legendItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginHorizontal: 4,
+    marginRight: 12,
+    marginBottom: 6,
   },
   legendDot: {
     width: 8,
@@ -1073,7 +1344,7 @@ const styles = StyleSheet.create({
   },
   placementBar: {
     position: 'absolute',
-    top: 90,
+    top: 210,
     left: 16,
     right: 16,
     backgroundColor: '#FFFFFF',
@@ -1125,22 +1396,11 @@ const styles = StyleSheet.create({
 
 // Shared marker styles — small fixed size, no zoom deps
 const mStyles = StyleSheet.create({
-  // Notification bell
-  notifBell: {
-    position: 'absolute',
-    top: 96,
-    right: 16,
-    zIndex: 10,
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    justifyContent: 'center',
-    alignItems: 'center',
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.12,
-    shadowRadius: 4,
+  // Notification bell, inline at the right edge of the top search bar
+  notifBellInline: {
+    position: 'relative',
+    marginLeft: 8,
+    padding: 2,
   },
   notifBadge: {
     position: 'absolute',
