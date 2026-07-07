@@ -12,15 +12,19 @@ import {
   RefreshControl,
   KeyboardAvoidingView,
   Platform,
+  ScrollView,
 } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import * as ImagePicker from 'expo-image-picker';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../config/supabase';
+import { getUnreadNotificationCount } from '../services/climbs';
 import { base64ToUint8Array } from '../utils/base64';
 import AuthPrompt from '../components/AuthPrompt';
 import MascotAvatar from '../components/MascotAvatar';
 import PublicProfileModal from '../components/PublicProfileModal';
+import LeaderboardModal from '../components/LeaderboardModal';
+import NotificationsModal from '../components/NotificationsModal';
 import type { Profile } from '../types';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -60,6 +64,18 @@ interface LeaderboardRow {
   total_floors: number;
   best_single_climb: number;
 }
+
+interface Challenge {
+  challenge_id: string;
+  title: string;
+  description: string;
+  difficulty: 'easy' | 'medium' | 'hard';
+  target_floors: number;
+  reward_icon: string;
+  reward_label: string;
+}
+
+const DIFFICULTY_COLOR: Record<string, string> = { easy: '#10B981', medium: '#F59E0B', hard: '#EF4444' };
 
 // Client-side only — never written to the database. Real "other users" need
 // real accounts, which isn't something to fake in a live database. This is
@@ -121,7 +137,12 @@ function formatRelativeTime(iso: string): string {
   return `${days}d ago`;
 }
 
-export default function SocialScreen({ isDark = false }: { isDark?: boolean }) {
+interface SocialScreenProps {
+  isDark?: boolean;
+  onNavigateToProfile?: () => void;
+}
+
+export default function SocialScreen({ isDark = false, onNavigateToProfile }: SocialScreenProps) {
   const { user, isAnonymous, loading: authLoading } = useAuth();
   const [authPromptVisible, setAuthPromptVisible] = useState(false);
   const [feed, setFeed] = useState<FeedItem[]>([]);
@@ -146,6 +167,22 @@ export default function SocialScreen({ isDark = false }: { isDark?: boolean }) {
   const [searchResults, setSearchResults] = useState<Profile[]>([]);
   const [searching, setSearching] = useState(false);
   const [viewingProfileId, setViewingProfileId] = useState<string | null>(null);
+
+  // Header: own avatar + notification bell
+  const [myProfile, setMyProfile] = useState<Profile | null>(null);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [notifVisible, setNotifVisible] = useState(false);
+
+  // Leaderboard (compact card here, full view in a modal)
+  const [leaderboardModalVisible, setLeaderboardModalVisible] = useState(false);
+
+  // Challenges
+  const [challenges, setChallenges] = useState<Challenge[]>([]);
+  const [myChallengeIds, setMyChallengeIds] = useState<Set<string>>(new Set());
+  const [weeklyFloorsForChallenges, setWeeklyFloorsForChallenges] = useState(0);
+
+  // Recommended climbers
+  const [recommended, setRecommended] = useState<(LeaderboardRow & { profile?: Profile })[]>([]);
 
   // Comments on a feed post — only one card's thread expanded at a time
   const [expandedClimbId, setExpandedClimbId] = useState<string | null>(null);
@@ -247,13 +284,60 @@ export default function SocialScreen({ isDark = false }: { isDark?: boolean }) {
     }
   }, [loadProfilesFor]);
 
+  const loadHeader = useCallback(async () => {
+    if (!user) return;
+    const [{ data: profileData }, count] = await Promise.all([
+      supabase.from('profiles').select('*').eq('user_id', user.id).maybeSingle(),
+      getUnreadNotificationCount(user.id),
+    ]);
+    if (profileData) setMyProfile(profileData as Profile);
+    setUnreadCount(count);
+  }, [user]);
+
+  const loadChallenges = useCallback(async () => {
+    const { data: challengeData } = await supabase.from('challenges').select('*').eq('is_active', true);
+    if (challengeData) setChallenges(challengeData as Challenge[]);
+
+    if (!user) return;
+    const [{ data: joined }, { data: myClimbs }] = await Promise.all([
+      supabase.from('challenge_participants').select('challenge_id').eq('user_id', user.id),
+      supabase.from('climbs').select('floors_climbed').eq('user_id', user.id).gte('created_at', new Date(Date.now() - 7 * 86400000).toISOString()),
+    ]);
+    if (joined) setMyChallengeIds(new Set(joined.map((j: any) => j.challenge_id)));
+    if (myClimbs) setWeeklyFloorsForChallenges(myClimbs.reduce((s, c: any) => s + c.floors_climbed, 0));
+  }, [user]);
+
+  const loadRecommended = useCallback(async () => {
+    const { data } = await supabase.from('leaderboard_weekly').select('*').order('total_floors', { ascending: false }).limit(10);
+    if (!data) return;
+    const others = (data as LeaderboardRow[]).filter((r) => r.user_id !== user?.id).slice(0, 5);
+    if (others.length === 0) { setRecommended([]); return; }
+    const { data: profs } = await supabase.from('profiles').select('*').in('user_id', others.map((r) => r.user_id));
+    const profMap: Record<string, Profile> = {};
+    for (const p of (profs ?? []) as Profile[]) profMap[p.user_id] = p;
+    setRecommended(others.map((r) => ({ ...r, profile: profMap[r.user_id] })));
+  }, [user]);
+
+  const handleJoinChallenge = async (challengeId: string) => {
+    if (isAnonymous) { setAuthPromptVisible(true); return; }
+    if (!user) return;
+    setMyChallengeIds((prev) => new Set(prev).add(challengeId)); // optimistic
+    await supabase.from('challenge_participants').insert({ challenge_id: challengeId, user_id: user.id });
+  };
+
   useEffect(() => { loadFeed(); }, [loadFeed]);
   useEffect(() => { loadLeaderboard(); }, [loadLeaderboard]);
+  useEffect(() => { loadHeader(); }, [loadHeader]);
+  useEffect(() => { loadChallenges(); }, [loadChallenges]);
+  useEffect(() => { loadRecommended(); }, [loadRecommended]);
 
   const handleRefresh = () => {
     setRefreshing(true);
     loadFeed();
     loadLeaderboard();
+    loadHeader();
+    loadChallenges();
+    loadRecommended();
   };
 
   const handleToggleKudos = async (item: FeedItem) => {
@@ -433,6 +517,21 @@ export default function SocialScreen({ isDark = false }: { isDark?: boolean }) {
     <View style={[s.container, isDark && { backgroundColor: '#111827' }]}>
       <View style={[s.header, isDark && { backgroundColor: '#111827', borderBottomColor: '#374151' }]}>
         <Text style={[s.headerTitle, isDark && { color: '#F9FAFB' }]}>Social</Text>
+        <View style={s.headerActions}>
+          {!isAnonymous && (
+            <TouchableOpacity style={s.bellBtn} onPress={() => setNotifVisible(true)} activeOpacity={0.7}>
+              <Ionicons name="notifications-outline" size={22} color={isDark ? '#D1D5DB' : '#374151'} />
+              {unreadCount > 0 && (
+                <View style={s.bellBadge}>
+                  <Text style={s.bellBadgeText}>{unreadCount > 9 ? '9+' : unreadCount}</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity onPress={onNavigateToProfile} activeOpacity={0.7}>
+            <MascotAvatar skinIdx={myProfile?.avatar_idx ?? 0} size={34} />
+          </TouchableOpacity>
+        </View>
       </View>
 
       <FlatList
@@ -475,7 +574,13 @@ export default function SocialScreen({ isDark = false }: { isDark?: boolean }) {
 
             {leaderboard.length > 0 && (
               <View style={[s.card, isDark && { backgroundColor: '#1F2937' }]}>
-                <Text style={[s.cardTitle, isDark && { color: '#F9FAFB' }]}>This Week's Leaderboard</Text>
+                <TouchableOpacity style={s.cardTitleRow} onPress={() => setLeaderboardModalVisible(true)} activeOpacity={0.7}>
+                  <Text style={[s.cardTitle, { marginBottom: 0 }, isDark && { color: '#F9FAFB' }]}>This Week's Leaderboard</Text>
+                  <View style={s.seeAllRow}>
+                    <Text style={s.seeAllText}>Friends vs public</Text>
+                    <Ionicons name="chevron-forward" size={14} color="#2563EB" />
+                  </View>
+                </TouchableOpacity>
                 {leaderboard.map((row, i) => {
                   const isMe = user && row.user_id === user.id;
                   return (
@@ -496,6 +601,75 @@ export default function SocialScreen({ isDark = false }: { isDark?: boolean }) {
                 })}
               </View>
             )}
+
+            {/* Suggested challenges */}
+            {challenges.length > 0 && (
+              <View style={s.challengesSection}>
+                <Text style={[s.cardTitle, isDark && { color: '#F9FAFB' }]}>Suggested Challenges</Text>
+                {challenges.map((ch) => {
+                  const joined = myChallengeIds.has(ch.challenge_id);
+                  const progressPct = Math.min(100, Math.round((weeklyFloorsForChallenges / ch.target_floors) * 100));
+                  const completed = joined && progressPct >= 100;
+                  return (
+                    <View key={ch.challenge_id} style={[s.challengeCard, isDark && { backgroundColor: '#1F2937' }]}>
+                      <View style={s.challengeTopRow}>
+                        <View style={[s.difficultyPill, { backgroundColor: DIFFICULTY_COLOR[ch.difficulty] + '1A' }]}>
+                          <Text style={[s.difficultyText, { color: DIFFICULTY_COLOR[ch.difficulty] }]}>{ch.difficulty.toUpperCase()}</Text>
+                        </View>
+                        <View style={s.rewardChip}>
+                          <Ionicons name={ch.reward_icon as any} size={14} color="#F59E0B" />
+                          <Text style={s.rewardChipText}>{ch.reward_label}</Text>
+                        </View>
+                      </View>
+                      <Text style={[s.challengeTitle, isDark && { color: '#F9FAFB' }]}>{ch.title}</Text>
+                      <Text style={[s.challengeDesc, isDark && { color: '#9CA3AF' }]}>{ch.description}</Text>
+
+                      {joined && (
+                        <View style={s.challengeProgressBlock}>
+                          <View style={s.challengeTrack}>
+                            <View style={[s.challengeFill, { width: `${progressPct}%`, backgroundColor: DIFFICULTY_COLOR[ch.difficulty] }]} />
+                          </View>
+                          <Text style={s.challengeProgressText}>
+                            {completed ? 'Completed! 🎉' : `${weeklyFloorsForChallenges} / ${ch.target_floors} fl`}
+                          </Text>
+                        </View>
+                      )}
+
+                      {!joined && (
+                        <TouchableOpacity style={s.joinBtn} onPress={() => handleJoinChallenge(ch.challenge_id)}>
+                          <Text style={s.joinBtnText}>Join Challenge</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  );
+                })}
+              </View>
+            )}
+
+            {/* Recommended climbers */}
+            {recommended.length > 0 && (
+              <View style={s.section}>
+                <Text style={[s.cardTitle, isDark && { color: '#F9FAFB' }]}>Recommended For You</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.recRow}>
+                  {recommended.map((r) => (
+                    <TouchableOpacity
+                      key={r.user_id}
+                      style={[s.recCard, isDark && { backgroundColor: '#1F2937' }]}
+                      onPress={() => setViewingProfileId(r.user_id)}
+                      activeOpacity={0.8}
+                    >
+                      <MascotAvatar skinIdx={r.profile?.avatar_idx ?? 0} size={44} />
+                      <Text style={[s.recName, isDark && { color: '#F9FAFB' }]} numberOfLines={1}>
+                        {r.profile?.display_name ?? `Climber${r.user_id.slice(0, 4)}`}
+                      </Text>
+                      <Text style={s.recStat}>{r.total_floors} fl this week</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+            )}
+
+            <Text style={[s.cardTitle, s.feedSectionTitle, isDark && { color: '#F9FAFB' }]}>Feed</Text>
 
             {feedLoading && (
               <ActivityIndicator size="small" color="#2563EB" style={{ marginVertical: 20 }} />
@@ -712,6 +886,18 @@ export default function SocialScreen({ isDark = false }: { isDark?: boolean }) {
         visible={!!viewingProfileId}
         onClose={() => setViewingProfileId(null)}
       />
+
+      <LeaderboardModal
+        visible={leaderboardModalVisible}
+        onClose={() => setLeaderboardModalVisible(false)}
+        onViewProfile={(id) => { setLeaderboardModalVisible(false); setViewingProfileId(id); }}
+      />
+
+      <NotificationsModal
+        visible={notifVisible}
+        onClose={() => setNotifVisible(false)}
+        isDark={isDark}
+      />
     </View>
   );
 }
@@ -722,6 +908,9 @@ const s = StyleSheet.create({
     backgroundColor: '#F9FAFB',
   },
   header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     paddingTop: 56,
     paddingBottom: 12,
     paddingHorizontal: 20,
@@ -734,6 +923,34 @@ const s = StyleSheet.create({
     fontWeight: '800',
     color: '#111827',
     letterSpacing: -0.5,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+  },
+  bellBtn: {
+    position: 'relative',
+    padding: 4,
+  },
+  bellBadge: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    minWidth: 15,
+    height: 15,
+    borderRadius: 8,
+    backgroundColor: '#EF4444',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 3,
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
+  },
+  bellBadgeText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
   scrollContent: {
     padding: 16,
@@ -804,6 +1021,83 @@ const s = StyleSheet.create({
   lbRankTop: { color: '#F59E0B' },
   lbName: { flex: 1, fontSize: 14, fontWeight: '600', color: '#111827' },
   lbFloors: { fontSize: 13, fontWeight: '700', color: '#10B981' },
+  cardTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  seeAllRow: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  seeAllText: { fontSize: 12, fontWeight: '600', color: '#2563EB' },
+  section: { marginBottom: 16 },
+  feedSectionTitle: { marginBottom: 4, marginTop: 4 },
+  challengesSection: { marginBottom: 16 },
+  challengeCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 12,
+    elevation: 1,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
+  },
+  challengeTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  difficultyPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  difficultyText: { fontSize: 10.5, fontWeight: '800', letterSpacing: 0.4 },
+  rewardChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#FFFBEB',
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  rewardChipText: { fontSize: 11, fontWeight: '700', color: '#B45309' },
+  challengeTitle: { fontSize: 16, fontWeight: '700', color: '#111827', marginBottom: 4 },
+  challengeDesc: { fontSize: 13, color: '#6B7280', lineHeight: 18, marginBottom: 12 },
+  challengeProgressBlock: { marginTop: 2 },
+  challengeTrack: {
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#F3F4F6',
+    overflow: 'hidden',
+  },
+  challengeFill: { height: '100%', borderRadius: 4 },
+  challengeProgressText: { fontSize: 12, fontWeight: '600', color: '#6B7280', marginTop: 6 },
+  joinBtn: {
+    backgroundColor: '#2563EB',
+    borderRadius: 10,
+    paddingVertical: 11,
+    alignItems: 'center',
+  },
+  joinBtnText: { color: '#FFFFFF', fontWeight: '700', fontSize: 13.5 },
+  recRow: { gap: 12, paddingRight: 8 },
+  recCard: {
+    width: 110,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 14,
+    alignItems: 'center',
+    elevation: 1,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
+  },
+  recName: { fontSize: 12.5, fontWeight: '700', color: '#111827', marginTop: 8, textAlign: 'center' },
+  recStat: { fontSize: 11, color: '#10B981', fontWeight: '600', marginTop: 3, textAlign: 'center' },
   emptyFeed: {
     alignItems: 'center',
     paddingVertical: 40,
