@@ -14,7 +14,9 @@ import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../config/supabase';
 import storage from '../utils/storage';
 import MascotAvatar from '../components/MascotAvatar';
-import type { ClimbLog, UserBadge, Profile } from '../types';
+import BadgeDetailModal from '../components/BadgeDetailModal';
+import { computeXP, computeLevelProgress } from '../utils/leveling';
+import type { ClimbLog, UserBadge, Profile, BadgeDef } from '../types';
 import { BADGE_DEFS } from '../types';
 import AuthPrompt from '../components/AuthPrompt';
 
@@ -127,6 +129,7 @@ export default function ProfileScreen({ isDark = false }: { isDark?: boolean }) 
   const [loading, setLoading] = useState(true);
   const [authPromptVisible, setAuthPromptVisible] = useState(false);
   const [showAllClimbs, setShowAllClimbs] = useState(false);
+  const [selectedBadge, setSelectedBadge] = useState<BadgeDef | null>(null);
 
   const loadData = useCallback(async () => {
     // Weekly goal from onboarding, if it was ever set
@@ -231,13 +234,24 @@ export default function ProfileScreen({ isDark = false }: { isDark?: boolean }) 
     await supabase.from('profiles').update({ display_name: handleInput.trim() }).eq('user_id', user.id);
   };
 
-  const earnedBadgeKeys = new Set(badges.map(b => b.badge_key));
+  const handleSetFeatured = async (badgeKey: string) => {
+    if (!user) return;
+    const next = profile?.featured_badge === badgeKey ? null : badgeKey;
+    setProfile((p) => (p ? { ...p, featured_badge: next } : p));
+    await supabase.from('profiles').update({ featured_badge: next }).eq('user_id', user.id);
+  };
+
+  const earnedBadges = new Map(badges.map((b) => [b.badge_key, b.earned_at]));
   const weeklyFloors = dailyFloors.reduce((s, v) => s + v, 0);
   const weeklyClimbTotal = climbHistory.filter((c) => {
     const d = new Date(c.climbedAt);
     return Date.now() - d.getTime() < 7 * 86400000;
   }).length;
   const visibleClimbs = showAllClimbs ? climbHistory : climbHistory.slice(0, RECENT_CLIMBS_COLLAPSED);
+
+  const xp = computeXP(climbStats.floors, badges.length, verifiedCount);
+  const levelInfo = computeLevelProgress(xp);
+  const featuredBadgeDef = profile?.featured_badge ? BADGE_DEFS.find((d) => d.key === profile.featured_badge) : null;
 
   if (authLoading || loading) {
     return (
@@ -271,6 +285,11 @@ export default function ProfileScreen({ isDark = false }: { isDark?: boolean }) 
                 <Ionicons name="sync-outline" size={12} color="#FFF" />
               </View>
             )}
+            {!isAnonymous && (
+              <View style={s.levelChip}>
+                <Text style={s.levelChipText}>Lv {levelInfo.level}</Text>
+              </View>
+            )}
           </TouchableOpacity>
 
           {editingHandle ? (
@@ -293,6 +312,9 @@ export default function ProfileScreen({ isDark = false }: { isDark?: boolean }) 
               onPress={() => !isAnonymous && setEditingHandle(true)}
               disabled={isAnonymous}
             >
+              {featuredBadgeDef && (
+                <Ionicons name={featuredBadgeDef.icon as any} size={17} color="#F59E0B" style={{ marginRight: 6 }} />
+              )}
               <Text style={[s.displayName, isDark && { color: '#F9FAFB' }]}>
                 {isAnonymous ? 'Guest Climber' : (profile?.display_name ?? 'Climber')}
               </Text>
@@ -303,6 +325,16 @@ export default function ProfileScreen({ isDark = false }: { isDark?: boolean }) 
           <Text style={[s.email, isDark && { color: '#9CA3AF' }]}>
             {isAnonymous ? 'Not signed in' : (user?.email ?? '')}
           </Text>
+
+          {!isAnonymous && (
+            <View style={s.xpBlock}>
+              <View style={s.xpTrack}>
+                <View style={[s.xpFill, { width: `${levelInfo.progressPct}%` }]} />
+              </View>
+              <Text style={s.xpLabel}>{levelInfo.xpIntoLevel} / {levelInfo.xpForNextLevel} XP to Level {levelInfo.level + 1}</Text>
+            </View>
+          )}
+
           {verifiedCount > 0 && (
             <View style={s.verifiedBadge}>
               <Ionicons name="checkmark-circle" size={14} color="#10B981" />
@@ -391,13 +423,15 @@ export default function ProfileScreen({ isDark = false }: { isDark?: boolean }) 
           </View>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.badgesRow}>
             {BADGE_DEFS.map((def) => {
-              const earned = earnedBadgeKeys.has(def.key);
+              const earned = earnedBadges.has(def.key);
               // Hidden badges stay a mystery until earned — discovered, not chased.
               const isMystery = def.hidden && !earned;
               return (
-                <View
+                <TouchableOpacity
                   key={def.key}
                   style={[s.badgeItem, !earned && s.badgeLocked, isDark && !earned && { backgroundColor: '#1F2937' }]}
+                  onPress={() => setSelectedBadge(def)}
+                  activeOpacity={0.7}
                 >
                   <Ionicons
                     name={isMystery ? 'help-outline' : (def.icon as any)}
@@ -410,7 +444,7 @@ export default function ProfileScreen({ isDark = false }: { isDark?: boolean }) 
                   >
                     {isMystery ? '???' : def.name}
                   </Text>
-                </View>
+                </TouchableOpacity>
               );
             })}
           </ScrollView>
@@ -489,6 +523,15 @@ export default function ProfileScreen({ isDark = false }: { isDark?: boolean }) 
         onClose={() => setAuthPromptVisible(false)}
         onSuccess={loadData}
       />
+
+      <BadgeDetailModal
+        badge={selectedBadge}
+        earned={!!selectedBadge && earnedBadges.has(selectedBadge.key)}
+        earnedAt={selectedBadge ? earnedBadges.get(selectedBadge.key) : undefined}
+        isFeatured={!!selectedBadge && profile?.featured_badge === selectedBadge.key}
+        onSetFeatured={selectedBadge && earnedBadges.has(selectedBadge.key) ? () => handleSetFeatured(selectedBadge.key) : undefined}
+        onClose={() => setSelectedBadge(null)}
+      />
     </View>
   );
 }
@@ -560,6 +603,44 @@ const s = StyleSheet.create({
     justifyContent: 'center',
     borderWidth: 2,
     borderColor: '#F9FAFB',
+  },
+  levelChip: {
+    position: 'absolute',
+    top: -4,
+    left: -6,
+    backgroundColor: '#7C3AED',
+    borderRadius: 10,
+    paddingVertical: 2,
+    paddingHorizontal: 8,
+    borderWidth: 2,
+    borderColor: '#F9FAFB',
+  },
+  levelChipText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  xpBlock: {
+    width: '70%',
+    marginTop: 10,
+  },
+  xpTrack: {
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#E5E7EB',
+    overflow: 'hidden',
+    marginBottom: 5,
+  },
+  xpFill: {
+    height: '100%',
+    borderRadius: 3,
+    backgroundColor: '#7C3AED',
+  },
+  xpLabel: {
+    fontSize: 10.5,
+    fontWeight: '600',
+    color: '#9CA3AF',
+    textAlign: 'center',
   },
   displayNameRow: {
     flexDirection: 'row',

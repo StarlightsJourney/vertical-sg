@@ -34,6 +34,7 @@ export interface Profile {
   user_id: string;
   display_name: string;
   avatar_idx: number;
+  featured_badge: string | null;
   created_at: string;
   updated_at: string;
 }
