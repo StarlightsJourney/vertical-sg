@@ -44,6 +44,14 @@ interface FeedItem {
   street: string;
   kudosCount: number;
   kudosByMe: boolean;
+  commentCount: number;
+}
+
+interface ClimbComment {
+  comment_id: string;
+  user_id: string;
+  body: string;
+  created_at: string;
 }
 
 interface LeaderboardRow {
@@ -71,6 +79,7 @@ const MOCK_FEED_ITEMS: FeedItem[] = [
     street: 'Toa Payoh Lorong 8',
     kudosCount: 4,
     kudosByMe: false,
+    commentCount: 2,
   },
   {
     climb_id: 'mock-2',
@@ -84,6 +93,7 @@ const MOCK_FEED_ITEMS: FeedItem[] = [
     street: 'Redhill Close',
     kudosCount: 11,
     kudosByMe: true,
+    commentCount: 0,
   },
   {
     climb_id: 'mock-3',
@@ -97,6 +107,7 @@ const MOCK_FEED_ITEMS: FeedItem[] = [
     street: 'Tanjong Pagar Plaza',
     kudosCount: 0,
     kudosByMe: false,
+    commentCount: 0,
   },
 ];
 
@@ -136,6 +147,13 @@ export default function SocialScreen({ isDark = false }: { isDark?: boolean }) {
   const [searching, setSearching] = useState(false);
   const [viewingProfileId, setViewingProfileId] = useState<string | null>(null);
 
+  // Comments on a feed post — only one card's thread expanded at a time
+  const [expandedClimbId, setExpandedClimbId] = useState<string | null>(null);
+  const [climbComments, setClimbComments] = useState<ClimbComment[]>([]);
+  const [commentsLoading, setCommentsLoading] = useState(false);
+  const [newCommentText, setNewCommentText] = useState('');
+  const [commentSubmitting, setCommentSubmitting] = useState(false);
+
   /** Batch-fetch profiles for a set of user ids (merges into the existing map;
    * unknown/mock ids simply won't resolve and fall back to "Climber{id}"). */
   const loadProfilesFor = useCallback(async (userIds: string[]) => {
@@ -168,13 +186,14 @@ export default function SocialScreen({ isDark = false }: { isDark?: boolean }) {
     }
 
     const climbIds = climbs.map((c: any) => c.climb_id);
-    const { data: kudos } = await supabase
-      .from('climb_kudos')
-      .select('climb_id, user_id')
-      .in('climb_id', climbIds);
+    const [{ data: kudos }, { data: comments }] = await Promise.all([
+      supabase.from('climb_kudos').select('climb_id, user_id').in('climb_id', climbIds),
+      supabase.from('climb_comments').select('climb_id').eq('status', 'active').in('climb_id', climbIds),
+    ]);
 
     const items: FeedItem[] = climbs.map((c: any) => {
       const rowsForClimb = (kudos ?? []).filter((k: any) => k.climb_id === c.climb_id);
+      const commentsForClimb = (comments ?? []).filter((cm: any) => cm.climb_id === c.climb_id);
       return {
         climb_id: c.climb_id,
         user_id: c.user_id,
@@ -186,6 +205,7 @@ export default function SocialScreen({ isDark = false }: { isDark?: boolean }) {
         street: c.blocks?.street ?? '',
         kudosCount: rowsForClimb.length,
         kudosByMe: user ? rowsForClimb.some((k: any) => k.user_id === user.id) : false,
+        commentCount: commentsForClimb.length,
       };
     });
 
@@ -257,6 +277,60 @@ export default function SocialScreen({ isDark = false }: { isDark?: boolean }) {
     }
   };
 
+  const handleToggleComments = async (climbId: string) => {
+    if (expandedClimbId === climbId) {
+      setExpandedClimbId(null);
+      return;
+    }
+    setExpandedClimbId(climbId);
+    setNewCommentText('');
+
+    if (climbId.startsWith('mock-')) {
+      setClimbComments([]); // preview items have no real thread to load
+      return;
+    }
+
+    setCommentsLoading(true);
+    const { data } = await supabase
+      .from('climb_comments')
+      .select('*')
+      .eq('climb_id', climbId)
+      .eq('status', 'active')
+      .order('created_at', { ascending: true });
+    setClimbComments((data ?? []) as ClimbComment[]);
+    loadProfilesFor((data ?? []).map((c: any) => c.user_id));
+    setCommentsLoading(false);
+  };
+
+  const handleSubmitComment = async () => {
+    if (isAnonymous) {
+      setAuthPromptVisible(true);
+      return;
+    }
+    if (!user || !expandedClimbId || !newCommentText.trim()) return;
+    if (expandedClimbId.startsWith('mock-')) {
+      Alert.alert('Preview only', 'This is a sample post — comments here won\'t be saved.');
+      return;
+    }
+
+    setCommentSubmitting(true);
+    const { data, error } = await supabase
+      .from('climb_comments')
+      .insert({ climb_id: expandedClimbId, user_id: user.id, body: newCommentText.trim() })
+      .select()
+      .single();
+    setCommentSubmitting(false);
+
+    if (error) {
+      Alert.alert('Error', error.message);
+      return;
+    }
+
+    setClimbComments((prev) => [...prev, data as ClimbComment]);
+    setNewCommentText('');
+    setFeed((prev) => prev.map((f) => f.climb_id === expandedClimbId ? { ...f, commentCount: f.commentCount + 1 } : f));
+  };
+
   const openAddPost = (climbId: string) => {
     if (isAnonymous) {
       setAuthPromptVisible(true);
@@ -296,6 +370,7 @@ export default function SocialScreen({ isDark = false }: { isDark?: boolean }) {
       street: c.blocks?.street ?? '',
       kudosCount: 0,
       kudosByMe: false,
+      commentCount: 0,
     })));
     setPickerLoading(false);
   };
@@ -477,12 +552,55 @@ export default function SocialScreen({ isDark = false }: { isDark?: boolean }) {
                 </Text>
               </TouchableOpacity>
 
+              <TouchableOpacity style={s.kudosBtn} onPress={() => handleToggleComments(item.climb_id)} activeOpacity={0.7}>
+                <Ionicons name="chatbubble-outline" size={17} color="#6B7280" />
+                <Text style={s.kudosText}>{item.commentCount > 0 ? item.commentCount : 'Comment'}</Text>
+              </TouchableOpacity>
+
               {user && item.user_id === user.id && !item.caption && !item.photo_path && (
                 <TouchableOpacity onPress={() => openAddPost(item.climb_id)}>
                   <Text style={s.addPostLink}>Add photo or note</Text>
                 </TouchableOpacity>
               )}
             </View>
+
+            {expandedClimbId === item.climb_id && (
+              <View style={[s.commentsBlock, isDark && { borderTopColor: '#374151' }]}>
+                {commentsLoading ? (
+                  <ActivityIndicator size="small" color="#2563EB" style={{ marginVertical: 12 }} />
+                ) : (
+                  <>
+                    {climbComments.length > 0 ? climbComments.map((cm) => (
+                      <View key={cm.comment_id} style={s.commentRow}>
+                        <Text style={[s.commentUser, isDark && { color: '#F9FAFB' }]}>
+                          {profilesMap[cm.user_id]?.display_name ?? `Climber${cm.user_id.slice(0, 4)}`}
+                        </Text>
+                        <Text style={[s.commentBody, isDark && { color: '#D1D5DB' }]}>{cm.body}</Text>
+                      </View>
+                    )) : (
+                      <Text style={s.emptyFeedText}>No comments yet.</Text>
+                    )}
+                    <View style={s.commentInputRow}>
+                      <TextInput
+                        style={[s.commentInput, isDark && { backgroundColor: '#111827', color: '#F9FAFB' }]}
+                        placeholder="Write a comment..."
+                        placeholderTextColor="#9CA3AF"
+                        value={newCommentText}
+                        onChangeText={setNewCommentText}
+                        maxLength={280}
+                      />
+                      <TouchableOpacity
+                        style={[s.commentSendBtn, (!newCommentText.trim() || commentSubmitting) && { opacity: 0.5 }]}
+                        onPress={handleSubmitComment}
+                        disabled={!newCommentText.trim() || commentSubmitting}
+                      >
+                        {commentSubmitting ? <ActivityIndicator size="small" color="#FFF" /> : <Ionicons name="send" size={14} color="#FFF" />}
+                      </TouchableOpacity>
+                    </View>
+                  </>
+                )}
+              </View>
+            )}
           </View>
         )}
         contentContainerStyle={s.scrollContent}
@@ -731,6 +849,24 @@ const s = StyleSheet.create({
   kudosBtn: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   kudosText: { fontSize: 13, fontWeight: '600', color: '#6B7280' },
   addPostLink: { fontSize: 12, fontWeight: '600', color: '#2563EB' },
+  commentsBlock: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#E5E7EB',
+  },
+  commentRow: { marginBottom: 8 },
+  commentUser: { fontSize: 12.5, fontWeight: '700', color: '#111827' },
+  commentBody: { fontSize: 13, color: '#374151', marginTop: 1, lineHeight: 18 },
+  commentInputRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6 },
+  commentInput: {
+    flex: 1, backgroundColor: '#F3F4F6', borderRadius: 18, paddingHorizontal: 14, paddingVertical: 9,
+    fontSize: 13, color: '#111827',
+  },
+  commentSendBtn: {
+    width: 32, height: 32, borderRadius: 16, backgroundColor: '#2563EB',
+    alignItems: 'center', justifyContent: 'center',
+  },
   fab: {
     position: 'absolute',
     right: 20,
