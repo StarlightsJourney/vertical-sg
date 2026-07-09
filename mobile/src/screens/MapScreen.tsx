@@ -10,6 +10,7 @@ import {
   Alert,
   ScrollView,
   Switch,
+  Animated,
 } from 'react-native';
 import {
   Map as MapView,
@@ -89,6 +90,32 @@ function tierIndex(storeys: number): number {
   if (storeys <= 30) return 2;
   if (storeys <= 39) return 3;
   return 4;
+}
+
+/** Slow-pulsing amber border, wrapped around a "Popular" suggested-climb card. */
+function PulsingBorder({ children }: { children: React.ReactNode }) {
+  const pulse = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1, duration: 1100, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 0, duration: 1100, useNativeDriver: true }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulse]);
+
+  // borderColor can't animate on the native driver — animate opacity of a
+  // solid-amber border overlay instead, which can.
+  const opacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.35, 1] });
+  return (
+    <View style={mStyles.pulsingWrap}>
+      {children}
+      <Animated.View pointerEvents="none" style={[mStyles.pulsingBorder, { opacity }]} />
+    </View>
+  );
 }
 
 export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) {
@@ -262,17 +289,39 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
       if (usedTiers.has(tierIndex(cand.block.storeys))) continue;
       usedTiers.add(tierIndex(cand.block.storeys));
       picked.push(cand);
-      if (picked.length === 3) break;
+      if (picked.length === 5) break;
     }
-    if (picked.length < 3) {
+    if (picked.length < 5) {
       for (const cand of withDist) {
-        if (picked.length === 3) break;
+        if (picked.length === 5) break;
         if (picked.some((p) => p.block.block_id === cand.block.block_id)) continue;
         picked.push(cand);
       }
     }
     return picked;
   }, [blocks, location.loading, location.latitude, location.longitude]);
+
+  // Popularity per recommended block — distinct climbers, fetched only for the
+  // handful of blocks currently shown in the banner. 0 climbers → "New";
+  // several distinct people → "Popular" (an animated border, not just text,
+  // since a plain badge blended into the rest of the card's chrome).
+  const [recPopularity, setRecPopularity] = useState<Record<string, number>>({});
+  const recIds = useMemo(() => recommendations.map((r) => r.block.block_id).sort().join(','), [recommendations]);
+
+  useEffect(() => {
+    if (recommendations.length === 0) { setRecPopularity({}); return; }
+    const ids = recommendations.map((r) => r.block.block_id);
+    supabase.from('climbs').select('block_id, user_id').in('block_id', ids).then(({ data }) => {
+      if (!data) return;
+      const climbersByBlock: Record<string, Set<string>> = {};
+      for (const row of data as { block_id: string; user_id: string }[]) {
+        (climbersByBlock[row.block_id] ??= new Set()).add(row.user_id);
+      }
+      const counts: Record<string, number> = {};
+      for (const id of ids) counts[id] = climbersByBlock[id]?.size ?? 0;
+      setRecPopularity(counts);
+    });
+  }, [recIds]);
 
   // Fetch blocks within visible map bounds
   const fetchBounds = useCallback(
@@ -742,24 +791,43 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
           style={styles.recBanner}
           contentContainerStyle={styles.recBannerContent}
         >
-          {recommendations.map(({ block, dist }) => (
-            <TouchableOpacity
-              key={block.block_id}
-              style={[styles.recCard, { backgroundColor: isDark ? 'rgba(30,30,30,0.95)' : 'rgba(255,255,255,0.95)' }]}
-              onPress={() => handleSelectSearchBlock(block)}
-              activeOpacity={0.85}
-            >
-              <View style={[styles.recCardDot, { backgroundColor: HEIGHT_TIERS[tierIndex(block.storeys)].color }]} />
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.recCardTitle, { color: isDark ? '#F9FAFB' : '#111827' }]} numberOfLines={1}>
-                  Blk {block.blk_no} {block.street}
-                </Text>
-                <Text style={styles.recCardMeta}>
-                  {block.storeys} storeys · {dist < 1 ? `${Math.round(dist * 1000)}m` : `${dist.toFixed(1)}km`} away
-                </Text>
-              </View>
-            </TouchableOpacity>
-          ))}
+          {recommendations.map(({ block, dist }) => {
+            const popularity = recPopularity[block.block_id] ?? 0;
+            const isPopular = popularity >= 3;
+            const isNew = block.block_id in recPopularity && popularity === 0;
+
+            const card = (
+              <TouchableOpacity
+                key={block.block_id}
+                style={[styles.recCard, { backgroundColor: isDark ? '#1F2937' : '#FFFFFF' }]}
+                onPress={() => handleSelectSearchBlock(block)}
+                activeOpacity={0.85}
+              >
+                {isNew && (
+                  <View style={styles.recBadgeNew}>
+                    <Text style={styles.recBadgeNewText}>NEW</Text>
+                  </View>
+                )}
+                {isPopular && (
+                  <View style={styles.recBadgePopular}>
+                    <Ionicons name="flame" size={11} color="#FFFFFF" />
+                    <Text style={styles.recBadgePopularText}>Popular</Text>
+                  </View>
+                )}
+                <View style={[styles.recCardDot, { backgroundColor: HEIGHT_TIERS[tierIndex(block.storeys)].color }]} />
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.recCardTitle, { color: isDark ? '#F9FAFB' : '#111827' }]} numberOfLines={1}>
+                    Blk {block.blk_no} {block.street}
+                  </Text>
+                  <Text style={styles.recCardMeta}>
+                    {block.storeys} storeys · {dist < 1 ? `${Math.round(dist * 1000)}m` : `${dist.toFixed(1)}km`} away
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            );
+
+            return isPopular ? <PulsingBorder key={block.block_id}>{card}</PulsingBorder> : card;
+          })}
         </ScrollView>
       )}
 
@@ -1141,7 +1209,8 @@ const styles = StyleSheet.create({
   },
   recBannerContent: {
     paddingHorizontal: 16,
-    gap: 10,
+    paddingTop: 16, // room for the NEW/Popular badges overhanging the card's top edge
+    gap: 12,
   },
   recCard: {
     flexDirection: 'row',
@@ -1150,11 +1219,45 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     padding: 12,
     gap: 10,
-    elevation: 6,
+    elevation: 2,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+  },
+  recBadgeNew: {
+    position: 'absolute',
+    top: -9,
+    left: 10,
+    backgroundColor: '#10B981',
+    borderRadius: 8,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    elevation: 3,
+  },
+  recBadgeNewText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 0.4,
+  },
+  recBadgePopular: {
+    position: 'absolute',
+    top: -9,
+    right: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#F59E0B',
+    borderRadius: 8,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    elevation: 3,
+  },
+  recBadgePopularText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#FFFFFF',
   },
   recCardDot: {
     width: 10,
@@ -1377,6 +1480,21 @@ const styles = StyleSheet.create({
 
 // Shared marker styles — small fixed size, no zoom deps
 const mStyles = StyleSheet.create({
+  // Pulsing "Popular" border around a suggested-climb card
+  pulsingWrap: {
+    position: 'relative',
+  },
+  pulsingBorder: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    borderRadius: 14,
+    borderWidth: 2.5,
+    borderColor: '#F59E0B',
+  },
+
   // Notification bell, inline at the right edge of the top search bar
   notifBellInline: {
     position: 'relative',
