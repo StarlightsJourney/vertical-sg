@@ -302,9 +302,16 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
   }, [user]);
 
   const loadChallenges = useCallback(async () => {
-    // Only the 3 weekly challenges show here — the monthly "SG Special" lives
-    // on the Groups tab alongside clubs/events.
-    const { data: challengeData } = await supabase.from('challenges').select('*').eq('is_active', true).eq('period', 'weekly');
+    // Only the standard weekly challenges show here — the monthly challenge,
+    // the insane-tier Everest Gauntlet, and limited-time dated challenges are
+    // reserved for "Explore All Challenges" on the Groups tab.
+    const { data: challengeData } = await supabase
+      .from('challenges')
+      .select('*')
+      .eq('is_active', true)
+      .eq('period', 'weekly')
+      .neq('difficulty', 'insane')
+      .is('starts_at', null);
     if (challengeData) setChallenges(challengeData as Challenge[]);
 
     if (!user) return;

@@ -47,35 +47,59 @@ const EVENTS: EventItem[] = [
 
 type Tab = 'challenges' | 'clubs' | 'events';
 
+function daysUntil(iso: string): number {
+  return Math.max(0, Math.ceil((new Date(iso).getTime() - Date.now()) / 86400000));
+}
+
 export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
   const { user, isAnonymous } = useAuth();
   const [tab, setTab] = useState<Tab>('challenges');
   const [authPromptVisible, setAuthPromptVisible] = useState(false);
 
   const [weeklyChallenges, setWeeklyChallenges] = useState<Challenge[]>([]);
-  const [monthlyChallenge, setMonthlyChallenge] = useState<Challenge | null>(null);
+  const [monthlyChallenges, setMonthlyChallenges] = useState<Challenge[]>([]);
+  const [limitedTimeChallenges, setLimitedTimeChallenges] = useState<Challenge[]>([]);
   const [myChallengeIds, setMyChallengeIds] = useState<Set<string>>(new Set());
   const [weeklyFloors, setWeeklyFloors] = useState(0);
   const [monthlyFloors, setMonthlyFloors] = useState(0);
+  const [limitedTimeProgress, setLimitedTimeProgress] = useState<Record<string, number>>({});
   const [selectedChallenge, setSelectedChallenge] = useState<Challenge | null>(null);
 
   const loadChallenges = useCallback(async () => {
     const { data } = await supabase.from('challenges').select('*').eq('is_active', true);
+    let all: Challenge[] = [];
     if (data) {
-      const all = data as Challenge[];
-      setWeeklyChallenges(all.filter((c) => c.period === 'weekly'));
-      setMonthlyChallenge(all.find((c) => c.period === 'monthly') ?? null);
+      all = data as Challenge[];
+      const now = new Date();
+      setLimitedTimeChallenges(
+        all.filter((c) => c.starts_at && c.ends_at && new Date(c.ends_at) >= now)
+          .sort((a, b) => new Date(a.ends_at!).getTime() - new Date(b.ends_at!).getTime()),
+      );
+      setMonthlyChallenges(all.filter((c) => c.period === 'monthly' && !c.starts_at));
+      setWeeklyChallenges(all.filter((c) => c.period === 'weekly' && !c.starts_at));
     }
 
     if (!user) return;
-    const [{ data: joined }, { data: weeklyClimbs }, { data: monthlyClimbs }] = await Promise.all([
+    const [{ data: joined }, { data: climbs }] = await Promise.all([
       supabase.from('challenge_participants').select('challenge_id').eq('user_id', user.id),
-      supabase.from('climbs').select('floors_climbed').eq('user_id', user.id).gte('created_at', new Date(Date.now() - 7 * 86400000).toISOString()),
-      supabase.from('climbs').select('floors_climbed').eq('user_id', user.id).gte('created_at', new Date(Date.now() - 30 * 86400000).toISOString()),
+      supabase.from('climbs').select('floors_climbed, created_at').eq('user_id', user.id).gte('created_at', new Date(Date.now() - 60 * 86400000).toISOString()),
     ]);
     if (joined) setMyChallengeIds(new Set(joined.map((j: any) => j.challenge_id)));
-    if (weeklyClimbs) setWeeklyFloors(weeklyClimbs.reduce((s, c: any) => s + c.floors_climbed, 0));
-    if (monthlyClimbs) setMonthlyFloors(monthlyClimbs.reduce((s, c: any) => s + c.floors_climbed, 0));
+    if (climbs) {
+      const now = Date.now();
+      setWeeklyFloors(climbs.filter((c: any) => now - new Date(c.created_at).getTime() < 7 * 86400000).reduce((s, c: any) => s + c.floors_climbed, 0));
+      setMonthlyFloors(climbs.filter((c: any) => now - new Date(c.created_at).getTime() < 30 * 86400000).reduce((s, c: any) => s + c.floors_climbed, 0));
+
+      const ltProgress: Record<string, number> = {};
+      for (const ch of all.filter((c) => c.starts_at && c.ends_at)) {
+        const start = new Date(ch.starts_at!).getTime();
+        const end = new Date(ch.ends_at!).getTime();
+        ltProgress[ch.challenge_id] = climbs
+          .filter((c: any) => { const t = new Date(c.created_at).getTime(); return t >= start && t <= end; })
+          .reduce((s, c: any) => s + c.floors_climbed, 0);
+      }
+      setLimitedTimeProgress(ltProgress);
+    }
   }, [user]);
 
   useEffect(() => { loadChallenges(); }, [loadChallenges]);
@@ -87,11 +111,17 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
     await supabase.from('challenge_participants').insert({ challenge_id: challengeId, user_id: user.id });
   };
 
-  const renderChallengeCard = (ch: Challenge, progressFloors: number) => {
+  const progressFor = (ch: Challenge): number => {
+    if (ch.starts_at && ch.ends_at) return limitedTimeProgress[ch.challenge_id] ?? 0;
+    return ch.period === 'monthly' ? monthlyFloors : weeklyFloors;
+  };
+
+  const renderChallengeCard = (ch: Challenge) => {
+    const progressFloors = progressFor(ch);
     const joined = myChallengeIds.has(ch.challenge_id);
     const pct = Math.min(100, Math.round((progressFloors / ch.target_floors) * 100));
     const completed = joined && pct >= 100;
-    const isMonthly = ch.period === 'monthly';
+    const isInsane = ch.difficulty === 'insane';
     const color = DIFFICULTY_COLOR[ch.difficulty];
     return (
       <TouchableOpacity
@@ -99,15 +129,15 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
         style={[
           s.challengeCard,
           isDark && { backgroundColor: '#1F2937' },
-          isMonthly && s.monthlyCard,
-          isMonthly && isDark && { backgroundColor: '#2E1065' },
+          isInsane && s.insaneCard,
+          isInsane && isDark && { backgroundColor: '#2E1065' },
         ]}
         onPress={() => setSelectedChallenge(ch)}
         activeOpacity={0.85}
       >
         <View style={s.challengeTopRow}>
-          <View style={[s.bigBadge, { backgroundColor: isMonthly ? 'rgba(255,255,255,0.18)' : color + '1F' }]}>
-            <Ionicons name={ch.reward_icon as any} size={34} color={isMonthly ? '#FFFFFF' : color} />
+          <View style={[s.bigBadge, { backgroundColor: isInsane ? 'rgba(255,255,255,0.18)' : color + '1F' }]}>
+            <Ionicons name={ch.reward_icon as any} size={34} color={isInsane ? '#FFFFFF' : color} />
             {completed && (
               <View style={s.bigBadgeCheck}>
                 <Ionicons name="checkmark-circle" size={18} color="#10B981" />
@@ -115,31 +145,39 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
             )}
           </View>
           <View style={{ flex: 1 }}>
-            <View style={[s.difficultyPill, { backgroundColor: isMonthly ? 'rgba(255,255,255,0.18)' : color + '1A', alignSelf: 'flex-start' }]}>
-              <Text style={[s.difficultyText, { color: isMonthly ? '#FFFFFF' : color }]}>{ch.difficulty.toUpperCase()}</Text>
+            <View style={s.badgeRow}>
+              <View style={[s.difficultyPill, { backgroundColor: isInsane ? 'rgba(255,255,255,0.18)' : color + '1A', alignSelf: 'flex-start' }]}>
+                <Text style={[s.difficultyText, { color: isInsane ? '#FFFFFF' : color }]}>{ch.difficulty.toUpperCase()}</Text>
+              </View>
+              {ch.ends_at && (
+                <View style={s.countdownPill}>
+                  <Ionicons name="time-outline" size={11} color="#EF4444" />
+                  <Text style={s.countdownPillText}>{daysUntil(ch.ends_at)}d left</Text>
+                </View>
+              )}
             </View>
-            <Text style={[s.rewardLabelBig, isMonthly && { color: '#FFFFFF' }, !isMonthly && { color }]}>{ch.reward_label}</Text>
+            <Text style={[s.rewardLabelBig, isInsane && { color: '#FFFFFF' }, !isInsane && { color }]}>{ch.reward_label}</Text>
           </View>
         </View>
-        <Text style={[s.challengeTitle, { marginBottom: 4 }, isDark && { color: '#F9FAFB' }, isMonthly && { color: '#FFFFFF' }]}>{ch.title}</Text>
-        <Text style={[s.challengeCardDesc, isDark && { color: '#9CA3AF' }, isMonthly && { color: '#DDD6FE' }]} numberOfLines={2}>{ch.description}</Text>
+        <Text style={[s.challengeTitle, { marginBottom: 4 }, isDark && { color: '#F9FAFB' }, isInsane && { color: '#FFFFFF' }]}>{ch.title}</Text>
+        <Text style={[s.challengeCardDesc, isDark && { color: '#9CA3AF' }, isInsane && { color: '#DDD6FE' }]} numberOfLines={2}>{ch.description}</Text>
 
         {joined && (
           <View style={{ marginTop: 2 }}>
             <View style={s.challengeTrack}>
-              <View style={[s.challengeFill, { width: `${pct}%`, backgroundColor: isMonthly ? '#FFFFFF' : color }]} />
+              <View style={[s.challengeFill, { width: `${pct}%`, backgroundColor: isInsane ? '#FFFFFF' : color }]} />
             </View>
-            <Text style={[s.challengeProgressText, isMonthly && { color: '#DDD6FE' }]}>
+            <Text style={[s.challengeProgressText, isInsane && { color: '#DDD6FE' }]}>
               {completed ? 'Completed! 🎉' : `${progressFloors} / ${ch.target_floors} fl`}
             </Text>
           </View>
         )}
         {!joined && (
           <TouchableOpacity
-            style={[s.joinBtn, isMonthly && { backgroundColor: '#FFFFFF' }]}
+            style={[s.joinBtn, isInsane && { backgroundColor: '#FFFFFF' }]}
             onPress={() => handleJoin(ch.challenge_id)}
           >
-            <Text style={[s.joinBtnText, isMonthly && { color: '#7C3AED' }]}>Join Challenge</Text>
+            <Text style={[s.joinBtnText, isInsane && { color: '#7C3AED' }]}>Join Challenge</Text>
           </TouchableOpacity>
         )}
       </TouchableOpacity>
@@ -169,8 +207,24 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
       <ScrollView contentContainerStyle={s.scrollContent} showsVerticalScrollIndicator={false}>
         {tab === 'challenges' && (
           <>
-            {monthlyChallenge && renderChallengeCard(monthlyChallenge, monthlyFloors)}
-            {weeklyChallenges.map((ch) => renderChallengeCard(ch, weeklyFloors))}
+            {limitedTimeChallenges.length > 0 && (
+              <View style={s.groupSection}>
+                <Text style={[s.groupSectionTitle, isDark && { color: '#F9FAFB' }]}>Limited Time</Text>
+                {limitedTimeChallenges.map((ch) => renderChallengeCard(ch))}
+              </View>
+            )}
+            {monthlyChallenges.length > 0 && (
+              <View style={s.groupSection}>
+                <Text style={[s.groupSectionTitle, isDark && { color: '#F9FAFB' }]}>Monthly Challenge</Text>
+                {monthlyChallenges.map((ch) => renderChallengeCard(ch))}
+              </View>
+            )}
+            {weeklyChallenges.length > 0 && (
+              <View style={s.groupSection}>
+                <Text style={[s.groupSectionTitle, isDark && { color: '#F9FAFB' }]}>Weekly Challenges</Text>
+                {weeklyChallenges.map((ch) => renderChallengeCard(ch))}
+              </View>
+            )}
           </>
         )}
 
@@ -238,7 +292,7 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
         visible={!!selectedChallenge}
         onClose={() => setSelectedChallenge(null)}
         joined={!!selectedChallenge && myChallengeIds.has(selectedChallenge.challenge_id)}
-        progressFloors={selectedChallenge?.period === 'monthly' ? monthlyFloors : weeklyFloors}
+        progressFloors={selectedChallenge ? progressFor(selectedChallenge) : 0}
         onJoin={() => selectedChallenge && handleJoin(selectedChallenge.challenge_id)}
         isDark={isDark}
       />
@@ -306,8 +360,19 @@ const s = StyleSheet.create({
     shadowOpacity: 0.06,
     shadowRadius: 6,
   },
-  monthlyCard: { backgroundColor: '#7C3AED' },
+  insaneCard: { backgroundColor: '#7C3AED' },
   challengeTopRow: { flexDirection: 'row', alignItems: 'center', gap: 14, marginBottom: 12 },
+  badgeRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
+  countdownPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#FEE2E2',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  countdownPillText: { fontSize: 10, fontWeight: '800', color: '#EF4444' },
   bigBadge: {
     width: 64,
     height: 64,

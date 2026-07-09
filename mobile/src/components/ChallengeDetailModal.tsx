@@ -14,12 +14,17 @@ interface Props {
 
 const DIFFICULTY_COLOR: Record<string, string> = { easy: '#10B981', medium: '#F59E0B', hard: '#EF4444', insane: '#7C3AED' };
 
+function daysUntil(iso: string): number {
+  return Math.max(0, Math.ceil((new Date(iso).getTime() - Date.now()) / 86400000));
+}
+
 export default function ChallengeDetailModal({ challenge, visible, onClose, joined, progressFloors, onJoin, isDark = false }: Props) {
   if (!challenge) return null;
 
   const color = DIFFICULTY_COLOR[challenge.difficulty] ?? '#6B7280';
   const pct = Math.min(100, Math.round((progressFloors / challenge.target_floors) * 100));
   const completed = joined && pct >= 100;
+  const isLimitedTime = !!(challenge.starts_at && challenge.ends_at);
 
   const handleShare = () => {
     Share.share({
@@ -60,11 +65,17 @@ export default function ChallengeDetailModal({ challenge, visible, onClose, join
               <View style={[st.pill, { backgroundColor: color + '1A' }]}>
                 <Text style={[st.pillText, { color }]}>{challenge.difficulty.toUpperCase()}</Text>
               </View>
-              <View style={[st.pill, isDark && { backgroundColor: '#374151' }]}>
-                <Text style={[st.pillText, { color: isDark ? '#D1D5DB' : '#6B7280' }]}>
-                  {challenge.period === 'monthly' ? 'MONTHLY' : 'WEEKLY'}
-                </Text>
-              </View>
+              {isLimitedTime ? (
+                <View style={[st.pill, { backgroundColor: '#FEE2E2' }]}>
+                  <Text style={[st.pillText, { color: '#EF4444' }]}>{daysUntil(challenge.ends_at!)}D LEFT</Text>
+                </View>
+              ) : (
+                <View style={[st.pill, isDark && { backgroundColor: '#374151' }]}>
+                  <Text style={[st.pillText, { color: isDark ? '#D1D5DB' : '#6B7280' }]}>
+                    {challenge.period === 'monthly' ? 'MONTHLY' : 'WEEKLY'}
+                  </Text>
+                </View>
+              )}
               <View style={[st.pill, isDark && { backgroundColor: '#374151' }]}>
                 <Text style={[st.pillText, { color: isDark ? '#D1D5DB' : '#6B7280' }]}>{challenge.target_floors} FLOORS</Text>
               </View>
@@ -72,6 +83,15 @@ export default function ChallengeDetailModal({ challenge, visible, onClose, join
 
             <Text style={[st.sectionLabel, isDark && { color: '#9CA3AF' }]}>Challenge Details</Text>
             <Text style={[st.description, isDark && { color: '#D1D5DB' }]}>{challenge.description}</Text>
+
+            {challenge.badge_key && (
+              <View style={[st.rewardNote, isDark && { backgroundColor: '#1F2937' }]}>
+                <Ionicons name="ribbon-outline" size={16} color="#F59E0B" />
+                <Text style={[st.rewardNoteText, isDark && { color: '#D1D5DB' }]}>
+                  Completing this awards the <Text style={{ fontWeight: '800' }}>{challenge.reward_label}</Text> — a real badge on your profile.
+                </Text>
+              </View>
+            )}
 
             {joined && (
               <View style={st.progressBlock}>
@@ -137,7 +157,16 @@ const st = StyleSheet.create({
     letterSpacing: 0.5,
     marginBottom: 8,
   },
-  description: { fontSize: 14.5, color: '#374151', lineHeight: 21, marginBottom: 24 },
+  description: { fontSize: 14.5, color: '#374151', lineHeight: 21, marginBottom: 16 },
+  rewardNote: {
+    flexDirection: 'row',
+    gap: 10,
+    backgroundColor: '#FFFBEB',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 24,
+  },
+  rewardNoteText: { flex: 1, fontSize: 12.5, color: '#374151', lineHeight: 18 },
   progressBlock: { marginBottom: 20 },
   progressTrack: { height: 10, borderRadius: 5, backgroundColor: '#F3F4F6', overflow: 'hidden' },
   progressFill: { height: '100%', borderRadius: 5 },
