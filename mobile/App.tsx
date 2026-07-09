@@ -169,7 +169,7 @@ export default function App() {
           )}
           {visitedTabs.has('profile') && (
             <View style={[styles.screen, activeTab !== 'profile' && styles.hidden]}>
-              <ProfileScreen isDark={isDark} themeMode={themeMode} onSetThemeMode={handleSetThemeMode} />
+              <ProfileScreen isDark={isDark} themeMode={themeMode} onSetThemeMode={handleSetThemeMode} isActive={activeTab === 'profile'} />
             </View>
           )}
 

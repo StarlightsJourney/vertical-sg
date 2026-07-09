@@ -135,9 +135,10 @@ interface ProfileScreenProps {
   isDark?: boolean;
   themeMode?: 'light' | 'dark' | 'auto';
   onSetThemeMode?: (mode: 'light' | 'dark' | 'auto') => void;
+  isActive?: boolean;
 }
 
-export default function ProfileScreen({ isDark = false, themeMode = 'auto', onSetThemeMode }: ProfileScreenProps) {
+export default function ProfileScreen({ isDark = false, themeMode = 'auto', onSetThemeMode, isActive }: ProfileScreenProps) {
   const { user, isAnonymous, loading: authLoading } = useAuth();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [editingHandle, setEditingHandle] = useState(false);
@@ -178,24 +179,20 @@ export default function ProfileScreen({ isDark = false, themeMode = 'auto', onSe
     }
 
     try {
-      // Fetch own profile (handle + avatar skin)
-      const { data: profileData } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('user_id', user.id)
-        .maybeSingle();
+      // All four are independent — firing them in parallel instead of one
+      // after another cut the initial load (and every tab-refocus reload)
+      // from 4 sequential round trips down to the slowest single one.
+      const [{ data: profileData }, { data: climbs }, { data: badgeData }, { count }] = await Promise.all([
+        supabase.from('profiles').select('*').eq('user_id', user.id).maybeSingle(),
+        supabase.from('climbs').select('*, blocks(blk_no, street)').eq('user_id', user.id).order('created_at', { ascending: false }).limit(500),
+        supabase.from('user_badges').select('*').eq('user_id', user.id),
+        supabase.from('height_verifications').select('*', { count: 'exact', head: true }).eq('user_id', user.id).eq('status', 'active'),
+      ]);
+
       if (profileData) {
         setProfile(profileData as Profile);
         setHandleInput(profileData.display_name);
       }
-
-      // Fetch climbs from Supabase — joined to blocks for the real address
-      const { data: climbs } = await supabase
-        .from('climbs')
-        .select('*, blocks(blk_no, street)')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false })
-        .limit(500);
 
       if (climbs) {
         // Approximate the building's storey count (for tier coloring) by
@@ -223,19 +220,7 @@ export default function ProfileScreen({ isDark = false, themeMode = 'auto', onSe
         setDailyFloors(computeDailyFloors(climbs.map((c: any) => ({ climbedAt: c.created_at, floors: c.floors_climbed }))));
       }
 
-      // Fetch badges
-      const { data: badgeData } = await supabase
-        .from('user_badges')
-        .select('*')
-        .eq('user_id', user.id);
       if (badgeData) setBadges(badgeData as UserBadge[]);
-
-      // Fetch verification count
-      const { count } = await supabase
-        .from('height_verifications')
-        .select('*', { count: 'exact', head: true })
-        .eq('user_id', user.id)
-        .eq('status', 'active');
       setVerifiedCount(count ?? 0);
     } catch (err) {
       console.error('Error loading profile data:', err);
@@ -247,6 +232,15 @@ export default function ProfileScreen({ isDark = false, themeMode = 'auto', onSe
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // Tabs stay mounted (hidden, not unmounted) after the first visit, so
+  // without this a climb logged on Map wouldn't show up here until the app
+  // fully reloaded — refetch every time this tab becomes the active one.
+  // loadData doesn't flip `loading` back to true, so this is a silent
+  // background refresh, not a spinner flash.
+  useEffect(() => {
+    if (isActive) loadData();
+  }, [isActive, loadData]);
 
   const handleChangeSkin = async (idx: number) => {
     if (!user || !profile) return;
@@ -510,7 +504,7 @@ export default function ProfileScreen({ isDark = false, themeMode = 'auto', onSe
                   return (
                     <TouchableOpacity
                       key={def.key}
-                      style={[s.badgeItem, !earned && s.badgeLocked, isDark && !earned && { backgroundColor: '#1F2937' }]}
+                      style={[s.badgeItem, !earned && s.badgeLocked, isDark && { backgroundColor: '#1F2937' }]}
                       onPress={() => setSelectedBadge(def)}
                       activeOpacity={0.7}
                     >
@@ -520,7 +514,11 @@ export default function ProfileScreen({ isDark = false, themeMode = 'auto', onSe
                         color={earned ? '#60A5FA' : (isDark ? '#4B5563' : '#D1D5DB')}
                       />
                       <Text
-                        style={[s.badgeName, isDark && { color: '#D1D5DB' }, !earned && s.badgeNameLocked]}
+                        style={[
+                          s.badgeName,
+                          earned && isDark && { color: '#F9FAFB' },
+                          !earned && (isDark ? { color: '#6B7280' } : s.badgeNameLocked),
+                        ]}
                         numberOfLines={1}
                       >
                         {isMystery ? '???' : def.name}

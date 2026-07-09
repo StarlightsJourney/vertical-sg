@@ -10,6 +10,7 @@ interface Props {
   visible: boolean;
   onClose: () => void;
   onViewProfile: (userId: string) => void;
+  isDark?: boolean;
 }
 
 interface Row {
@@ -18,7 +19,7 @@ interface Row {
   total_climbs: number;
 }
 
-export default function LeaderboardModal({ visible, onClose, onViewProfile }: Props) {
+export default function LeaderboardModal({ visible, onClose, onViewProfile, isDark = false }: Props) {
   const { user } = useAuth();
   const [scope, setScope] = useState<'public' | 'friends'>('public');
   const [rows, setRows] = useState<Row[]>([]);
@@ -58,22 +59,22 @@ export default function LeaderboardModal({ visible, onClose, onViewProfile }: Pr
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <View style={styles.overlay}>
         <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={onClose} />
-        <View style={styles.sheet}>
-          <View style={styles.handle} />
+        <View style={[styles.sheet, isDark && { backgroundColor: '#1F2937' }]}>
+          <View style={[styles.handle, isDark && { backgroundColor: '#4B5563' }]} />
           <View style={styles.header}>
-            <Text style={styles.title}>This Week's Leaderboard</Text>
-            <View style={styles.toggle}>
+            <Text style={[styles.title, isDark && { color: '#F9FAFB' }]}>This Week's Leaderboard</Text>
+            <View style={[styles.toggle, isDark && { backgroundColor: '#111827' }]}>
               <TouchableOpacity
-                style={[styles.toggleBtn, scope === 'public' && styles.toggleBtnActive]}
+                style={[styles.toggleBtn, scope === 'public' && styles.toggleBtnActive, scope === 'public' && isDark && { backgroundColor: '#374151' }]}
                 onPress={() => setScope('public')}
               >
-                <Text style={[styles.toggleText, scope === 'public' && styles.toggleTextActive]}>Public</Text>
+                <Text style={[styles.toggleText, scope === 'public' && styles.toggleTextActive, isDark && { color: scope === 'public' ? '#F9FAFB' : '#9CA3AF' }]}>Public</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.toggleBtn, scope === 'friends' && styles.toggleBtnActive]}
+                style={[styles.toggleBtn, scope === 'friends' && styles.toggleBtnActive, scope === 'friends' && isDark && { backgroundColor: '#374151' }]}
                 onPress={() => setScope('friends')}
               >
-                <Text style={[styles.toggleText, scope === 'friends' && styles.toggleTextActive]}>Friends</Text>
+                <Text style={[styles.toggleText, scope === 'friends' && styles.toggleTextActive, isDark && { color: scope === 'friends' ? '#F9FAFB' : '#9CA3AF' }]}>Friends</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -96,13 +97,13 @@ export default function LeaderboardModal({ visible, onClose, onViewProfile }: Pr
                 const isMe = user?.id === item.user_id;
                 return (
                   <TouchableOpacity
-                    style={[styles.row, isMe && styles.rowMe]}
+                    style={[styles.row, isMe && styles.rowMe, isMe && isDark && { backgroundColor: 'rgba(37,99,235,0.22)' }]}
                     onPress={() => !isMe && onViewProfile(item.user_id)}
                     disabled={isMe}
                   >
                     <Text style={[styles.rank, index < 3 && styles.rankTop]}>{index + 1}</Text>
                     <MascotAvatar skinIdx={profilesMap[item.user_id]?.avatar_idx ?? 0} size={32} />
-                    <Text style={styles.name}>{isMe ? 'You' : (profilesMap[item.user_id]?.display_name ?? `Climber${item.user_id.slice(0, 4)}`)}</Text>
+                    <Text style={[styles.name, isDark && { color: '#F9FAFB' }]}>{isMe ? 'You' : (profilesMap[item.user_id]?.display_name ?? `Climber${item.user_id.slice(0, 4)}`)}</Text>
                     <Text style={styles.floors}>{item.total_floors} fl</Text>
                   </TouchableOpacity>
                 );

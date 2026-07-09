@@ -630,7 +630,7 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
                   return (
                     <TouchableOpacity
                       key={row.user_id}
-                      style={[s.lbRow, isMe && s.lbRowMe]}
+                      style={[s.lbRow, isMe && s.lbRowMe, isMe && isDark && { backgroundColor: 'rgba(37,99,235,0.22)' }]}
                       onPress={() => !isMe && setViewingProfileId(row.user_id)}
                       disabled={!!isMe}
                     >
@@ -979,6 +979,7 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
         visible={leaderboardModalVisible}
         onClose={() => setLeaderboardModalVisible(false)}
         onViewProfile={(id) => { setLeaderboardModalVisible(false); setViewingProfileId(id); }}
+        isDark={isDark}
       />
 
       <NotificationsModal
