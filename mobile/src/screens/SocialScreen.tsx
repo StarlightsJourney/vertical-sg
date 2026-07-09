@@ -195,6 +195,8 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
   const [commentsLoading, setCommentsLoading] = useState(false);
   const [newCommentText, setNewCommentText] = useState('');
   const [commentSubmitting, setCommentSubmitting] = useState(false);
+  const [showAllComments, setShowAllComments] = useState(false);
+  const COMMENTS_COLLAPSED = 2;
 
   /** Batch-fetch profiles for a set of user ids (merges into the existing map;
    * unknown/mock ids simply won't resolve and fall back to "Climber{id}"). */
@@ -438,6 +440,7 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
     }
     setExpandedClimbId(climbId);
     setNewCommentText('');
+    setShowAllComments(false);
 
     if (climbId.startsWith('mock-')) {
       setClimbComments([]); // preview items have no real thread to load
@@ -547,20 +550,23 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
 
   const submitPost = async () => {
     if (!editingClimbId || !user) return;
+    // A photo is required — text-only posts were getting skipped over in the
+    // feed, so this is now the one non-negotiable part of sharing a climb.
+    if (!postPhotoBase64) {
+      Alert.alert('Photo required', 'Add a photo to share this climb — it\'s what gets people to actually stop and look.');
+      return;
+    }
     setPosting(true);
     try {
-      let photoPath: string | null = null;
-      if (postPhotoBase64) {
-        photoPath = `feed/${user.id}-${Date.now()}.jpg`;
-        const bytes = base64ToUint8Array(postPhotoBase64);
-        const { error: uploadError } = await supabase.storage
-          .from('building-photos')
-          .upload(photoPath, bytes, { contentType: 'image/jpeg' });
-        if (uploadError) {
-          Alert.alert('Upload Failed', uploadError.message);
-          setPosting(false);
-          return;
-        }
+      const photoPath = `feed/${user.id}-${Date.now()}.jpg`;
+      const bytes = base64ToUint8Array(postPhotoBase64);
+      const { error: uploadError } = await supabase.storage
+        .from('building-photos')
+        .upload(photoPath, bytes, { contentType: 'image/jpeg' });
+      if (uploadError) {
+        Alert.alert('Upload Failed', uploadError.message);
+        setPosting(false);
+        return;
       }
 
       const { error } = await supabase
@@ -678,6 +684,7 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
                         <Text style={[s.rewardLabelBig, { color }]} numberOfLines={1}>{ch.reward_label}</Text>
 
                         <Text style={[s.challengeTitle, isDark && { color: '#F9FAFB' }]} numberOfLines={2}>{ch.title}</Text>
+                        <Text style={[s.challengeCardDesc, isDark && { color: '#9CA3AF' }]} numberOfLines={3}>{ch.description}</Text>
 
                         {joined ? (
                           <View style={s.challengeProgressBlock}>
@@ -831,14 +838,23 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
                   <ActivityIndicator size="small" color="#2563EB" style={{ marginVertical: 12 }} />
                 ) : (
                   <>
-                    {climbComments.length > 0 ? climbComments.map((cm) => (
-                      <View key={cm.comment_id} style={s.commentRow}>
-                        <Text style={[s.commentUser, isDark && { color: '#F9FAFB' }]}>
-                          {profilesMap[cm.user_id]?.display_name ?? `Climber${cm.user_id.slice(0, 4)}`}
-                        </Text>
-                        <Text style={[s.commentBody, isDark && { color: '#D1D5DB' }]}>{cm.body}</Text>
-                      </View>
-                    )) : (
+                    {climbComments.length > 0 ? (
+                      <>
+                        {!showAllComments && climbComments.length > COMMENTS_COLLAPSED && (
+                          <TouchableOpacity onPress={() => setShowAllComments(true)} style={{ marginBottom: 8 }}>
+                            <Text style={s.viewAllCommentsText}>View all {climbComments.length} comments</Text>
+                          </TouchableOpacity>
+                        )}
+                        {(showAllComments ? climbComments : climbComments.slice(-COMMENTS_COLLAPSED)).map((cm) => (
+                          <View key={cm.comment_id} style={s.commentRow}>
+                            <Text style={[s.commentUser, isDark && { color: '#F9FAFB' }]}>
+                              {profilesMap[cm.user_id]?.display_name ?? `Climber${cm.user_id.slice(0, 4)}`}
+                            </Text>
+                            <Text style={[s.commentBody, isDark && { color: '#D1D5DB' }]}>{cm.body}</Text>
+                          </View>
+                        ))}
+                      </>
+                    ) : (
                       <Text style={s.emptyFeedText}>No comments yet.</Text>
                     )}
                     <View style={s.commentInputRow}>
@@ -929,7 +945,7 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
               maxLength={200}
             />
             <TouchableOpacity
-              style={s.postPhotoBtn}
+              style={[s.postPhotoBtn, !postPhotoBase64 && s.postPhotoBtnRequired, isDark && { backgroundColor: '#111827' }]}
               onPress={() => {
                 Alert.alert('Add Photo', '', [
                   { text: 'Take Photo', onPress: () => pickPostPhoto('camera') },
@@ -942,8 +958,8 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
                 <Image source={{ uri: `data:image/jpeg;base64,${postPhotoBase64}` }} style={s.postPhotoPreview} />
               ) : (
                 <>
-                  <Ionicons name="camera-outline" size={20} color="#6B7280" />
-                  <Text style={s.postPhotoBtnText}>Attach a photo</Text>
+                  <Ionicons name="camera-outline" size={20} color="#EF4444" />
+                  <Text style={s.postPhotoBtnRequiredText}>Attach a photo (required)</Text>
                 </>
               )}
             </TouchableOpacity>
@@ -952,9 +968,9 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
                 <Text style={s.postCancelText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[s.postSubmitBtn, posting && { opacity: 0.6 }]}
+                style={[s.postSubmitBtn, (posting || !postPhotoBase64) && { opacity: 0.5 }]}
                 onPress={submitPost}
-                disabled={posting}
+                disabled={posting || !postPhotoBase64}
               >
                 {posting ? <ActivityIndicator size="small" color="#FFF" /> : <Text style={s.postSubmitText}>Post</Text>}
               </TouchableOpacity>
@@ -1199,7 +1215,7 @@ const s = StyleSheet.create({
   challengesSection: { marginBottom: 16 },
   challengeRow: { gap: 12, paddingRight: 8, paddingTop: 4 },
   challengeCard: {
-    width: 178,
+    width: 210,
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     padding: 16,
@@ -1236,7 +1252,8 @@ const s = StyleSheet.create({
     borderRadius: 10,
   },
   rewardLabelBig: { fontSize: 12, fontWeight: '800', marginBottom: 8, textAlign: 'center' },
-  challengeTitle: { fontSize: 14, fontWeight: '700', color: '#111827', marginBottom: 12, textAlign: 'center', minHeight: 36 },
+  challengeTitle: { fontSize: 14, fontWeight: '700', color: '#111827', marginBottom: 4, textAlign: 'center', minHeight: 18 },
+  challengeCardDesc: { fontSize: 11.5, color: '#6B7280', textAlign: 'center', lineHeight: 15, marginBottom: 12, minHeight: 45 },
   challengeProgressBlock: { marginTop: 2, width: '100%' },
   challengeTrack: {
     height: 8,
@@ -1359,6 +1376,7 @@ const s = StyleSheet.create({
     borderTopColor: '#E5E7EB',
   },
   commentRow: { marginBottom: 8 },
+  viewAllCommentsText: { fontSize: 12.5, fontWeight: '600', color: '#9CA3AF' },
   commentUser: { fontSize: 12.5, fontWeight: '700', color: '#111827' },
   commentBody: { fontSize: 13, color: '#374151', marginTop: 1, lineHeight: 18 },
   commentInputRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6 },
@@ -1416,7 +1434,8 @@ const s = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
     backgroundColor: '#F3F4F6', borderRadius: 12, padding: 14, marginBottom: 16, minHeight: 60,
   },
-  postPhotoBtnText: { fontSize: 13, color: '#6B7280', fontWeight: '500' },
+  postPhotoBtnRequired: { borderWidth: 1.5, borderColor: '#EF4444', borderStyle: 'dashed' },
+  postPhotoBtnRequiredText: { fontSize: 13, color: '#EF4444', fontWeight: '600' },
   postPhotoPreview: { width: '100%', height: 160, borderRadius: 10 },
   postModalActions: { flexDirection: 'row', gap: 10 },
   postCancelBtn: { flex: 1, padding: 14, borderRadius: 12, backgroundColor: '#F3F4F6', alignItems: 'center' },

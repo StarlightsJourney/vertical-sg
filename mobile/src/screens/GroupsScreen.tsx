@@ -121,7 +121,8 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
             <Text style={[s.rewardLabelBig, isMonthly && { color: '#FFFFFF' }, !isMonthly && { color }]}>{ch.reward_label}</Text>
           </View>
         </View>
-        <Text style={[s.challengeTitle, isDark && { color: '#F9FAFB' }, isMonthly && { color: '#FFFFFF' }]}>{ch.title}</Text>
+        <Text style={[s.challengeTitle, { marginBottom: 4 }, isDark && { color: '#F9FAFB' }, isMonthly && { color: '#FFFFFF' }]}>{ch.title}</Text>
+        <Text style={[s.challengeCardDesc, isDark && { color: '#9CA3AF' }, isMonthly && { color: '#DDD6FE' }]} numberOfLines={2}>{ch.description}</Text>
 
         {joined && (
           <View style={{ marginTop: 2 }}>
@@ -325,6 +326,7 @@ const s = StyleSheet.create({
   difficultyPill: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
   difficultyText: { fontSize: 10.5, fontWeight: '800', letterSpacing: 0.4 },
   challengeTitle: { fontSize: 16, fontWeight: '700', color: '#111827', marginBottom: 12 },
+  challengeCardDesc: { fontSize: 12.5, color: '#6B7280', lineHeight: 17, marginBottom: 12 },
   challengeTrack: { height: 8, borderRadius: 4, backgroundColor: 'rgba(0,0,0,0.08)', overflow: 'hidden' },
   challengeFill: { height: '100%', borderRadius: 4 },
   challengeProgressText: { fontSize: 12, fontWeight: '600', color: '#6B7280', marginTop: 6 },
