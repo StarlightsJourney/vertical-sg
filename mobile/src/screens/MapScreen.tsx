@@ -26,12 +26,13 @@ import { supabase } from '../config/supabase';
 import { fetchBlocksInBounds } from '../services/blocks';
 import { logClimb, checkRecentBadges } from '../services/climbs';
 import BadgeCelebration from '../components/BadgeCelebration';
-import type { Block, BoundsRect, ClimbLog } from '../types';
+import type { Block, BoundsRect, ClimbLog, Challenge } from '../types';
 import BlockDetailSheet from '../components/BlockDetailSheet';
 import BuildingDetailSheet from '../components/BuildingDetailSheet';
 import NotificationsModal from '../components/NotificationsModal';
 import SearchScreen from '../components/SearchScreen';
 import UserLocationRing from '../components/UserLocationRing';
+import ChallengeDetailModal from '../components/ChallengeDetailModal';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import storage from '../utils/storage';
 import * as Linking from 'expo-linking';
@@ -82,6 +83,7 @@ const FILTER_OPTIONS = [
 ] as const;
 
 const FILTER_COLORS: Record<number, string> = { 21: '#FF3B30', 31: '#8B0000', 40: '#7C3AED', 0: '#6B7280' };
+const MAP_DIFFICULTY_COLOR: Record<string, string> = { easy: '#10B981', medium: '#F59E0B', hard: '#EF4444', insane: '#7C3AED' };
 
 /** Bucket a building's storey count into the same 5 tiers as HEIGHT_TIERS. */
 function tierIndex(storeys: number): number {
@@ -171,6 +173,12 @@ export default function MapScreen({ isDark: isDarkProp, onNavigateToSocial }: { 
   // Map layers panel — amenity visibility toggles + shortcut to the height filter
   const [layersVisible, setLayersVisible] = useState(false);
   const [amenityVisibility, setAmenityVisibility] = useState({ water: true, toilet: true, foodShop: true });
+
+  // Challenges the user has joined and not yet completed — surfaced here too,
+  // not just on Social/Groups, so progress is visible while you're actually
+  // out climbing.
+  const [myActiveChallenges, setMyActiveChallenges] = useState<(Challenge & { progressFloors: number })[]>([]);
+  const [selectedChallenge, setSelectedChallenge] = useState<Challenge | null>(null);
 
   // Use prop if provided (from App.tsx tab bar), otherwise auto-detect
   const isDark = isDarkProp ?? (() => {
@@ -273,17 +281,41 @@ export default function MapScreen({ isDark: isDarkProp, onNavigateToSocial }: { 
     return { type: 'FeatureCollection', features };
   }, [pendingReports, amenityVisibility]);
 
-  // Suggested climbs banner — nearest buildings, spread across as many different
-  // height tiers as are available nearby, so the suggestions vary in difficulty
-  // rather than just being "the 3 closest" (which tend to cluster in one tier).
+  // Tall buildings (21+ storeys) across all of Singapore, fetched once —
+  // `blocks` is scoped to whatever's currently on screen, so if there's no
+  // 31-39 or 40+ storey block in the visible viewport, recommendations would
+  // never surface one even though plenty exist elsewhere in the country.
+  // This gives the picker something to fall back on regardless of where the
+  // user currently has the map panned to.
+  const [tallBlocksPool, setTallBlocksPool] = useState<Block[]>([]);
+  useEffect(() => {
+    fetchBlocksInBounds({
+      minLat: SG_BOUNDS.sw[1], minLng: SG_BOUNDS.sw[0],
+      maxLat: SG_BOUNDS.ne[1], maxLng: SG_BOUNDS.ne[0],
+      sortBy: 'storeys', limit: 300,
+    }).then((data) => setTallBlocksPool(data.filter((b) => b.storeys >= 21))).catch(() => {});
+  }, []);
+
+  // Suggested climbs banner — nearest buildings, but guaranteeing at least one
+  // each from the 21-30/31-39/40+ tiers (using the nationwide pool above if
+  // none are in the current viewport), and otherwise avoiding same-storeys
+  // duplicates so the 5 suggestions actually vary instead of clustering.
   const recommendations = useMemo(() => {
-    if (location.loading || location.latitude == null || blocks.length === 0) return [];
-    const withDist = blocks
-      .filter((b) => b.lat != null && b.lng != null)
+    if (location.loading || location.latitude == null) return [];
+    const seen = new Set<string>();
+    const pool = [...blocks, ...tallBlocksPool].filter((b) => {
+      if (seen.has(b.block_id) || b.lat == null || b.lng == null) return false;
+      seen.add(b.block_id);
+      return true;
+    });
+    if (pool.length === 0) return [];
+
+    const withDist = pool
       .map((b) => ({ block: b, dist: haversineKm(location.latitude, location.longitude, b.lat!, b.lng!) }))
       .sort((a, b) => a.dist - b.dist);
 
     const picked: typeof withDist = [];
+    const usedStoreys = new Set<number>();
     const alreadyPicked = (id: string) => picked.some((p) => p.block.block_id === id);
 
     // Reserve a slot each for 21-30, 31-39, and 40+ storeys first (the
@@ -291,9 +323,16 @@ export default function MapScreen({ isDark: isDarkProp, onNavigateToSocial }: { 
     // 1-10 storey blocks tend to crowd out the taller ones entirely.
     for (const tier of [2, 3, 4]) {
       const nearest = withDist.find((c) => tierIndex(c.block.storeys) === tier && !alreadyPicked(c.block.block_id));
-      if (nearest) picked.push(nearest);
+      if (nearest) { picked.push(nearest); usedStoreys.add(nearest.block.storeys); }
     }
-    // Fill remaining slots (up to 5) with whatever's nearest overall.
+    // Fill remaining slots (up to 5), preferring a storeys count not already used.
+    for (const cand of withDist) {
+      if (picked.length === 5) break;
+      if (alreadyPicked(cand.block.block_id) || usedStoreys.has(cand.block.storeys)) continue;
+      picked.push(cand);
+      usedStoreys.add(cand.block.storeys);
+    }
+    // Still short (e.g. very little variety nearby)? Allow duplicates to fill out.
     for (const cand of withDist) {
       if (picked.length === 5) break;
       if (alreadyPicked(cand.block.block_id)) continue;
@@ -301,7 +340,7 @@ export default function MapScreen({ isDark: isDarkProp, onNavigateToSocial }: { 
     }
 
     return picked.sort((a, b) => a.dist - b.dist);
-  }, [blocks, location.loading, location.latitude, location.longitude]);
+  }, [blocks, tallBlocksPool, location.loading, location.latitude, location.longitude]);
 
   // Popularity per recommended block — distinct climbers, fetched only for the
   // handful of blocks currently shown in the banner. 0 climbers → "New";
@@ -567,6 +606,39 @@ export default function MapScreen({ isDark: isDarkProp, onNavigateToSocial }: { 
       });
   }, [starredIds]);
 
+  // Load challenges the user has joined but not yet completed, with progress
+  // computed against whichever window each one uses (rolling weekly/monthly,
+  // or a fixed dated window for limited-time challenges).
+  useEffect(() => {
+    if (!user) { setMyActiveChallenges([]); return; }
+    (async () => {
+      const [{ data: joined }, { data: climbs }] = await Promise.all([
+        supabase.from('challenge_participants').select('challenge_id').eq('user_id', user.id).is('completed_at', null),
+        supabase.from('climbs').select('floors_climbed, created_at').eq('user_id', user.id).gte('created_at', new Date(Date.now() - 60 * 86400000).toISOString()),
+      ]);
+      if (!joined || joined.length === 0) { setMyActiveChallenges([]); return; }
+
+      const { data: challenges } = await supabase.from('challenges').select('*').in('challenge_id', joined.map((j: any) => j.challenge_id));
+      if (!challenges) { setMyActiveChallenges([]); return; }
+
+      const now = Date.now();
+      const withProgress = (challenges as Challenge[]).map((ch) => {
+        let progressFloors = 0;
+        if (ch.starts_at && ch.ends_at) {
+          const start = new Date(ch.starts_at).getTime();
+          const end = new Date(ch.ends_at).getTime();
+          progressFloors = (climbs ?? []).filter((c: any) => { const t = new Date(c.created_at).getTime(); return t >= start && t <= end; }).reduce((s, c: any) => s + c.floors_climbed, 0);
+        } else if (ch.period === 'monthly') {
+          progressFloors = (climbs ?? []).filter((c: any) => now - new Date(c.created_at).getTime() < 30 * 86400000).reduce((s, c: any) => s + c.floors_climbed, 0);
+        } else {
+          progressFloors = (climbs ?? []).filter((c: any) => now - new Date(c.created_at).getTime() < 7 * 86400000).reduce((s, c: any) => s + c.floors_climbed, 0);
+        }
+        return { ...ch, progressFloors };
+      });
+      setMyActiveChallenges(withProgress);
+    })();
+  }, [user]);
+
   // Load climb history on mount
   useEffect(() => {
     storage.getClimbHistory().then((history) => {
@@ -765,6 +837,38 @@ export default function MapScreen({ isDark: isDarkProp, onNavigateToSocial }: { 
         </ScrollView>
       )}
 
+      {/* Challenges you've joined but haven't finished — visible while you're
+          actually out climbing, not just tucked away on Social/Groups. */}
+      {myActiveChallenges.length > 0 && (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={[styles.challengeRow, savedBlocks.length === 0 && styles.challengeRowNoSaved]}
+          contentContainerStyle={styles.savedRowContent}
+        >
+          {myActiveChallenges.map((ch) => {
+            const pct = Math.min(100, Math.round((ch.progressFloors / ch.target_floors) * 100));
+            const color = MAP_DIFFICULTY_COLOR[ch.difficulty] ?? '#6B7280';
+            return (
+              <TouchableOpacity
+                key={ch.challenge_id}
+                style={[styles.myChallengeChip, { backgroundColor: isDark ? 'rgba(30,30,30,0.95)' : 'rgba(255,255,255,0.95)' }]}
+                onPress={() => setSelectedChallenge(ch)}
+                activeOpacity={0.8}
+              >
+                <Ionicons name={ch.reward_icon as any} size={14} color={color} />
+                <Text style={[styles.myChallengeChipText, { color: isDark ? '#F9FAFB' : '#111827' }]} numberOfLines={1}>
+                  {ch.title}
+                </Text>
+                <View style={styles.myChallengeTrack}>
+                  <View style={[styles.myChallengeFill, { width: `${pct}%`, backgroundColor: color }]} />
+                </View>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      )}
+
       {/* Right-side vertical icon stack: height filter, layers, alert/report, location */}
       <View style={styles.rightIconStack}>
         <TouchableOpacity
@@ -943,6 +1047,16 @@ export default function MapScreen({ isDark: isDarkProp, onNavigateToSocial }: { 
       <NotificationsModal
         visible={notifVisible}
         onClose={() => setNotifVisible(false)}
+        isDark={isDark}
+      />
+
+      <ChallengeDetailModal
+        challenge={selectedChallenge}
+        visible={!!selectedChallenge}
+        onClose={() => setSelectedChallenge(null)}
+        joined
+        progressFloors={myActiveChallenges.find((c) => c.challenge_id === selectedChallenge?.challenge_id)?.progressFloors ?? 0}
+        onJoin={() => {}}
         isDark={isDark}
       />
 
@@ -1183,6 +1297,36 @@ const styles = StyleSheet.create({
     fontSize: 12.5,
     fontWeight: '600',
   },
+
+  // "My Challenges" row, directly under the saved row (or under the search
+  // bar directly if there's no saved row to push it down)
+  challengeRow: {
+    position: 'absolute',
+    top: 156,
+    left: 0,
+    right: 0,
+    zIndex: 10,
+  },
+  challengeRowNoSaved: {
+    top: 104,
+  },
+  myChallengeChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderRadius: 14,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    width: 150,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 4,
+  },
+  myChallengeChipText: { fontSize: 11.5, fontWeight: '600', flexShrink: 1 },
+  myChallengeTrack: { width: 24, height: 4, borderRadius: 2, backgroundColor: 'rgba(0,0,0,0.1)', overflow: 'hidden' },
+  myChallengeFill: { height: '100%', borderRadius: 2 },
 
   // Cycling height filter chip text — button itself now lives in the right icon stack
   filterToggleText: {
