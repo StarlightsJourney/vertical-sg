@@ -301,7 +301,17 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
   const visibleClubs = CLUBS.filter((c) => (clubCategory === 'All' || c.category === clubCategory) && matchesSearch(c.name));
   const visibleUserClubs = userClubs.filter((c) => (clubCategory === 'All' || c.category === clubCategory) && matchesSearch(c.name));
   const visibleEvents = EVENTS.filter((e) => matchesSearch(e.name));
-  const visibleUserEvents = userEvents.filter((e) => matchesSearch(e.name));
+  // Dated events sort chronologically (soonest first); undated ones fall
+  // after, in whatever order they were added — a lighter "calendar" than a
+  // full month-grid view, but at least races line up in the order they happen.
+  const visibleUserEvents = userEvents
+    .filter((e) => matchesSearch(e.name))
+    .sort((a, b) => {
+      if (a.event_date && b.event_date) return new Date(a.event_date).getTime() - new Date(b.event_date).getTime();
+      if (a.event_date) return -1;
+      if (b.event_date) return 1;
+      return 0;
+    });
 
   // The single biggest challenge (by target_floors) gets the full-width
   // cover treatment; everything else fills a 2-column grid, ordered
@@ -607,16 +617,21 @@ function CreateEventModal({ visible, onClose, isDark, onCreated, userId }: {
   const [location, setLocation] = useState('');
   const [blurb, setBlurb] = useState('');
   const [scope, setScope] = useState<'Local' | 'Worldwide'>('Local');
+  const [eventDate, setEventDate] = useState('');
   const [url, setUrl] = useState('');
   const [saving, setSaving] = useState(false);
 
-  const reset = () => { setName(''); setLocation(''); setBlurb(''); setUrl(''); setScope('Local'); };
+  const reset = () => { setName(''); setLocation(''); setBlurb(''); setUrl(''); setScope('Local'); setEventDate(''); };
 
   const handleCreate = async () => {
     if (!userId || !name.trim() || !location.trim() || !blurb.trim()) return;
+    // Loose YYYY-MM-DD check — good enough to catch obvious typos without a
+    // full date-picker dependency; a malformed date is just treated as none.
+    const validDate = /^\d{4}-\d{2}-\d{2}$/.test(eventDate.trim()) && !isNaN(new Date(eventDate.trim()).getTime());
     setSaving(true);
     const { data, error } = await supabase.from('user_events').insert({
-      creator_id: userId, name: name.trim(), location: location.trim(), blurb: blurb.trim(), scope, url: url.trim() || null,
+      creator_id: userId, name: name.trim(), location: location.trim(), blurb: blurb.trim(), scope,
+      event_date: validDate ? eventDate.trim() : null, url: url.trim() || null,
     }).select().single();
     setSaving(false);
     if (error) { Alert.alert('Error', error.message); return; }
@@ -641,6 +656,7 @@ function CreateEventModal({ visible, onClose, isDark, onCreated, userId }: {
             ))}
           </View>
           <TextInput style={[fm.input, fm.textArea, isDark && fm.inputDark]} placeholder="Description" placeholderTextColor="#9CA3AF" value={blurb} onChangeText={setBlurb} multiline maxLength={200} />
+          <TextInput style={[fm.input, isDark && fm.inputDark]} placeholder="Date (YYYY-MM-DD, optional)" placeholderTextColor="#9CA3AF" value={eventDate} onChangeText={setEventDate} keyboardType="numbers-and-punctuation" />
           <TextInput style={[fm.input, isDark && fm.inputDark]} placeholder="Link (optional)" placeholderTextColor="#9CA3AF" value={url} onChangeText={setUrl} autoCapitalize="none" />
           <TouchableOpacity style={[fm.submitBtn, (!name.trim() || !location.trim() || !blurb.trim() || saving) && { opacity: 0.5 }]} onPress={handleCreate} disabled={!name.trim() || !location.trim() || !blurb.trim() || saving}>
             <Text style={fm.submitBtnText}>{saving ? 'Adding...' : 'Add Event'}</Text>
