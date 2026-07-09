@@ -19,6 +19,19 @@ interface Row {
   total_climbs: number;
 }
 
+// Same preview-only rationale as SocialScreen's MOCK_FEED_ITEMS — shown only
+// when Public has fewer than 3 real rows, never written to the database.
+const MOCK_ROWS: Row[] = [
+  { user_id: 'mock-user-aaaa', total_floors: 480, total_climbs: 12 },
+  { user_id: 'mock-user-bbbb', total_floors: 620, total_climbs: 18 },
+  { user_id: 'mock-user-cccc', total_floors: 210, total_climbs: 6 },
+];
+const MOCK_PROFILES: Record<string, Profile> = {
+  'mock-user-aaaa': { user_id: 'mock-user-aaaa', display_name: 'Wei Ling', avatar_idx: 1, featured_badge: null, is_pro: false, created_at: '', updated_at: '' },
+  'mock-user-bbbb': { user_id: 'mock-user-bbbb', display_name: 'Farid', avatar_idx: 2, featured_badge: null, is_pro: false, created_at: '', updated_at: '' },
+  'mock-user-cccc': { user_id: 'mock-user-cccc', display_name: 'Priya', avatar_idx: 3, featured_badge: null, is_pro: false, created_at: '', updated_at: '' },
+};
+
 export default function LeaderboardModal({ visible, onClose, onViewProfile, isDark = false }: Props) {
   const { user } = useAuth();
   const [scope, setScope] = useState<'public' | 'friends'>('public');
@@ -31,7 +44,12 @@ export default function LeaderboardModal({ visible, onClose, onViewProfile, isDa
 
     if (scope === 'public') {
       const { data } = await supabase.from('leaderboard_weekly').select('*').order('total_floors', { ascending: false }).limit(50);
-      setRows((data ?? []) as Row[]);
+      const real = (data ?? []) as Row[];
+      const merged = real.length < 3 ? [...real, ...MOCK_ROWS].sort((a, b) => b.total_floors - a.total_floors) : real;
+      setRows(merged);
+      setProfilesMap((prev) => ({ ...MOCK_PROFILES, ...prev }));
+      setLoading(false);
+      return;
     } else {
       if (!user) { setRows([]); setLoading(false); return; }
       const { data: following } = await supabase.from('follows').select('followee_id').eq('follower_id', user.id);
@@ -45,12 +63,15 @@ export default function LeaderboardModal({ visible, onClose, onViewProfile, isDa
   useEffect(() => { if (visible) load(); }, [visible, load]);
 
   useEffect(() => {
-    if (rows.length === 0) return;
-    supabase.from('profiles').select('*').in('user_id', rows.map((r) => r.user_id)).then(({ data }) => {
+    const realIds = rows.map((r) => r.user_id).filter((id) => !id.startsWith('mock-'));
+    if (realIds.length === 0) return;
+    supabase.from('profiles').select('*').in('user_id', realIds).then(({ data }) => {
       if (data) {
-        const map: Record<string, Profile> = {};
-        for (const p of data as Profile[]) map[p.user_id] = p;
-        setProfilesMap(map);
+        setProfilesMap((prev) => {
+          const next = { ...prev };
+          for (const p of data as Profile[]) next[p.user_id] = p;
+          return next;
+        });
       }
     });
   }, [rows]);
@@ -95,11 +116,12 @@ export default function LeaderboardModal({ visible, onClose, onViewProfile, isDa
               contentContainerStyle={{ padding: 20 }}
               renderItem={({ item, index }) => {
                 const isMe = user?.id === item.user_id;
+                const isMock = item.user_id.startsWith('mock-');
                 return (
                   <TouchableOpacity
                     style={[styles.row, isMe && styles.rowMe, isMe && isDark && { backgroundColor: 'rgba(37,99,235,0.22)' }]}
-                    onPress={() => !isMe && onViewProfile(item.user_id)}
-                    disabled={isMe}
+                    onPress={() => !isMe && !isMock && onViewProfile(item.user_id)}
+                    disabled={isMe || isMock}
                   >
                     <Text style={[styles.rank, index < 3 && styles.rankTop]}>{index + 1}</Text>
                     <MascotAvatar skinIdx={profilesMap[item.user_id]?.avatar_idx ?? 0} size={32} />

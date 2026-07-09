@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   TextInput,
   ActivityIndicator,
   Alert,
+  Animated,
 } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useAuth } from '../contexts/AuthContext';
@@ -109,6 +110,27 @@ function formatDuration(totalSeconds: number): string {
   const mins = Math.floor((totalSeconds % 3600) / 60);
   if (hours === 0) return `${mins}m`;
   return `${hours}h ${mins}m`;
+}
+
+// Discord-Nitro-style animated color cycle for legendary featured badges
+// (e.g. the Everest Gauntlet) — the profile banner and avatar frame shift
+// through this palette on a loop instead of sitting on a plain color.
+const LEGENDARY_PALETTE = ['#7C3AED', '#DB2777', '#EA580C', '#CA8A04', '#16A34A', '#0891B2', '#2563EB', '#7C3AED'];
+
+function useCyclingColor(colors: string[], stepMs: number, active: boolean) {
+  const progress = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (!active) return;
+    progress.setValue(0);
+    const loop = Animated.loop(
+      Animated.timing(progress, { toValue: colors.length - 1, duration: stepMs * (colors.length - 1), useNativeDriver: false }),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [active]);
+
+  return progress.interpolate({ inputRange: colors.map((_, i) => i), outputRange: colors });
 }
 
 /** MacroFactor-style minimal bar chart — plain Views, no chart library. Used for both the weekly (day-by-day) and monthly (week-by-week) views. */
@@ -331,6 +353,8 @@ export default function ProfileScreen({ isDark = false, themeMode = 'auto', onSe
   const xp = computeXP(climbStats.floors, badges.length, verifiedCount);
   const levelInfo = computeLevelProgress(xp);
   const featuredBadgeDef = profile?.featured_badge ? BADGE_DEFS.find((d) => d.key === profile.featured_badge) : null;
+  const isLegendary = !!featuredBadgeDef?.special;
+  const legendaryColor = useCyclingColor(LEGENDARY_PALETTE, 1400, isLegendary);
 
   if (authLoading || loading) {
     return (
@@ -351,8 +375,14 @@ export default function ProfileScreen({ isDark = false, themeMode = 'auto', onSe
         contentContainerStyle={s.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* LinkedIn-style banner with avatar overlapping the bottom edge */}
-        <View style={[s.banner, isDark && { backgroundColor: '#1E3A8A' }]} />
+        {/* LinkedIn-style banner with avatar overlapping the bottom edge —
+            a legendary featured badge (e.g. Everest Gauntlet) replaces the
+            plain color with an animated cycling one, Discord-Nitro-style. */}
+        <Animated.View style={[s.banner, isDark && { backgroundColor: '#1E3A8A' }, isLegendary && { backgroundColor: legendaryColor }]}>
+          <TouchableOpacity style={s.bannerSettingsBtn} onPress={() => setSettingsVisible(true)} activeOpacity={0.7} hitSlop={8}>
+            <Ionicons name="settings-outline" size={22} color="#FFFFFF" />
+          </TouchableOpacity>
+        </Animated.View>
 
         {/* Profile header */}
         <View style={s.header}>
@@ -361,7 +391,9 @@ export default function ProfileScreen({ isDark = false, themeMode = 'auto', onSe
             onPress={() => setSettingsVisible(true)}
             activeOpacity={0.7}
           >
-            <MascotAvatar skinIdx={profile?.avatar_idx ?? 0} size={72} />
+            <Animated.View style={[s.avatarFrame, isLegendary && { borderColor: legendaryColor }]}>
+              <MascotAvatar skinIdx={profile?.avatar_idx ?? 0} size={72} />
+            </Animated.View>
             <View style={s.avatarEditBadge}>
               <Ionicons name="settings-outline" size={13} color="#FFF" />
             </View>
@@ -699,6 +731,12 @@ const s = StyleSheet.create({
     height: 96,
     backgroundColor: '#2563EB',
   },
+  bannerSettingsBtn: {
+    position: 'absolute',
+    top: 52,
+    right: 16,
+    padding: 4,
+  },
   header: {
     alignItems: 'center',
     paddingHorizontal: 20,
@@ -707,6 +745,12 @@ const s = StyleSheet.create({
   },
   avatarTouchable: {
     marginBottom: 12,
+  },
+  avatarFrame: {
+    borderRadius: 41,
+    borderWidth: 3,
+    borderColor: 'transparent',
+    padding: 2,
   },
   avatarEditBadge: {
     position: 'absolute',

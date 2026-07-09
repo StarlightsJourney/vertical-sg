@@ -77,6 +77,21 @@ interface LeaderboardRow {
   best_single_climb: number;
 }
 
+// Client-side preview only, same rationale as MOCK_FEED_ITEMS below — lets
+// you see what the leaderboard looks like with other climbers on it while
+// you're the only real account testing. Only shown when there's fewer than
+// 3 real rows; never written to the database.
+const MOCK_LEADERBOARD: LeaderboardRow[] = [
+  { user_id: 'mock-user-aaaa', total_climbs: 12, total_floors: 480, best_single_climb: 96 },
+  { user_id: 'mock-user-bbbb', total_climbs: 18, total_floors: 620, best_single_climb: 156 },
+  { user_id: 'mock-user-cccc', total_climbs: 6, total_floors: 210, best_single_climb: 40 },
+];
+const MOCK_PROFILES: Record<string, Profile> = {
+  'mock-user-aaaa': { user_id: 'mock-user-aaaa', display_name: 'Wei Ling', avatar_idx: 1, featured_badge: null, is_pro: false, created_at: '', updated_at: '' },
+  'mock-user-bbbb': { user_id: 'mock-user-bbbb', display_name: 'Farid', avatar_idx: 2, featured_badge: null, is_pro: false, created_at: '', updated_at: '' },
+  'mock-user-cccc': { user_id: 'mock-user-cccc', display_name: 'Priya', avatar_idx: 3, featured_badge: null, is_pro: false, created_at: '', updated_at: '' },
+};
+
 // Client-side only — never written to the database. Real "other users" need
 // real accounts, which isn't something to fake in a live database. This is
 // purely so the feed doesn't look empty while you're the only one testing it.
@@ -300,8 +315,13 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
       .order('total_floors', { ascending: false })
       .limit(5);
     if (data) {
-      setLeaderboard(data as LeaderboardRow[]);
-      loadProfilesFor((data as LeaderboardRow[]).map((r) => r.user_id));
+      const real = data as LeaderboardRow[];
+      const merged = real.length < 3
+        ? [...real, ...MOCK_LEADERBOARD].sort((a, b) => b.total_floors - a.total_floors).slice(0, 5)
+        : real;
+      setLeaderboard(merged);
+      loadProfilesFor(real.map((r) => r.user_id));
+      setProfilesMap((prev) => ({ ...MOCK_PROFILES, ...prev }));
     }
   }, [loadProfilesFor]);
 
@@ -680,12 +700,13 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
                 </TouchableOpacity>
                 {leaderboard.map((row, i) => {
                   const isMe = user && row.user_id === user.id;
+                  const isMock = row.user_id.startsWith('mock-');
                   return (
                     <TouchableOpacity
                       key={row.user_id}
                       style={[s.lbRow, isMe && s.lbRowMe, isMe && isDark && { backgroundColor: 'rgba(37,99,235,0.22)' }]}
-                      onPress={() => !isMe && setViewingProfileId(row.user_id)}
-                      disabled={!!isMe}
+                      onPress={() => !isMe && !isMock && setViewingProfileId(row.user_id)}
+                      disabled={!!isMe || isMock}
                     >
                       <Text style={[s.lbRank, i < 3 && s.lbRankTop]}>{i + 1}</Text>
                       <MascotAvatar skinIdx={skinFor(row.user_id)} size={26} />

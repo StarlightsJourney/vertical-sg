@@ -170,6 +170,8 @@ export interface BadgeDef {
   icon: string; // Ionicons name
   /** Hidden badges render as "???" until earned — a surprise, not a checklist item. */
   hidden?: boolean;
+  /** Legendary tier — featuring this badge gives your profile an animated color-cycling background/avatar frame instead of the plain banner. */
+  special?: boolean;
 }
 
 export const BADGE_DEFS: BadgeDef[] = [
@@ -208,7 +210,7 @@ export const BADGE_DEFS: BadgeDef[] = [
   { key: 'century_sprint_challenge', name: 'Century Champion', description: 'Completed the Century Sprint challenge', category: 'challenge', icon: 'flash-outline' },
   { key: 'elevation_chaser_challenge', name: 'Elevation Chaser', description: 'Completed the Elevation Chaser challenge', category: 'challenge', icon: 'trending-up-outline' },
   { key: 'iron_legs_challenge', name: 'Iron Legs', description: 'Completed the Iron Legs challenge', category: 'challenge', icon: 'flame-outline' },
-  { key: 'everest_gauntlet_challenge', name: 'Everest Gauntlet Survivor', description: 'Climbed the height of Mount Everest in a single week', category: 'challenge', icon: 'trophy' },
+  { key: 'everest_gauntlet_challenge', name: 'Everest Gauntlet Survivor', description: 'Climbed the height of Mount Everest in a single week', category: 'challenge', icon: 'trophy', special: true },
   { key: 'long_haul_challenge', name: 'Long Haul Legend', description: 'Completed the Long Haul monthly challenge', category: 'challenge', icon: 'infinite-outline' },
   { key: 'sg61_countdown_challenge', name: 'SG61 Climber', description: 'Completed the SG61 Countdown Climb', category: 'challenge', icon: 'flag-outline' },
   { key: 'midyear_momentum_challenge', name: 'Momentum Badge', description: 'Completed the Mid-Year Momentum challenge', category: 'challenge', icon: 'rocket-outline' },
