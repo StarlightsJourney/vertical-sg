@@ -92,16 +92,33 @@ function getTierColor(storeys: number): string {
   return '#7C3AED';
 }
 
-/** MacroFactor-style minimal weekly bar chart — plain Views, no chart library. */
-function WeeklyChart({ dailyFloors, isDark }: { dailyFloors: number[]; isDark: boolean }) {
-  const max = Math.max(1, ...dailyFloors);
-  const today = new Date().getDay(); // 0 = Sunday
+/** Floors climbed per week for the last N weeks (oldest first, this week last). */
+function computeWeeklyBuckets(climbs: { climbedAt: string; floors: number }[], weeks: number): number[] {
+  const buckets: number[] = new Array(weeks).fill(0);
+  const now = Date.now();
+  for (const c of climbs) {
+    const diffDays = Math.floor((now - new Date(c.climbedAt).getTime()) / 86400000);
+    const weekIdx = Math.floor(diffDays / 7); // 0 = this week, 1 = last week, ...
+    if (weekIdx >= 0 && weekIdx < weeks) buckets[weeks - 1 - weekIdx] += c.floors;
+  }
+  return buckets;
+}
+
+function formatDuration(totalSeconds: number): string {
+  const hours = Math.floor(totalSeconds / 3600);
+  const mins = Math.floor((totalSeconds % 3600) / 60);
+  if (hours === 0) return `${mins}m`;
+  return `${hours}h ${mins}m`;
+}
+
+/** MacroFactor-style minimal bar chart — plain Views, no chart library. Used for both the weekly (day-by-day) and monthly (week-by-week) views. */
+function BarChart({ values, labels, highlightIndex, isDark }: { values: number[]; labels: string[]; highlightIndex: number; isDark: boolean }) {
+  const max = Math.max(1, ...values);
 
   return (
     <View style={c.chartWrap}>
-      {dailyFloors.map((val, i) => {
-        const dayIdx = (today - 6 + i + 7) % 7;
-        const isToday = i === 6;
+      {values.map((val, i) => {
+        const isHighlight = i === highlightIndex;
         const heightPct = val === 0 ? 0.03 : Math.max(0.06, val / max);
         return (
           <View key={i} style={c.barCol}>
@@ -109,11 +126,11 @@ function WeeklyChart({ dailyFloors, isDark }: { dailyFloors: number[]; isDark: b
             <View style={c.barTrack}>
               <View style={[
                 c.bar,
-                { height: `${heightPct * 100}%`, backgroundColor: isToday ? '#2563EB' : (isDark ? '#374151' : '#DBEAFE') },
+                { height: `${heightPct * 100}%`, backgroundColor: isHighlight ? '#2563EB' : (isDark ? '#374151' : '#DBEAFE') },
               ]} />
             </View>
-            <Text style={[c.barLabel, isToday && { color: '#2563EB', fontWeight: '700' }, isDark && !isToday && { color: '#6B7280' }]}>
-              {DAY_LABELS[dayIdx]}
+            <Text style={[c.barLabel, isHighlight && { color: '#2563EB', fontWeight: '700' }, isDark && !isHighlight && { color: '#6B7280' }]}>
+              {labels[i]}
             </Text>
           </View>
         );
@@ -145,11 +162,12 @@ export default function ProfileScreen({ isDark = false, themeMode = 'auto', onSe
   const [handleInput, setHandleInput] = useState('');
   const [climbHistory, setClimbHistory] = useState<ClimbLog[]>([]);
   const [badges, setBadges] = useState<UserBadge[]>([]);
-  const [climbStats, setClimbStats] = useState({ climbs: 0, floors: 0, tallest: 0 });
+  const [climbStats, setClimbStats] = useState({ climbs: 0, floors: 0, tallest: 0, durationSeconds: 0 });
   const [weeklyStreak, setWeeklyStreak] = useState(0);
   const [monthlyStreak, setMonthlyStreak] = useState(0);
   const [dailyFloors, setDailyFloors] = useState<number[]>(new Array(7).fill(0));
   const [weeklyGoal, setWeeklyGoal] = useState<number | null>(null);
+  const [viewPeriod, setViewPeriod] = useState<'week' | 'month'>('week');
   const [verifiedCount, setVerifiedCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [authPromptVisible, setAuthPromptVisible] = useState(false);
@@ -170,7 +188,7 @@ export default function ProfileScreen({ isDark = false, themeMode = 'auto', onSe
       setClimbHistory(history);
       const floors = history.reduce((s, c) => s + c.floors, 0);
       const tallest = history.reduce((m, c) => Math.max(m, c.storeys), 0);
-      setClimbStats({ climbs: history.length, floors, tallest });
+      setClimbStats({ climbs: history.length, floors, tallest, durationSeconds: 0 });
       setWeeklyStreak(computeWeeklyStreak(history.map((c) => c.climbedAt)));
       setMonthlyStreak(computeMonthlyStreak(history.map((c) => c.climbedAt)));
       setDailyFloors(computeDailyFloors(history.map((c) => ({ climbedAt: c.climbedAt, floors: c.floors }))));
@@ -210,11 +228,13 @@ export default function ProfileScreen({ isDark = false, themeMode = 'auto', onSe
           storeys: storeysOf(c),
           floors: c.floors_climbed,
           climbedAt: c.created_at,
+          durationSeconds: c.duration_seconds ?? undefined,
         }));
         setClimbHistory(history);
         const floors = climbs.reduce((s: number, c: any) => s + c.floors_climbed, 0);
         const tallest = climbs.reduce((m: number, c: any) => Math.max(m, storeysOf(c)), 0);
-        setClimbStats({ climbs: climbs.length, floors, tallest });
+        const durationSeconds = climbs.reduce((s: number, c: any) => s + (c.duration_seconds ?? 0), 0);
+        setClimbStats({ climbs: climbs.length, floors, tallest, durationSeconds });
         setWeeklyStreak(computeWeeklyStreak(climbs.map((c: any) => c.created_at)));
         setMonthlyStreak(computeMonthlyStreak(climbs.map((c: any) => c.created_at)));
         setDailyFloors(computeDailyFloors(climbs.map((c: any) => ({ climbedAt: c.created_at, floors: c.floors_climbed }))));
@@ -261,6 +281,7 @@ export default function ProfileScreen({ isDark = false, themeMode = 'auto', onSe
             climbs: next.length,
             floors: next.reduce((s, c) => s + c.floors, 0),
             tallest: next.reduce((m, c) => Math.max(m, c.storeys), 0),
+            durationSeconds: next.reduce((s, c) => s + (c.durationSeconds ?? 0), 0),
           });
           setWeeklyStreak(computeWeeklyStreak(next.map((c) => c.climbedAt)));
           setMonthlyStreak(computeMonthlyStreak(next.map((c) => c.climbedAt)));
@@ -301,6 +322,11 @@ export default function ProfileScreen({ isDark = false, themeMode = 'auto', onSe
     const d = new Date(c.climbedAt);
     return Date.now() - d.getTime() < 7 * 86400000;
   }).length;
+  const monthlyClimbs = climbHistory.filter((c) => Date.now() - new Date(c.climbedAt).getTime() < 30 * 86400000);
+  const monthlyFloors = monthlyClimbs.reduce((s, c) => s + c.floors, 0);
+  const monthlyClimbTotal = monthlyClimbs.length;
+  const weekdayLabels = Array.from({ length: 7 }, (_, i) => DAY_LABELS[(new Date().getDay() - 6 + i + 7) % 7]);
+  const monthlyBuckets = computeWeeklyBuckets(climbHistory.map((c) => ({ climbedAt: c.climbedAt, floors: c.floors })), 4);
 
   const xp = computeXP(climbStats.floors, badges.length, verifiedCount);
   const levelInfo = computeLevelProgress(xp);
@@ -450,6 +476,20 @@ export default function ProfileScreen({ isDark = false, themeMode = 'auto', onSe
               </View>
             </View>
 
+            <View style={[s.statsCard, { marginTop: 10 }, isDark && { backgroundColor: '#1F2937' }]}>
+              <View style={s.statItem}>
+                <Text style={[s.statNumber, isDark && { color: '#F9FAFB' }]}>{Math.round(climbStats.floors * 2.8)}m</Text>
+                <Text style={s.statLabel}>Elevation</Text>
+              </View>
+              <View style={[s.statDivider, isDark && { backgroundColor: '#374151' }]} />
+              <View style={s.statItem}>
+                <Text style={[s.statNumber, isDark && { color: '#F9FAFB' }]}>
+                  {climbStats.durationSeconds > 0 ? formatDuration(climbStats.durationSeconds) : '—'}
+                </Text>
+                <Text style={s.statLabel}>Time Spent</Text>
+              </View>
+            </View>
+
             {/* Weekly / monthly streak chips */}
             <View style={s.streakChipsRow}>
               <View style={[s.streakChip, isDark && { backgroundColor: '#1F2937' }]}>
@@ -464,19 +504,44 @@ export default function ProfileScreen({ isDark = false, themeMode = 'auto', onSe
               </View>
             </View>
 
-            {/* Your Week — MacroFactor-style trend chart */}
+            {/* Your Week / Your Month — MacroFactor-style trend chart */}
             <View style={s.section}>
-              <Text style={[s.sectionTitle, isDark && { color: '#D1D5DB' }]}>Your Week</Text>
+              <View style={s.sectionHeaderRow}>
+                <Text style={[s.sectionTitle, { marginBottom: 0 }, isDark && { color: '#D1D5DB' }]}>
+                  {viewPeriod === 'week' ? 'Your Week' : 'Your Month'}
+                </Text>
+                <View style={[s.periodToggle, isDark && { backgroundColor: '#111827' }]}>
+                  {(['week', 'month'] as const).map((p) => (
+                    <TouchableOpacity
+                      key={p}
+                      style={[s.periodToggleBtn, viewPeriod === p && s.periodToggleBtnActive, viewPeriod === p && isDark && { backgroundColor: '#374151' }]}
+                      onPress={() => setViewPeriod(p)}
+                    >
+                      <Text style={[s.periodToggleText, viewPeriod === p && s.periodToggleTextActive, isDark && { color: viewPeriod === p ? '#F9FAFB' : '#9CA3AF' }]}>
+                        {p === 'week' ? 'Week' : 'Month'}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
               <View style={[s.card, isDark && { backgroundColor: '#1F2937' }]}>
                 <View style={s.weekStatsRow}>
                   <View>
-                    <Text style={[s.weekBigNumber, isDark && { color: '#F9FAFB' }]}>{weeklyFloors}</Text>
-                    <Text style={s.weekBigLabel}>floors this week · {weeklyClimbTotal} climbs</Text>
+                    <Text style={[s.weekBigNumber, isDark && { color: '#F9FAFB' }]}>
+                      {viewPeriod === 'week' ? weeklyFloors : monthlyFloors}
+                    </Text>
+                    <Text style={s.weekBigLabel}>
+                      floors this {viewPeriod} · {viewPeriod === 'week' ? weeklyClimbTotal : monthlyClimbTotal} climbs
+                    </Text>
                   </View>
                 </View>
-                <WeeklyChart dailyFloors={dailyFloors} isDark={isDark} />
+                {viewPeriod === 'week' ? (
+                  <BarChart values={dailyFloors} labels={weekdayLabels} highlightIndex={6} isDark={isDark} />
+                ) : (
+                  <BarChart values={monthlyBuckets} labels={['3wk ago', '2wk ago', 'Last wk', 'This wk']} highlightIndex={3} isDark={isDark} />
+                )}
 
-                {weeklyGoal != null && (
+                {viewPeriod === 'week' && weeklyGoal != null && (
                   <View style={s.goalBlock}>
                     <View style={s.goalRow}>
                       <Text style={[s.goalLabel, isDark && { color: '#9CA3AF' }]}>Weekly goal</Text>
@@ -856,6 +921,16 @@ const s = StyleSheet.create({
     fontWeight: '600',
     color: '#9CA3AF',
   },
+  periodToggle: {
+    flexDirection: 'row',
+    backgroundColor: '#F3F4F6',
+    borderRadius: 8,
+    padding: 2,
+  },
+  periodToggleBtn: { paddingVertical: 5, paddingHorizontal: 12, borderRadius: 6 },
+  periodToggleBtnActive: { backgroundColor: '#FFFFFF', elevation: 1 },
+  periodToggleText: { fontSize: 12, fontWeight: '700', color: '#9CA3AF' },
+  periodToggleTextActive: { color: '#111827' },
   badgesRow: {
     flexDirection: 'row',
     paddingBottom: 8,

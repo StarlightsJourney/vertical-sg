@@ -27,6 +27,7 @@ export interface ClimbLog {
   storeys: number;
   floors: number; // actual floors climbed for this log entry (full sets × storeys + any partial)
   climbedAt: string; // ISO date string
+  durationSeconds?: number; // only present for climbs tracked via ClimbTrackerModal
 }
 
 // --- Phase 2a types ---
