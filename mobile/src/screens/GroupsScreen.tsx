@@ -4,6 +4,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../config/supabase';
 import AuthPrompt from '../components/AuthPrompt';
+import ChallengeDetailModal from '../components/ChallengeDetailModal';
 import type { Challenge } from '../types';
 
 const DIFFICULTY_COLOR: Record<string, string> = { easy: '#10B981', medium: '#F59E0B', hard: '#EF4444', insane: '#7C3AED' };
@@ -56,6 +57,7 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
   const [myChallengeIds, setMyChallengeIds] = useState<Set<string>>(new Set());
   const [weeklyFloors, setWeeklyFloors] = useState(0);
   const [monthlyFloors, setMonthlyFloors] = useState(0);
+  const [selectedChallenge, setSelectedChallenge] = useState<Challenge | null>(null);
 
   const loadChallenges = useCallback(async () => {
     const { data } = await supabase.from('challenges').select('*').eq('is_active', true);
@@ -90,8 +92,9 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
     const pct = Math.min(100, Math.round((progressFloors / ch.target_floors) * 100));
     const completed = joined && pct >= 100;
     const isMonthly = ch.period === 'monthly';
+    const color = DIFFICULTY_COLOR[ch.difficulty];
     return (
-      <View
+      <TouchableOpacity
         key={ch.challenge_id}
         style={[
           s.challengeCard,
@@ -99,23 +102,31 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
           isMonthly && s.monthlyCard,
           isMonthly && isDark && { backgroundColor: '#2E1065' },
         ]}
+        onPress={() => setSelectedChallenge(ch)}
+        activeOpacity={0.85}
       >
         <View style={s.challengeTopRow}>
-          <View style={[s.difficultyPill, { backgroundColor: DIFFICULTY_COLOR[ch.difficulty] + '1A' }]}>
-            <Text style={[s.difficultyText, { color: DIFFICULTY_COLOR[ch.difficulty] }]}>{ch.difficulty.toUpperCase()}</Text>
+          <View style={[s.bigBadge, { backgroundColor: isMonthly ? 'rgba(255,255,255,0.18)' : color + '1F' }]}>
+            <Ionicons name={ch.reward_icon as any} size={34} color={isMonthly ? '#FFFFFF' : color} />
+            {completed && (
+              <View style={s.bigBadgeCheck}>
+                <Ionicons name="checkmark-circle" size={18} color="#10B981" />
+              </View>
+            )}
           </View>
-          <View style={s.rewardChip}>
-            <Ionicons name={ch.reward_icon as any} size={14} color="#F59E0B" />
-            <Text style={s.rewardChipText}>{ch.reward_label}</Text>
+          <View style={{ flex: 1 }}>
+            <View style={[s.difficultyPill, { backgroundColor: isMonthly ? 'rgba(255,255,255,0.18)' : color + '1A', alignSelf: 'flex-start' }]}>
+              <Text style={[s.difficultyText, { color: isMonthly ? '#FFFFFF' : color }]}>{ch.difficulty.toUpperCase()}</Text>
+            </View>
+            <Text style={[s.rewardLabelBig, isMonthly && { color: '#FFFFFF' }, !isMonthly && { color }]}>{ch.reward_label}</Text>
           </View>
         </View>
         <Text style={[s.challengeTitle, isDark && { color: '#F9FAFB' }, isMonthly && { color: '#FFFFFF' }]}>{ch.title}</Text>
-        <Text style={[s.challengeDesc, isDark && { color: '#9CA3AF' }, isMonthly && { color: '#DDD6FE' }]}>{ch.description}</Text>
 
         {joined && (
           <View style={{ marginTop: 2 }}>
             <View style={s.challengeTrack}>
-              <View style={[s.challengeFill, { width: `${pct}%`, backgroundColor: isMonthly ? '#FFFFFF' : DIFFICULTY_COLOR[ch.difficulty] }]} />
+              <View style={[s.challengeFill, { width: `${pct}%`, backgroundColor: isMonthly ? '#FFFFFF' : color }]} />
             </View>
             <Text style={[s.challengeProgressText, isMonthly && { color: '#DDD6FE' }]}>
               {completed ? 'Completed! 🎉' : `${progressFloors} / ${ch.target_floors} fl`}
@@ -130,7 +141,7 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
             <Text style={[s.joinBtnText, isMonthly && { color: '#7C3AED' }]}>Join Challenge</Text>
           </TouchableOpacity>
         )}
-      </View>
+      </TouchableOpacity>
     );
   };
 
@@ -220,6 +231,16 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
         reason="join challenges"
         onClose={() => setAuthPromptVisible(false)}
       />
+
+      <ChallengeDetailModal
+        challenge={selectedChallenge}
+        visible={!!selectedChallenge}
+        onClose={() => setSelectedChallenge(null)}
+        joined={!!selectedChallenge && myChallengeIds.has(selectedChallenge.challenge_id)}
+        progressFloors={selectedChallenge?.period === 'monthly' ? monthlyFloors : weeklyFloors}
+        onJoin={() => selectedChallenge && handleJoin(selectedChallenge.challenge_id)}
+        isDark={isDark}
+      />
     </View>
   );
 }
@@ -285,13 +306,25 @@ const s = StyleSheet.create({
     shadowRadius: 6,
   },
   monthlyCard: { backgroundColor: '#7C3AED' },
-  challengeTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
+  challengeTopRow: { flexDirection: 'row', alignItems: 'center', gap: 14, marginBottom: 12 },
+  bigBadge: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bigBadgeCheck: {
+    position: 'absolute',
+    bottom: -2,
+    right: -2,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+  },
+  rewardLabelBig: { fontSize: 12.5, fontWeight: '800', marginTop: 6 },
   difficultyPill: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
   difficultyText: { fontSize: 10.5, fontWeight: '800', letterSpacing: 0.4 },
-  rewardChip: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#FFFBEB', paddingHorizontal: 9, paddingVertical: 4, borderRadius: 8 },
-  rewardChipText: { fontSize: 11, fontWeight: '700', color: '#B45309' },
-  challengeTitle: { fontSize: 16, fontWeight: '700', color: '#111827', marginBottom: 4 },
-  challengeDesc: { fontSize: 13, color: '#6B7280', lineHeight: 18, marginBottom: 12 },
+  challengeTitle: { fontSize: 16, fontWeight: '700', color: '#111827', marginBottom: 12 },
   challengeTrack: { height: 8, borderRadius: 4, backgroundColor: 'rgba(0,0,0,0.08)', overflow: 'hidden' },
   challengeFill: { height: '100%', borderRadius: 4 },
   challengeProgressText: { fontSize: 12, fontWeight: '600', color: '#6B7280', marginTop: 6 },

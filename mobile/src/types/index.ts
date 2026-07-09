@@ -69,6 +69,7 @@ export interface Challenge {
   target_floors: number;
   reward_icon: string;
   reward_label: string;
+  organizer: string;
 }
 
 export interface HeightVerification {

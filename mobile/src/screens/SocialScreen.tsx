@@ -13,6 +13,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  Modal,
 } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import * as ImagePicker from 'expo-image-picker';
@@ -25,6 +26,7 @@ import MascotAvatar from '../components/MascotAvatar';
 import PublicProfileModal from '../components/PublicProfileModal';
 import LeaderboardModal from '../components/LeaderboardModal';
 import NotificationsModal from '../components/NotificationsModal';
+import ChallengeDetailModal from '../components/ChallengeDetailModal';
 import type { Profile, Challenge } from '../types';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -130,9 +132,10 @@ function formatRelativeTime(iso: string): string {
 interface SocialScreenProps {
   isDark?: boolean;
   onNavigateToProfile?: () => void;
+  onNavigateToGroups?: () => void;
 }
 
-export default function SocialScreen({ isDark = false, onNavigateToProfile }: SocialScreenProps) {
+export default function SocialScreen({ isDark = false, onNavigateToProfile, onNavigateToGroups }: SocialScreenProps) {
   const { user, isAnonymous, loading: authLoading } = useAuth();
   const [authPromptVisible, setAuthPromptVisible] = useState(false);
   const [feed, setFeed] = useState<FeedItem[]>([]);
@@ -152,11 +155,15 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile }: So
   const [unpostedClimbs, setUnpostedClimbs] = useState<FeedItem[]>([]);
   const [pickerLoading, setPickerLoading] = useState(false);
 
-  // Search for other climbers by handle
+  // Search for other climbers by handle — icon in the header opens a modal
+  const [searchModalVisible, setSearchModalVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<Profile[]>([]);
   const [searching, setSearching] = useState(false);
   const [viewingProfileId, setViewingProfileId] = useState<string | null>(null);
+
+  // Challenge detail (Strava-style)
+  const [selectedChallenge, setSelectedChallenge] = useState<Challenge | null>(null);
 
   // Header: own avatar + notification bell
   const [myProfile, setMyProfile] = useState<Profile | null>(null);
@@ -510,6 +517,9 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile }: So
       <View style={[s.header, isDark && { backgroundColor: '#111827', borderBottomColor: '#374151' }]}>
         <Text style={[s.headerTitle, isDark && { color: '#F9FAFB' }]}>Social</Text>
         <View style={s.headerActions}>
+          <TouchableOpacity style={s.iconBtn} onPress={() => setSearchModalVisible(true)} activeOpacity={0.7}>
+            <Ionicons name="search-outline" size={22} color={isDark ? '#D1D5DB' : '#374151'} />
+          </TouchableOpacity>
           {!isAnonymous && (
             <TouchableOpacity style={s.bellBtn} onPress={() => setNotifVisible(true)} activeOpacity={0.7}>
               <Ionicons name="notifications-outline" size={22} color={isDark ? '#D1D5DB' : '#374151'} />
@@ -532,38 +542,6 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile }: So
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor="#2563EB" />}
         ListHeaderComponent={
           <>
-            {/* Search for other climbers by handle */}
-            <View style={[s.searchBox, isDark && { backgroundColor: '#1F2937' }]}>
-              <Ionicons name="search" size={16} color="#9CA3AF" />
-              <TextInput
-                style={[s.searchInput, isDark && { color: '#F9FAFB' }]}
-                placeholder="Find climbers by handle..."
-                placeholderTextColor="#9CA3AF"
-                value={searchQuery}
-                onChangeText={handleSearch}
-              />
-              {searching && <ActivityIndicator size="small" color="#2563EB" />}
-            </View>
-
-            {searchQuery.trim().length >= 2 && (
-              <View style={[s.card, isDark && { backgroundColor: '#1F2937' }]}>
-                {searchResults.length > 0 ? (
-                  searchResults.map((p) => (
-                    <TouchableOpacity
-                      key={p.user_id}
-                      style={s.searchResultRow}
-                      onPress={() => setViewingProfileId(p.user_id)}
-                    >
-                      <MascotAvatar skinIdx={p.avatar_idx} size={32} />
-                      <Text style={[s.searchResultName, isDark && { color: '#F9FAFB' }]}>{p.display_name}</Text>
-                    </TouchableOpacity>
-                  ))
-                ) : !searching ? (
-                  <Text style={[s.emptyFeedText, isDark && { color: '#9CA3AF' }]}>No climbers found with that handle.</Text>
-                ) : null}
-              </View>
-            )}
-
             {leaderboard.length > 0 && (
               <View style={[s.card, isDark && { backgroundColor: '#1F2937' }]}>
                 <TouchableOpacity style={s.cardTitleRow} onPress={() => setLeaderboardModalVisible(true)} activeOpacity={0.7}>
@@ -594,47 +572,61 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile }: So
               </View>
             )}
 
-            {/* Suggested challenges */}
+            {/* Suggested challenges — horizontal, big earned-badge treatment */}
             {challenges.length > 0 && (
               <View style={s.challengesSection}>
                 <Text style={[s.cardTitle, isDark && { color: '#F9FAFB' }]}>Suggested Challenges</Text>
-                {challenges.map((ch) => {
-                  const joined = myChallengeIds.has(ch.challenge_id);
-                  const progressPct = Math.min(100, Math.round((weeklyFloorsForChallenges / ch.target_floors) * 100));
-                  const completed = joined && progressPct >= 100;
-                  return (
-                    <View key={ch.challenge_id} style={[s.challengeCard, isDark && { backgroundColor: '#1F2937' }]}>
-                      <View style={s.challengeTopRow}>
-                        <View style={[s.difficultyPill, { backgroundColor: DIFFICULTY_COLOR[ch.difficulty] + '1A' }]}>
-                          <Text style={[s.difficultyText, { color: DIFFICULTY_COLOR[ch.difficulty] }]}>{ch.difficulty.toUpperCase()}</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.challengeRow}>
+                  {challenges.map((ch) => {
+                    const joined = myChallengeIds.has(ch.challenge_id);
+                    const progressPct = Math.min(100, Math.round((weeklyFloorsForChallenges / ch.target_floors) * 100));
+                    const completed = joined && progressPct >= 100;
+                    const color = DIFFICULTY_COLOR[ch.difficulty];
+                    return (
+                      <TouchableOpacity
+                        key={ch.challenge_id}
+                        style={[s.challengeCard, isDark && { backgroundColor: '#1F2937' }]}
+                        onPress={() => setSelectedChallenge(ch)}
+                        activeOpacity={0.85}
+                      >
+                        <View style={[s.difficultyPill, s.challengeDifficultyPill, { backgroundColor: color + '1A' }]}>
+                          <Text style={[s.difficultyText, { color }]}>{ch.difficulty.toUpperCase()}</Text>
                         </View>
-                        <View style={s.rewardChip}>
-                          <Ionicons name={ch.reward_icon as any} size={14} color="#F59E0B" />
-                          <Text style={s.rewardChipText}>{ch.reward_label}</Text>
-                        </View>
-                      </View>
-                      <Text style={[s.challengeTitle, isDark && { color: '#F9FAFB' }]}>{ch.title}</Text>
-                      <Text style={[s.challengeDesc, isDark && { color: '#9CA3AF' }]}>{ch.description}</Text>
 
-                      {joined && (
-                        <View style={s.challengeProgressBlock}>
-                          <View style={s.challengeTrack}>
-                            <View style={[s.challengeFill, { width: `${progressPct}%`, backgroundColor: DIFFICULTY_COLOR[ch.difficulty] }]} />
+                        <View style={[s.bigBadge, { backgroundColor: color + '1F' }]}>
+                          <Ionicons name={ch.reward_icon as any} size={38} color={color} />
+                          {completed && (
+                            <View style={s.bigBadgeCheck}>
+                              <Ionicons name="checkmark-circle" size={18} color="#10B981" />
+                            </View>
+                          )}
+                        </View>
+                        <Text style={[s.rewardLabelBig, { color }]} numberOfLines={1}>{ch.reward_label}</Text>
+
+                        <Text style={[s.challengeTitle, isDark && { color: '#F9FAFB' }]} numberOfLines={2}>{ch.title}</Text>
+
+                        {joined ? (
+                          <View style={s.challengeProgressBlock}>
+                            <View style={s.challengeTrack}>
+                              <View style={[s.challengeFill, { width: `${progressPct}%`, backgroundColor: color }]} />
+                            </View>
+                            <Text style={s.challengeProgressText}>
+                              {completed ? 'Completed! 🎉' : `${weeklyFloorsForChallenges} / ${ch.target_floors} fl`}
+                            </Text>
                           </View>
-                          <Text style={s.challengeProgressText}>
-                            {completed ? 'Completed! 🎉' : `${weeklyFloorsForChallenges} / ${ch.target_floors} fl`}
-                          </Text>
-                        </View>
-                      )}
-
-                      {!joined && (
-                        <TouchableOpacity style={s.joinBtn} onPress={() => handleJoinChallenge(ch.challenge_id)}>
-                          <Text style={s.joinBtnText}>Join Challenge</Text>
-                        </TouchableOpacity>
-                      )}
-                    </View>
-                  );
-                })}
+                        ) : (
+                          <TouchableOpacity style={[s.joinBtn, { backgroundColor: color }]} onPress={() => handleJoinChallenge(ch.challenge_id)}>
+                            <Text style={s.joinBtnText}>Join</Text>
+                          </TouchableOpacity>
+                        )}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+                <TouchableOpacity style={s.exploreAllRow} onPress={onNavigateToGroups} activeOpacity={0.7}>
+                  <Text style={s.exploreAllText}>Explore All Challenges</Text>
+                  <Ionicons name="chevron-forward" size={14} color="#2563EB" />
+                </TouchableOpacity>
               </View>
             )}
 
@@ -890,6 +882,60 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile }: So
         onClose={() => setNotifVisible(false)}
         isDark={isDark}
       />
+
+      <ChallengeDetailModal
+        challenge={selectedChallenge}
+        visible={!!selectedChallenge}
+        onClose={() => setSelectedChallenge(null)}
+        joined={!!selectedChallenge && myChallengeIds.has(selectedChallenge.challenge_id)}
+        progressFloors={weeklyFloorsForChallenges}
+        onJoin={() => selectedChallenge && handleJoinChallenge(selectedChallenge.challenge_id)}
+        isDark={isDark}
+      />
+
+      {/* Search climbers by handle */}
+      <Modal visible={searchModalVisible} animationType="slide" onRequestClose={() => setSearchModalVisible(false)}>
+        <View style={[s.searchModalContainer, isDark && { backgroundColor: '#111827' }]}>
+          <View style={[s.searchModalHeader, isDark && { borderBottomColor: '#374151' }]}>
+            <View style={[s.searchBox, { flex: 1, marginBottom: 0 }, isDark && { backgroundColor: '#1F2937' }]}>
+              <Ionicons name="search" size={16} color="#9CA3AF" />
+              <TextInput
+                style={[s.searchInput, isDark && { color: '#F9FAFB' }]}
+                placeholder="Find climbers by handle..."
+                placeholderTextColor="#9CA3AF"
+                value={searchQuery}
+                onChangeText={handleSearch}
+                autoFocus
+              />
+              {searching && <ActivityIndicator size="small" color="#2563EB" />}
+            </View>
+            <TouchableOpacity onPress={() => { setSearchModalVisible(false); setSearchQuery(''); setSearchResults([]); }} style={{ marginLeft: 12 }}>
+              <Text style={s.searchCancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView contentContainerStyle={{ padding: 16 }}>
+            {searchQuery.trim().length >= 2 ? (
+              searchResults.length > 0 ? (
+                searchResults.map((p) => (
+                  <TouchableOpacity
+                    key={p.user_id}
+                    style={s.searchResultRow}
+                    onPress={() => { setSearchModalVisible(false); setViewingProfileId(p.user_id); }}
+                  >
+                    <MascotAvatar skinIdx={p.avatar_idx} size={32} />
+                    <Text style={[s.searchResultName, isDark && { color: '#F9FAFB' }]}>{p.display_name}</Text>
+                  </TouchableOpacity>
+                ))
+              ) : !searching ? (
+                <Text style={[s.emptyFeedText, isDark && { color: '#9CA3AF' }]}>No climbers found with that handle.</Text>
+              ) : null
+            ) : (
+              <Text style={[s.emptyFeedText, isDark && { color: '#9CA3AF' }]}>Type at least 2 characters to search.</Text>
+            )}
+          </ScrollView>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -920,6 +966,9 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 14,
+  },
+  iconBtn: {
+    padding: 4,
   },
   bellBtn: {
     position: 'relative',
@@ -980,6 +1029,25 @@ const s = StyleSheet.create({
     fontSize: 14,
     color: '#111827',
   },
+  searchModalContainer: {
+    flex: 1,
+    backgroundColor: '#F9FAFB',
+  },
+  searchModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingTop: 56,
+    paddingBottom: 14,
+    paddingHorizontal: 16,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#E5E7EB',
+  },
+  searchCancelText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#2563EB',
+  },
   searchResultRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1024,21 +1092,21 @@ const s = StyleSheet.create({
   section: { marginBottom: 16 },
   feedSectionTitle: { marginBottom: 4, marginTop: 4 },
   challengesSection: { marginBottom: 16 },
+  challengeRow: { gap: 12, paddingRight: 8, paddingTop: 4 },
   challengeCard: {
+    width: 178,
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     padding: 16,
-    marginBottom: 12,
+    alignItems: 'center',
     elevation: 1,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.06,
     shadowRadius: 6,
   },
-  challengeTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+  challengeDifficultyPill: {
+    alignSelf: 'flex-start',
     marginBottom: 10,
   },
   difficultyPill: {
@@ -1047,19 +1115,24 @@ const s = StyleSheet.create({
     borderRadius: 8,
   },
   difficultyText: { fontSize: 10.5, fontWeight: '800', letterSpacing: 0.4 },
-  rewardChip: {
-    flexDirection: 'row',
+  bigBadge: {
+    width: 76,
+    height: 76,
+    borderRadius: 38,
     alignItems: 'center',
-    gap: 4,
-    backgroundColor: '#FFFBEB',
-    paddingHorizontal: 9,
-    paddingVertical: 4,
-    borderRadius: 8,
+    justifyContent: 'center',
+    marginBottom: 8,
   },
-  rewardChipText: { fontSize: 11, fontWeight: '700', color: '#B45309' },
-  challengeTitle: { fontSize: 16, fontWeight: '700', color: '#111827', marginBottom: 4 },
-  challengeDesc: { fontSize: 13, color: '#6B7280', lineHeight: 18, marginBottom: 12 },
-  challengeProgressBlock: { marginTop: 2 },
+  bigBadgeCheck: {
+    position: 'absolute',
+    bottom: -2,
+    right: -2,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+  },
+  rewardLabelBig: { fontSize: 12, fontWeight: '800', marginBottom: 8, textAlign: 'center' },
+  challengeTitle: { fontSize: 14, fontWeight: '700', color: '#111827', marginBottom: 12, textAlign: 'center', minHeight: 36 },
+  challengeProgressBlock: { marginTop: 2, width: '100%' },
   challengeTrack: {
     height: 8,
     borderRadius: 4,
@@ -1067,14 +1140,24 @@ const s = StyleSheet.create({
     overflow: 'hidden',
   },
   challengeFill: { height: '100%', borderRadius: 4 },
-  challengeProgressText: { fontSize: 12, fontWeight: '600', color: '#6B7280', marginTop: 6 },
+  challengeProgressText: { fontSize: 11.5, fontWeight: '600', color: '#6B7280', marginTop: 6, textAlign: 'center' },
   joinBtn: {
     backgroundColor: '#2563EB',
     borderRadius: 10,
-    paddingVertical: 11,
+    paddingVertical: 10,
+    paddingHorizontal: 24,
     alignItems: 'center',
   },
   joinBtnText: { color: '#FFFFFF', fontWeight: '700', fontSize: 13.5 },
+  exploreAllRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    marginTop: 12,
+    paddingVertical: 6,
+  },
+  exploreAllText: { fontSize: 13, fontWeight: '700', color: '#2563EB' },
   recRow: { gap: 12, paddingRight: 8 },
   recCard: {
     width: 110,
