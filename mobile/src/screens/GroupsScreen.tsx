@@ -1,13 +1,14 @@
 import { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Linking } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Linking, Modal, TextInput, Alert } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../config/supabase';
 import AuthPrompt from '../components/AuthPrompt';
 import ChallengeDetailModal from '../components/ChallengeDetailModal';
-import type { Challenge } from '../types';
+import type { Challenge, UserClub, UserEvent, Profile } from '../types';
 
 const DIFFICULTY_COLOR: Record<string, string> = { easy: '#10B981', medium: '#F59E0B', hard: '#EF4444', insane: '#7C3AED' };
+const CLUB_CATEGORIES = ['All', 'Trail Running', 'Hiking', 'Climbing'] as const;
 
 interface Club {
   name: string;
@@ -21,10 +22,14 @@ interface Club {
 const CLUBS: Club[] = [
   { name: 'Trail Runners Singapore', category: 'Trail Running', description: 'Facebook community for SG trail runners — routes, meetups, race chatter.', url: 'https://www.facebook.com/groups/TrailRunnersSingapore/' },
   { name: 'Trail Runners Singapore', category: 'Trail Running', description: 'Same crew, Strava club — join to see group activity and segments.', url: 'https://www.strava.com/clubs/575755' },
+  { name: 'Adidas Runners Singapore', category: 'Trail Running', description: 'Long-running crew, part of a global 50-city running movement.', url: 'https://www.runmagazine.asia/adidas-runners-singapore/' },
+  { name: 'Alpha Runners', category: 'Trail Running', description: 'Strava running club — group activity, segments, and challenges.', url: 'https://www.strava.com/clubs/alpha-runners-330670' },
   { name: 'SG Hiking and Travel Group', category: 'Hiking', description: 'Weekend and weekday nature walks/hikes around Singapore, running 40+ years.', url: 'https://www.facebook.com/groups/sghikingandtravel/' },
   { name: 'Exploring Singapore Hiking Group', category: 'Hiking', description: 'Urban parks, nature reserves, and island trails — for newcomers and regulars.', url: 'https://www.facebook.com/groups/957889039371788/' },
   { name: 'Singapore Sport Climbing and Mountaineering Federation', category: 'Climbing', description: 'The national association for sport climbing and mountaineering in Singapore.', url: 'https://www.facebook.com/singaporesportclimbingandmountaineeringfederation/' },
   { name: 'Rock Climbing Singapore', category: 'Climbing', description: 'General climbing community group — gyms, outdoor trips, partner-finding.', url: 'https://www.facebook.com/groups/369770945505/' },
+  { name: 'Climb Central Singapore', category: 'Climbing', description: 'Five gyms islandwide — high-wall climbing with a growing bouldering scene.', url: 'https://www.climbcentral.sg/' },
+  { name: 'Boulder Planet', category: 'Climbing', description: 'Bouldering gym and community, welcoming to newcomers.', url: 'https://www.boulderplanet.sg/' },
 ];
 
 interface EventItem {
@@ -51,10 +56,42 @@ function daysUntil(iso: string): number {
   return Math.max(0, Math.ceil((new Date(iso).getTime() - Date.now()) / 86400000));
 }
 
+/** Sporty hero banner, built from plain Views/Ionicons — no image asset. */
+function CoverBanner({ icon, title, subtitle, color }: { icon: string; title: string; subtitle: string; color: string }) {
+  return (
+    <View style={[cb.wrap, { backgroundColor: color }]}>
+      <View style={[cb.circle, cb.circleA]} />
+      <View style={[cb.circle, cb.circleB]} />
+      <View style={[cb.circle, cb.circleC]} />
+      <Ionicons name={icon as any} size={30} color="rgba(255,255,255,0.95)" />
+      <Text style={cb.title}>{title}</Text>
+      <Text style={cb.subtitle}>{subtitle}</Text>
+    </View>
+  );
+}
+
+const cb = StyleSheet.create({
+  wrap: {
+    borderRadius: 18,
+    padding: 20,
+    marginBottom: 16,
+    overflow: 'hidden',
+    alignItems: 'flex-start',
+  },
+  circle: { position: 'absolute', borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.12)' },
+  circleA: { width: 120, height: 120, top: -50, right: -30 },
+  circleB: { width: 70, height: 70, bottom: -30, right: 40 },
+  circleC: { width: 40, height: 40, bottom: 10, right: 120 },
+  title: { fontSize: 19, fontWeight: '800', color: '#FFFFFF', marginTop: 10 },
+  subtitle: { fontSize: 12.5, color: 'rgba(255,255,255,0.85)', marginTop: 3, fontWeight: '500' },
+});
+
 export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
   const { user, isAnonymous } = useAuth();
   const [tab, setTab] = useState<Tab>('challenges');
   const [authPromptVisible, setAuthPromptVisible] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [clubCategory, setClubCategory] = useState<typeof CLUB_CATEGORIES[number]>('All');
 
   const [weeklyChallenges, setWeeklyChallenges] = useState<Challenge[]>([]);
   const [monthlyChallenges, setMonthlyChallenges] = useState<Challenge[]>([]);
@@ -64,6 +101,14 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
   const [monthlyFloors, setMonthlyFloors] = useState(0);
   const [limitedTimeProgress, setLimitedTimeProgress] = useState<Record<string, number>>({});
   const [selectedChallenge, setSelectedChallenge] = useState<Challenge | null>(null);
+
+  const [userClubs, setUserClubs] = useState<UserClub[]>([]);
+  const [userEvents, setUserEvents] = useState<UserEvent[]>([]);
+  const [creatorNames, setCreatorNames] = useState<Record<string, string>>({});
+
+  const [createClubVisible, setCreateClubVisible] = useState(false);
+  const [createEventVisible, setCreateEventVisible] = useState(false);
+  const [createChallengeVisible, setCreateChallengeVisible] = useState(false);
 
   const loadChallenges = useCallback(async () => {
     const { data } = await supabase.from('challenges').select('*').eq('is_active', true);
@@ -102,7 +147,27 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
     }
   }, [user]);
 
+  const loadUserContent = useCallback(async () => {
+    const [{ data: clubs }, { data: events }] = await Promise.all([
+      supabase.from('user_clubs').select('*').order('created_at', { ascending: false }),
+      supabase.from('user_events').select('*').order('created_at', { ascending: false }),
+    ]);
+    if (clubs) setUserClubs(clubs as UserClub[]);
+    if (events) setUserEvents(events as UserEvent[]);
+
+    const creatorIds = [...new Set([...(clubs ?? []).map((c: any) => c.creator_id), ...(events ?? []).map((e: any) => e.creator_id)])];
+    if (creatorIds.length > 0) {
+      const { data: profiles } = await supabase.from('profiles').select('*').in('user_id', creatorIds);
+      if (profiles) {
+        const map: Record<string, string> = {};
+        for (const p of profiles as Profile[]) map[p.user_id] = p.display_name;
+        setCreatorNames(map);
+      }
+    }
+  }, []);
+
   useEffect(() => { loadChallenges(); }, [loadChallenges]);
+  useEffect(() => { loadUserContent(); }, [loadUserContent]);
 
   const handleJoin = async (challengeId: string) => {
     if (isAnonymous) { setAuthPromptVisible(true); return; }
@@ -111,10 +176,30 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
     await supabase.from('challenge_participants').insert({ challenge_id: challengeId, user_id: user.id });
   };
 
+  const requireAuth = (action: () => void) => {
+    if (isAnonymous) { setAuthPromptVisible(true); return; }
+    action();
+  };
+
+  const handleReportClub = (clubId: string) => {
+    Alert.alert('Report this club?', '', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Report', style: 'destructive', onPress: () => supabase.rpc('report_user_club', { p_club_id: clubId }) },
+    ]);
+  };
+  const handleReportEvent = (eventId: string) => {
+    Alert.alert('Report this event?', '', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Report', style: 'destructive', onPress: () => supabase.rpc('report_user_event', { p_event_id: eventId }) },
+    ]);
+  };
+
   const progressFor = (ch: Challenge): number => {
     if (ch.starts_at && ch.ends_at) return limitedTimeProgress[ch.challenge_id] ?? 0;
     return ch.period === 'monthly' ? monthlyFloors : weeklyFloors;
   };
+
+  const matchesSearch = (text: string) => searchQuery.trim().length === 0 || text.toLowerCase().includes(searchQuery.trim().toLowerCase());
 
   const renderChallengeCard = (ch: Challenge) => {
     const progressFloors = progressFor(ch);
@@ -155,6 +240,11 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
                   <Text style={s.countdownPillText}>{daysUntil(ch.ends_at)}d left</Text>
                 </View>
               )}
+              {ch.creator_id && (
+                <View style={s.communityPill}>
+                  <Text style={s.communityPillText}>Community</Text>
+                </View>
+              )}
             </View>
             <Text style={[s.rewardLabelBig, isInsane && { color: '#FFFFFF' }, !isInsane && { color }]}>{ch.reward_label}</Text>
           </View>
@@ -184,6 +274,11 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
     );
   };
 
+  const visibleClubs = CLUBS.filter((c) => (clubCategory === 'All' || c.category === clubCategory) && matchesSearch(c.name));
+  const visibleUserClubs = userClubs.filter((c) => (clubCategory === 'All' || c.category === clubCategory) && matchesSearch(c.name));
+  const visibleEvents = EVENTS.filter((e) => matchesSearch(e.name));
+  const visibleUserEvents = userEvents.filter((e) => matchesSearch(e.name));
+
   return (
     <View style={[s.container, isDark && { backgroundColor: '#111827' }]}>
       <View style={[s.header, isDark && { backgroundColor: '#111827', borderBottomColor: '#374151' }]}>
@@ -204,9 +299,29 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
         ))}
       </View>
 
+      {tab !== 'challenges' && (
+        <View style={[s.searchBox, isDark && { backgroundColor: '#1F2937' }]}>
+          <Ionicons name="search" size={16} color="#9CA3AF" />
+          <TextInput
+            style={[s.searchInput, isDark && { color: '#F9FAFB' }]}
+            placeholder={`Search ${tab}...`}
+            placeholderTextColor="#9CA3AF"
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+          />
+        </View>
+      )}
+
       <ScrollView contentContainerStyle={s.scrollContent} showsVerticalScrollIndicator={false}>
         {tab === 'challenges' && (
           <>
+            <View style={s.createRow}>
+              <TouchableOpacity style={s.createBtn} onPress={() => requireAuth(() => setCreateChallengeVisible(true))}>
+                <Ionicons name="add" size={16} color="#2563EB" />
+                <Text style={s.createBtnText}>Create a Challenge</Text>
+              </TouchableOpacity>
+            </View>
+
             {limitedTimeChallenges.length > 0 && (
               <View style={s.groupSection}>
                 <Text style={[s.groupSectionTitle, isDark && { color: '#F9FAFB' }]}>Limited Time</Text>
@@ -230,34 +345,109 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
 
         {tab === 'clubs' && (
           <>
-            {(['Trail Running', 'Hiking', 'Climbing'] as const).map((category) => (
-              <View key={category} style={s.groupSection}>
-                <Text style={[s.groupSectionTitle, isDark && { color: '#F9FAFB' }]}>{category}</Text>
-                {CLUBS.filter((c) => c.category === category).map((club) => (
+            <CoverBanner icon="people" title="Find Your Crew" subtitle="Trail running, hiking, and climbing communities across Singapore" color="#10B981" />
+
+            <View style={s.createRow}>
+              <TouchableOpacity style={s.createBtn} onPress={() => requireAuth(() => setCreateClubVisible(true))}>
+                <Ionicons name="add" size={16} color="#2563EB" />
+                <Text style={s.createBtnText}>Add a Club</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.categoryRow}>
+              {CLUB_CATEGORIES.map((cat) => (
+                <TouchableOpacity
+                  key={cat}
+                  style={[s.categoryChip, clubCategory === cat && s.categoryChipActive, isDark && { backgroundColor: '#1F2937' }, clubCategory === cat && isDark && { backgroundColor: '#2563EB' }]}
+                  onPress={() => setClubCategory(cat)}
+                >
+                  <Text style={[s.categoryChipText, clubCategory === cat && s.categoryChipTextActive, isDark && { color: clubCategory === cat ? '#FFFFFF' : '#D1D5DB' }]}>{cat}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            {visibleUserClubs.length > 0 && (
+              <View style={s.groupSection}>
+                <Text style={[s.groupSectionTitle, isDark && { color: '#F9FAFB' }]}>Community Submissions</Text>
+                {visibleUserClubs.map((club) => (
                   <TouchableOpacity
-                    key={club.name + club.url}
+                    key={club.club_id}
                     style={[s.linkCard, isDark && { backgroundColor: '#1F2937' }]}
-                    onPress={() => Linking.openURL(club.url)}
+                    onPress={() => club.url && Linking.openURL(club.url)}
                     activeOpacity={0.7}
                   >
                     <View style={{ flex: 1 }}>
                       <Text style={[s.linkCardTitle, isDark && { color: '#F9FAFB' }]}>{club.name}</Text>
                       <Text style={[s.linkCardDesc, isDark && { color: '#9CA3AF' }]}>{club.description}</Text>
+                      <Text style={s.linkCardCreator}>Added by {creatorNames[club.creator_id] ?? 'a climber'}</Text>
                     </View>
-                    <Ionicons name="open-outline" size={18} color="#9CA3AF" />
+                    <TouchableOpacity onPress={() => handleReportClub(club.club_id)} hitSlop={8}>
+                      <Ionicons name="ellipsis-horizontal" size={16} color="#9CA3AF" />
+                    </TouchableOpacity>
                   </TouchableOpacity>
                 ))}
               </View>
-            ))}
+            )}
+
+            <View style={s.groupSection}>
+              <Text style={[s.groupSectionTitle, isDark && { color: '#F9FAFB' }]}>Curated</Text>
+              {visibleClubs.map((club) => (
+                <TouchableOpacity
+                  key={club.name + club.url}
+                  style={[s.linkCard, isDark && { backgroundColor: '#1F2937' }]}
+                  onPress={() => Linking.openURL(club.url)}
+                  activeOpacity={0.7}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={[s.linkCardTitle, isDark && { color: '#F9FAFB' }]}>{club.name}</Text>
+                    <Text style={[s.linkCardDesc, isDark && { color: '#9CA3AF' }]}>{club.description}</Text>
+                  </View>
+                  <Ionicons name="open-outline" size={18} color="#9CA3AF" />
+                </TouchableOpacity>
+              ))}
+            </View>
           </>
         )}
 
         {tab === 'events' && (
           <>
+            <CoverBanner icon="trophy" title="Race & Ascend" subtitle="Vertical marathons and stair-climb events, local and worldwide" color="#F59E0B" />
+
+            <View style={s.createRow}>
+              <TouchableOpacity style={s.createBtn} onPress={() => requireAuth(() => setCreateEventVisible(true))}>
+                <Ionicons name="add" size={16} color="#2563EB" />
+                <Text style={s.createBtnText}>Add an Event</Text>
+              </TouchableOpacity>
+            </View>
+
+            {visibleUserEvents.length > 0 && (
+              <View style={s.groupSection}>
+                <Text style={[s.groupSectionTitle, isDark && { color: '#F9FAFB' }]}>Community Submissions</Text>
+                {visibleUserEvents.map((ev) => (
+                  <TouchableOpacity
+                    key={ev.event_id}
+                    style={[s.linkCard, isDark && { backgroundColor: '#1F2937' }]}
+                    onPress={() => ev.url && Linking.openURL(ev.url)}
+                    activeOpacity={0.7}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={[s.linkCardTitle, isDark && { color: '#F9FAFB' }]}>{ev.name}</Text>
+                      <Text style={s.linkCardLocation}>{ev.location}{ev.event_date ? ` · ${new Date(ev.event_date).toLocaleDateString()}` : ''}</Text>
+                      <Text style={[s.linkCardDesc, isDark && { color: '#9CA3AF' }]}>{ev.blurb}</Text>
+                      <Text style={s.linkCardCreator}>Added by {creatorNames[ev.creator_id] ?? 'a climber'}</Text>
+                    </View>
+                    <TouchableOpacity onPress={() => handleReportEvent(ev.event_id)} hitSlop={8}>
+                      <Ionicons name="ellipsis-horizontal" size={16} color="#9CA3AF" />
+                    </TouchableOpacity>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+
             {(['Local', 'Worldwide'] as const).map((scope) => (
               <View key={scope} style={s.groupSection}>
                 <Text style={[s.groupSectionTitle, isDark && { color: '#F9FAFB' }]}>{scope === 'Local' ? 'Local (Singapore)' : 'Worldwide'}</Text>
-                {EVENTS.filter((e) => e.scope === scope).map((ev) => (
+                {visibleEvents.filter((e) => e.scope === scope).map((ev) => (
                   <TouchableOpacity
                     key={ev.name + ev.url}
                     style={[s.linkCard, isDark && { backgroundColor: '#1F2937' }]}
@@ -283,7 +473,7 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
 
       <AuthPrompt
         visible={authPromptVisible}
-        reason="join challenges"
+        reason="create or join challenges, clubs, and events"
         onClose={() => setAuthPromptVisible(false)}
       />
 
@@ -296,9 +486,213 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
         onJoin={() => selectedChallenge && handleJoin(selectedChallenge.challenge_id)}
         isDark={isDark}
       />
+
+      <CreateClubModal
+        visible={createClubVisible}
+        onClose={() => setCreateClubVisible(false)}
+        isDark={isDark}
+        onCreated={(club) => { setUserClubs((prev) => [club, ...prev]); }}
+        userId={user?.id}
+      />
+      <CreateEventModal
+        visible={createEventVisible}
+        onClose={() => setCreateEventVisible(false)}
+        isDark={isDark}
+        onCreated={(ev) => { setUserEvents((prev) => [ev, ...prev]); }}
+        userId={user?.id}
+      />
+      <CreateChallengeModal
+        visible={createChallengeVisible}
+        onClose={() => setCreateChallengeVisible(false)}
+        isDark={isDark}
+        onCreated={(ch) => { setWeeklyChallenges((prev) => ch.period === 'weekly' ? [ch, ...prev] : prev); setMonthlyChallenges((prev) => ch.period === 'monthly' ? [ch, ...prev] : prev); }}
+        userId={user?.id}
+      />
     </View>
   );
 }
+
+// --- Creation modals ---
+
+function CreateClubModal({ visible, onClose, isDark, onCreated, userId }: {
+  visible: boolean; onClose: () => void; isDark: boolean; onCreated: (c: UserClub) => void; userId?: string;
+}) {
+  const [name, setName] = useState('');
+  const [category, setCategory] = useState<'Trail Running' | 'Hiking' | 'Climbing' | 'Other'>('Trail Running');
+  const [description, setDescription] = useState('');
+  const [url, setUrl] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const reset = () => { setName(''); setDescription(''); setUrl(''); setCategory('Trail Running'); };
+
+  const handleCreate = async () => {
+    if (!userId || !name.trim() || !description.trim()) return;
+    setSaving(true);
+    const { data, error } = await supabase.from('user_clubs').insert({
+      creator_id: userId, name: name.trim(), category, description: description.trim(), url: url.trim() || null,
+    }).select().single();
+    setSaving(false);
+    if (error) { Alert.alert('Error', error.message); return; }
+    onCreated(data as UserClub);
+    reset();
+    onClose();
+  };
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+      <View style={fm.overlay}>
+        <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={onClose} />
+        <View style={[fm.sheet, isDark && { backgroundColor: '#1F2937' }]}>
+          <Text style={[fm.title, isDark && { color: '#F9FAFB' }]}>Add a Club</Text>
+          <TextInput style={[fm.input, isDark && fm.inputDark]} placeholder="Club name" placeholderTextColor="#9CA3AF" value={name} onChangeText={setName} maxLength={60} />
+          <View style={fm.pillRow}>
+            {(['Trail Running', 'Hiking', 'Climbing', 'Other'] as const).map((cat) => (
+              <TouchableOpacity key={cat} style={[fm.pill, category === cat && fm.pillActive]} onPress={() => setCategory(cat)}>
+                <Text style={[fm.pillText, category === cat && fm.pillTextActive]}>{cat}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          <TextInput style={[fm.input, fm.textArea, isDark && fm.inputDark]} placeholder="Description" placeholderTextColor="#9CA3AF" value={description} onChangeText={setDescription} multiline maxLength={200} />
+          <TextInput style={[fm.input, isDark && fm.inputDark]} placeholder="Link (Facebook/Strava/etc., optional)" placeholderTextColor="#9CA3AF" value={url} onChangeText={setUrl} autoCapitalize="none" />
+          <TouchableOpacity style={[fm.submitBtn, (!name.trim() || !description.trim() || saving) && { opacity: 0.5 }]} onPress={handleCreate} disabled={!name.trim() || !description.trim() || saving}>
+            <Text style={fm.submitBtnText}>{saving ? 'Adding...' : 'Add Club'}</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function CreateEventModal({ visible, onClose, isDark, onCreated, userId }: {
+  visible: boolean; onClose: () => void; isDark: boolean; onCreated: (e: UserEvent) => void; userId?: string;
+}) {
+  const [name, setName] = useState('');
+  const [location, setLocation] = useState('');
+  const [blurb, setBlurb] = useState('');
+  const [scope, setScope] = useState<'Local' | 'Worldwide'>('Local');
+  const [url, setUrl] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const reset = () => { setName(''); setLocation(''); setBlurb(''); setUrl(''); setScope('Local'); };
+
+  const handleCreate = async () => {
+    if (!userId || !name.trim() || !location.trim() || !blurb.trim()) return;
+    setSaving(true);
+    const { data, error } = await supabase.from('user_events').insert({
+      creator_id: userId, name: name.trim(), location: location.trim(), blurb: blurb.trim(), scope, url: url.trim() || null,
+    }).select().single();
+    setSaving(false);
+    if (error) { Alert.alert('Error', error.message); return; }
+    onCreated(data as UserEvent);
+    reset();
+    onClose();
+  };
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+      <View style={fm.overlay}>
+        <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={onClose} />
+        <View style={[fm.sheet, isDark && { backgroundColor: '#1F2937' }]}>
+          <Text style={[fm.title, isDark && { color: '#F9FAFB' }]}>Add an Event</Text>
+          <TextInput style={[fm.input, isDark && fm.inputDark]} placeholder="Event name" placeholderTextColor="#9CA3AF" value={name} onChangeText={setName} maxLength={60} />
+          <TextInput style={[fm.input, isDark && fm.inputDark]} placeholder="Location" placeholderTextColor="#9CA3AF" value={location} onChangeText={setLocation} maxLength={80} />
+          <View style={fm.pillRow}>
+            {(['Local', 'Worldwide'] as const).map((sc) => (
+              <TouchableOpacity key={sc} style={[fm.pill, scope === sc && fm.pillActive]} onPress={() => setScope(sc)}>
+                <Text style={[fm.pillText, scope === sc && fm.pillTextActive]}>{sc}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          <TextInput style={[fm.input, fm.textArea, isDark && fm.inputDark]} placeholder="Description" placeholderTextColor="#9CA3AF" value={blurb} onChangeText={setBlurb} multiline maxLength={200} />
+          <TextInput style={[fm.input, isDark && fm.inputDark]} placeholder="Link (optional)" placeholderTextColor="#9CA3AF" value={url} onChangeText={setUrl} autoCapitalize="none" />
+          <TouchableOpacity style={[fm.submitBtn, (!name.trim() || !location.trim() || !blurb.trim() || saving) && { opacity: 0.5 }]} onPress={handleCreate} disabled={!name.trim() || !location.trim() || !blurb.trim() || saving}>
+            <Text style={fm.submitBtnText}>{saving ? 'Adding...' : 'Add Event'}</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function CreateChallengeModal({ visible, onClose, isDark, onCreated, userId }: {
+  visible: boolean; onClose: () => void; isDark: boolean; onCreated: (c: Challenge) => void; userId?: string;
+}) {
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [difficulty, setDifficulty] = useState<'easy' | 'medium' | 'hard'>('medium');
+  const [period, setPeriod] = useState<'weekly' | 'monthly'>('weekly');
+  const [targetFloors, setTargetFloors] = useState('100');
+  const [saving, setSaving] = useState(false);
+
+  const reset = () => { setTitle(''); setDescription(''); setDifficulty('medium'); setPeriod('weekly'); setTargetFloors('100'); };
+
+  const handleCreate = async () => {
+    const target = parseInt(targetFloors, 10);
+    if (!userId || !title.trim() || !description.trim() || !target || target <= 0) return;
+    setSaving(true);
+    // No badge_key — custom challenges don't grant a real badge (there's no
+    // matching BADGE_DEFS entry to award), just the target/progress tracking.
+    const { data, error } = await supabase.from('challenges').insert({
+      title: title.trim(), description: description.trim(), difficulty, period,
+      target_floors: target, reward_icon: 'trophy-outline', reward_label: 'Custom Challenge',
+      organizer: 'A fellow climber', creator_id: userId, is_active: true,
+    }).select().single();
+    setSaving(false);
+    if (error) { Alert.alert('Error', error.message); return; }
+    onCreated(data as Challenge);
+    reset();
+    onClose();
+  };
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+      <View style={fm.overlay}>
+        <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={onClose} />
+        <View style={[fm.sheet, isDark && { backgroundColor: '#1F2937' }]}>
+          <Text style={[fm.title, isDark && { color: '#F9FAFB' }]}>Create a Challenge</Text>
+          <TextInput style={[fm.input, isDark && fm.inputDark]} placeholder="Challenge title" placeholderTextColor="#9CA3AF" value={title} onChangeText={setTitle} maxLength={60} />
+          <TextInput style={[fm.input, fm.textArea, isDark && fm.inputDark]} placeholder="What does it take to complete this?" placeholderTextColor="#9CA3AF" value={description} onChangeText={setDescription} multiline maxLength={200} />
+          <View style={fm.pillRow}>
+            {(['easy', 'medium', 'hard'] as const).map((d) => (
+              <TouchableOpacity key={d} style={[fm.pill, difficulty === d && fm.pillActive]} onPress={() => setDifficulty(d)}>
+                <Text style={[fm.pillText, difficulty === d && fm.pillTextActive]}>{d.toUpperCase()}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          <View style={fm.pillRow}>
+            {(['weekly', 'monthly'] as const).map((p) => (
+              <TouchableOpacity key={p} style={[fm.pill, period === p && fm.pillActive]} onPress={() => setPeriod(p)}>
+                <Text style={[fm.pillText, period === p && fm.pillTextActive]}>{p.toUpperCase()}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          <TextInput style={[fm.input, isDark && fm.inputDark]} placeholder="Target floors (e.g. 300)" placeholderTextColor="#9CA3AF" value={targetFloors} onChangeText={setTargetFloors} keyboardType="number-pad" />
+          <Text style={fm.hint}>Custom challenges track progress but don't award a profile badge — that's reserved for official challenges.</Text>
+          <TouchableOpacity style={[fm.submitBtn, (!title.trim() || !description.trim() || saving) && { opacity: 0.5 }]} onPress={handleCreate} disabled={!title.trim() || !description.trim() || saving}>
+            <Text style={fm.submitBtnText}>{saving ? 'Creating...' : 'Create Challenge'}</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+const fm = StyleSheet.create({
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  sheet: { backgroundColor: '#FFFFFF', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 32 },
+  title: { fontSize: 18, fontWeight: '800', color: '#111827', marginBottom: 14 },
+  input: { backgroundColor: '#F3F4F6', borderRadius: 12, padding: 14, fontSize: 14, color: '#111827', marginBottom: 10 },
+  inputDark: { backgroundColor: '#111827', color: '#F9FAFB' },
+  textArea: { minHeight: 70, textAlignVertical: 'top' },
+  pillRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 },
+  pill: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 10, backgroundColor: '#F3F4F6' },
+  pillActive: { backgroundColor: '#2563EB' },
+  pillText: { fontSize: 12, fontWeight: '700', color: '#6B7280' },
+  pillTextActive: { color: '#FFFFFF' },
+  hint: { fontSize: 11.5, color: '#9CA3AF', lineHeight: 16, marginBottom: 14 },
+  submitBtn: { backgroundColor: '#2563EB', borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
+  submitBtnText: { color: '#FFFFFF', fontWeight: '700', fontSize: 14.5 },
+});
 
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F9FAFB' },
@@ -325,7 +719,30 @@ const s = StyleSheet.create({
   tabBtnText: { fontSize: 13, fontWeight: '700', color: '#9CA3AF' },
   tabBtnTextActive: { color: '#111827' },
 
+  searchBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    marginHorizontal: 16,
+    marginTop: 12,
+  },
+  searchInput: { flex: 1, fontSize: 14, color: '#111827' },
+
   scrollContent: { padding: 16, paddingBottom: 32 },
+
+  createRow: { alignItems: 'flex-end', marginBottom: 12 },
+  createBtn: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  createBtnText: { fontSize: 13, fontWeight: '700', color: '#2563EB' },
+
+  categoryRow: { gap: 8, paddingBottom: 4, marginBottom: 12 },
+  categoryChip: { backgroundColor: '#FFFFFF', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 8 },
+  categoryChipActive: { backgroundColor: '#2563EB' },
+  categoryChipText: { fontSize: 12.5, fontWeight: '700', color: '#6B7280' },
+  categoryChipTextActive: { color: '#FFFFFF' },
 
   groupSection: { marginBottom: 20 },
   groupSectionTitle: { fontSize: 15, fontWeight: '700', color: '#111827', marginBottom: 10 },
@@ -347,6 +764,7 @@ const s = StyleSheet.create({
   linkCardTitle: { fontSize: 14, fontWeight: '700', color: '#111827' },
   linkCardLocation: { fontSize: 11.5, fontWeight: '600', color: '#2563EB', marginTop: 2 },
   linkCardDesc: { fontSize: 12.5, color: '#6B7280', marginTop: 3, lineHeight: 17 },
+  linkCardCreator: { fontSize: 11, color: '#9CA3AF', marginTop: 4, fontStyle: 'italic' },
   eventsFootnote: { fontSize: 11.5, color: '#9CA3AF', textAlign: 'center', marginTop: 4, lineHeight: 16 },
 
   challengeCard: {
@@ -373,6 +791,8 @@ const s = StyleSheet.create({
     paddingVertical: 4,
   },
   countdownPillText: { fontSize: 10, fontWeight: '800', color: '#EF4444' },
+  communityPill: { backgroundColor: '#EFF6FF', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 },
+  communityPillText: { fontSize: 10, fontWeight: '800', color: '#2563EB' },
   bigBadge: {
     width: 64,
     height: 64,
