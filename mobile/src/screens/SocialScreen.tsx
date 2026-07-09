@@ -21,6 +21,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../config/supabase';
 import { getUnreadNotificationCount } from '../services/climbs';
 import { base64ToUint8Array } from '../utils/base64';
+import storage from '../utils/storage';
 import AuthPrompt from '../components/AuthPrompt';
 import MascotAvatar from '../components/MascotAvatar';
 import PublicProfileModal from '../components/PublicProfileModal';
@@ -28,6 +29,9 @@ import LeaderboardModal from '../components/LeaderboardModal';
 import NotificationsModal from '../components/NotificationsModal';
 import ChallengeDetailModal from '../components/ChallengeDetailModal';
 import type { Profile, Challenge } from '../types';
+import { BADGE_DEFS } from '../types';
+
+const HIDDEN_POSTS_KEY = 'hidden_feed_posts';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const MOCK_PHOTOS = [
@@ -164,6 +168,10 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
 
   // Challenge detail (Strava-style)
   const [selectedChallenge, setSelectedChallenge] = useState<Challenge | null>(null);
+
+  // Feed post 3-dot menu: who I follow, and posts I've locally hidden
+  const [followingIds, setFollowingIds] = useState<Set<string>>(new Set());
+  const [hiddenPostIds, setHiddenPostIds] = useState<Set<string>>(new Set());
 
   // Header: own avatar + notification bell
   const [myProfile, setMyProfile] = useState<Profile | null>(null);
@@ -324,11 +332,26 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
     await supabase.from('challenge_participants').insert({ challenge_id: challengeId, user_id: user.id });
   };
 
+  const loadFollowing = useCallback(async () => {
+    if (!user) return;
+    const { data } = await supabase.from('follows').select('followee_id').eq('follower_id', user.id);
+    if (data) setFollowingIds(new Set(data.map((f: any) => f.followee_id)));
+  }, [user]);
+
   useEffect(() => { loadFeed(); }, [loadFeed]);
   useEffect(() => { loadLeaderboard(); }, [loadLeaderboard]);
   useEffect(() => { loadHeader(); }, [loadHeader]);
   useEffect(() => { loadChallenges(); }, [loadChallenges]);
   useEffect(() => { loadRecommended(); }, [loadRecommended]);
+  useEffect(() => { loadFollowing(); }, [loadFollowing]);
+
+  // Locally-hidden posts persist across launches but are per-device only —
+  // "hide" just means "stop showing me this," not a report.
+  useEffect(() => {
+    storage.getItem(HIDDEN_POSTS_KEY).then((val) => {
+      if (val) { try { setHiddenPostIds(new Set(JSON.parse(val))); } catch {} }
+    });
+  }, []);
 
   const handleRefresh = () => {
     setRefreshing(true);
@@ -337,6 +360,54 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
     loadHeader();
     loadChallenges();
     loadRecommended();
+    loadFollowing();
+  };
+
+  const handleToggleFollow = async (targetUserId: string) => {
+    if (isAnonymous) { setAuthPromptVisible(true); return; }
+    if (!user) return;
+    const isFollowing = followingIds.has(targetUserId);
+    setFollowingIds((prev) => {
+      const next = new Set(prev);
+      if (isFollowing) next.delete(targetUserId); else next.add(targetUserId);
+      return next;
+    });
+    if (isFollowing) {
+      await supabase.from('follows').delete().eq('follower_id', user.id).eq('followee_id', targetUserId);
+    } else {
+      await supabase.from('follows').insert({ follower_id: user.id, followee_id: targetUserId });
+    }
+  };
+
+  const handleHidePost = (climbId: string) => {
+    setHiddenPostIds((prev) => {
+      const next = new Set(prev).add(climbId);
+      storage.setItem(HIDDEN_POSTS_KEY, JSON.stringify([...next]));
+      return next;
+    });
+  };
+
+  const handleReportPost = async (climbId: string) => {
+    if (isAnonymous) { setAuthPromptVisible(true); return; }
+    if (!user || climbId.startsWith('mock-')) {
+      Alert.alert('Reported', 'Thanks — we\'ll take a look.');
+      return;
+    }
+    await supabase.rpc('report_climb_post', { p_climb_id: climbId });
+    Alert.alert('Reported', 'Thanks — we\'ll take a look.');
+  };
+
+  const openPostMenu = (item: FeedItem) => {
+    const isFollowing = followingIds.has(item.user_id);
+    Alert.alert('', nameFor(item.user_id), [
+      {
+        text: isFollowing ? 'Unfollow' : 'Follow',
+        onPress: () => handleToggleFollow(item.user_id),
+      },
+      { text: 'Hide this post', onPress: () => handleHidePost(item.climb_id) },
+      { text: 'Report post', style: 'destructive', onPress: () => handleReportPost(item.climb_id) },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
   };
 
   const handleToggleKudos = async (item: FeedItem) => {
@@ -512,6 +583,9 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
 
   if (authLoading) return null;
 
+  const visibleFeed = feed.filter((f) => !hiddenPostIds.has(f.climb_id));
+  const localLegendId = leaderboard[0]?.user_id;
+
   return (
     <View style={[s.container, isDark && { backgroundColor: '#111827' }]}>
       <View style={[s.header, isDark && { backgroundColor: '#111827', borderBottomColor: '#374151' }]}>
@@ -537,7 +611,7 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
       </View>
 
       <FlatList
-        data={feed}
+        data={visibleFeed}
         keyExtractor={(item) => item.climb_id}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor="#2563EB" />}
         ListHeaderComponent={
@@ -670,21 +744,50 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
             </View>
           ) : null
         }
-        renderItem={({ item }) => (
+        renderItem={({ item }) => {
+          const poster = profilesMap[item.user_id];
+          const featuredBadgeDef = poster?.featured_badge ? BADGE_DEFS.find((d) => d.key === poster.featured_badge) : null;
+          const isLocalLegend = !!localLegendId && item.user_id === localLegendId;
+          const isOwnPost = user?.id === item.user_id;
+          const isMock = item.user_id.startsWith('mock-');
+
+          return (
           <View style={[s.feedCard, isDark && { backgroundColor: '#1F2937' }]}>
-            <TouchableOpacity
-              style={s.feedHeader}
-              onPress={() => !item.user_id.startsWith('mock-') && user?.id !== item.user_id && setViewingProfileId(item.user_id)}
-              activeOpacity={0.7}
-            >
-              <MascotAvatar skinIdx={skinFor(item.user_id)} size={36} />
-              <View style={{ flex: 1 }}>
-                <Text style={[s.feedName, isDark && { color: '#F9FAFB' }]}>
-                  {user?.id === item.user_id ? 'You' : nameFor(item.user_id)}
-                </Text>
-                <Text style={s.feedTime}>{formatRelativeTime(item.created_at)}</Text>
-              </View>
-            </TouchableOpacity>
+            <View style={s.feedHeaderRow}>
+              <TouchableOpacity
+                style={s.feedHeader}
+                onPress={() => !isMock && !isOwnPost && setViewingProfileId(item.user_id)}
+                activeOpacity={0.7}
+              >
+                <MascotAvatar skinIdx={skinFor(item.user_id)} size={36} />
+                <View style={{ flex: 1 }}>
+                  <View style={s.feedNameRow}>
+                    <Text style={[s.feedName, isDark && { color: '#F9FAFB' }]}>
+                      {isOwnPost ? 'You' : nameFor(item.user_id)}
+                    </Text>
+                    {featuredBadgeDef && (
+                      <Ionicons name={featuredBadgeDef.icon as any} size={13} color="#F59E0B" />
+                    )}
+                    {poster?.is_pro && (
+                      <View style={s.proChip}><Text style={s.proChipText}>PRO</Text></View>
+                    )}
+                    {isLocalLegend && (
+                      <View style={s.legendChip}>
+                        <Ionicons name="trophy" size={10} color="#B45309" />
+                        <Text style={s.legendChipText}>Local Legend</Text>
+                      </View>
+                    )}
+                  </View>
+                  <Text style={s.feedTime}>{formatRelativeTime(item.created_at)}</Text>
+                </View>
+              </TouchableOpacity>
+
+              {!isOwnPost && !isMock && (
+                <TouchableOpacity style={s.menuBtn} onPress={() => openPostMenu(item)} hitSlop={8}>
+                  <Ionicons name="ellipsis-horizontal" size={18} color={isDark ? '#9CA3AF' : '#6B7280'} />
+                </TouchableOpacity>
+              )}
+            </View>
 
             <Text style={[s.feedBody, isDark && { color: '#D1D5DB' }]}>
               climbed <Text style={s.feedFloors}>{item.floors_climbed} floors</Text>
@@ -760,7 +863,8 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
               </View>
             )}
           </View>
-        )}
+          );
+        }}
         contentContainerStyle={s.scrollContent}
         showsVerticalScrollIndicator={false}
       />
@@ -1194,14 +1298,43 @@ const s = StyleSheet.create({
     shadowOpacity: 0.06,
     shadowRadius: 6,
   },
+  feedHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 10,
+  },
   feedHeader: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    marginBottom: 10,
+  },
+  feedNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexWrap: 'wrap',
   },
   feedName: { fontSize: 14, fontWeight: '700', color: '#111827' },
   feedTime: { fontSize: 11, color: '#9CA3AF', marginTop: 1 },
+  menuBtn: { padding: 4 },
+  proChip: {
+    backgroundColor: '#111827',
+    borderRadius: 5,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+  },
+  proChipText: { fontSize: 9, fontWeight: '800', color: '#FBBF24', letterSpacing: 0.3 },
+  legendChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#FFFBEB',
+    borderRadius: 5,
+    paddingHorizontal: 5,
+    paddingVertical: 1.5,
+  },
+  legendChipText: { fontSize: 9.5, fontWeight: '700', color: '#B45309' },
   feedBody: { fontSize: 14, color: '#374151', lineHeight: 20, marginBottom: 4 },
   feedFloors: { fontWeight: '700', color: '#10B981' },
   feedCaption: { fontSize: 14, color: '#111827', marginTop: 6, lineHeight: 19 },

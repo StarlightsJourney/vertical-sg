@@ -36,6 +36,7 @@ export interface Profile {
   display_name: string;
   avatar_idx: number;
   featured_badge: string | null;
+  is_pro: boolean;
   created_at: string;
   updated_at: string;
 }
