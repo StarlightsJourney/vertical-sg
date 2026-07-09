@@ -78,7 +78,7 @@ export default function SettingsModal({
               </TouchableOpacity>
             ) : (
               <TouchableOpacity
-                style={st.secondaryBtn}
+                style={[st.secondaryBtn, isDark && { backgroundColor: '#374151' }]}
                 onPress={() => {
                   Alert.alert('Sign out', 'Are you sure?', [
                     { text: 'Cancel', style: 'cancel' },
@@ -86,7 +86,7 @@ export default function SettingsModal({
                   ]);
                 }}
               >
-                <Text style={st.secondaryBtnText}>Sign Out</Text>
+                <Text style={[st.secondaryBtnText, isDark && { color: '#F9FAFB' }]}>Sign Out</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -97,7 +97,7 @@ export default function SettingsModal({
             {THEME_OPTIONS.map((opt) => (
               <TouchableOpacity
                 key={opt.value}
-                style={[st.themeOption, themeMode === opt.value && st.themeOptionActive]}
+                style={[st.themeOption, isDark && { backgroundColor: '#374151' }, themeMode === opt.value && st.themeOptionActive]}
                 onPress={() => onSetThemeMode(opt.value)}
               >
                 <Ionicons name={opt.icon as any} size={20} color={themeMode === opt.value ? '#FFFFFF' : (isDark ? '#D1D5DB' : '#6B7280')} />

@@ -51,6 +51,9 @@ export interface ClimbRecord {
   synced: boolean;
   caption: string | null;
   photo_path: string | null;
+  /** How floors_climbed was actually determined — shown to other users so they know how much to trust the number. */
+  tracking_method: 'barometer' | 'pedometer' | 'manual';
+  duration_seconds: number | null;
   created_at: string;
 }
 
@@ -76,6 +79,32 @@ export interface Challenge {
   /** Both set → a genuinely limited-time challenge checked against this fixed window, not the rolling weekly/monthly one. */
   starts_at: string | null;
   ends_at: string | null;
+  /** null = official/seeded challenge; otherwise a user-created one (no badge_key — custom challenges don't grant a real badge, there's no BADGE_DEFS entry to award). */
+  creator_id: string | null;
+}
+
+export interface UserClub {
+  club_id: string;
+  creator_id: string;
+  name: string;
+  category: 'Trail Running' | 'Hiking' | 'Climbing' | 'Other';
+  description: string;
+  url: string | null;
+  status: 'active' | 'hidden';
+  created_at: string;
+}
+
+export interface UserEvent {
+  event_id: string;
+  creator_id: string;
+  name: string;
+  location: string;
+  blurb: string;
+  scope: 'Local' | 'Worldwide';
+  event_date: string | null;
+  url: string | null;
+  status: 'active' | 'hidden';
+  created_at: string;
 }
 
 export interface HeightVerification {

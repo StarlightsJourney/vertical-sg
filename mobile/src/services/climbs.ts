@@ -28,11 +28,13 @@ export async function logClimb(
   partialFloors: number = 0,
   caption?: string,
   photoPath?: string,
-): Promise<{ synced: boolean; error?: string }> {
+  trackingMethod: 'barometer' | 'pedometer' | 'manual' = 'manual',
+  durationSeconds?: number,
+): Promise<{ synced: boolean; error?: string; climbId?: string }> {
   const floorsClimbed = storeys * qty + partialFloors;
 
   try {
-    const { error } = await supabase.from('climbs').insert({
+    const { data, error } = await supabase.from('climbs').insert({
       user_id: userId,
       block_id: blockId,
       climb_qty: qty,
@@ -41,7 +43,9 @@ export async function logClimb(
       synced: true,
       caption: caption ?? null,
       photo_path: photoPath ?? null,
-    });
+      tracking_method: trackingMethod,
+      duration_seconds: durationSeconds ?? null,
+    }).select('climb_id').single();
 
     if (error) {
       // Network/transient error — queue locally
@@ -49,7 +53,7 @@ export async function logClimb(
       return { synced: false, error: error.message };
     }
 
-    return { synced: true };
+    return { synced: true, climbId: data?.climb_id };
   } catch (_err) {
     // Any failure (network offline, DNS, timeout) → queue locally
     await queueClimbsLocally(blkNo, street, storeys, blockId, floorsClimbed);

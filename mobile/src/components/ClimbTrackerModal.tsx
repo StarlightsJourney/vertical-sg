@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Modal, ActivityIndicator, TextInput, Image, Alert, Share } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Modal, ActivityIndicator, TextInput, Image, Alert } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { Barometer, Pedometer } from 'expo-sensors';
 import * as ImagePicker from 'expo-image-picker';
@@ -12,13 +12,18 @@ interface Props {
   block: Block | null;
   visible: boolean;
   onClose: () => void;
-  onSave: (floorsClimbed: number, caption?: string, photoPath?: string) => void;
+  onSave: (
+    floorsClimbed: number, caption?: string, photoPath?: string,
+    trackingMethod?: 'barometer' | 'pedometer', durationSeconds?: number,
+  ) => Promise<string | undefined>;
   onUseManualEntry: () => void;
+  onNavigateToSocial?: () => void;
 }
 
 const METERS_PER_FLOOR = 2.8; // matches est_height_m = storeys * 2.8 elsewhere in the app
 const MIN_DELTA_M = 0.1; // ignore barometer jitter below this per-sample noise floor
 const STEPS_PER_FLOOR = 16; // typical HDB stairwell flight — used when there's no barometer
+const MIN_VALID_SECONDS = 15; // shorter than this and it's almost certainly a mis-tap, not a real climb
 
 type Phase = 'checking' | 'unavailable' | 'ready' | 'tracking' | 'summary' | 'saved';
 type SensorMode = 'barometer' | 'pedometer';
@@ -37,7 +42,7 @@ function formatElapsed(seconds: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
-export default function ClimbTrackerModal({ block, visible, onClose, onSave, onUseManualEntry }: Props) {
+export default function ClimbTrackerModal({ block, visible, onClose, onSave, onUseManualEntry, onNavigateToSocial }: Props) {
   const { user } = useAuth();
   const [phase, setPhase] = useState<Phase>('checking');
   const [sensorMode, setSensorMode] = useState<SensorMode>('barometer');
@@ -51,6 +56,9 @@ export default function ClimbTrackerModal({ block, visible, onClose, onSave, onU
   const [photoBase64, setPhotoBase64] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [savedFloors, setSavedFloors] = useState(0);
+  const [savedClimbId, setSavedClimbId] = useState<string | undefined>(undefined);
+  const [postedToFeed, setPostedToFeed] = useState(false);
+  const [posting, setPosting] = useState(false);
 
   const baselinePressure = useRef<number | null>(null);
   const lastAltitude = useRef(0);
@@ -91,6 +99,8 @@ export default function ClimbTrackerModal({ block, visible, onClose, onSave, onU
     setPaused(false);
     setCaptionText('');
     setPhotoBase64(null);
+    setSavedClimbId(undefined);
+    setPostedToFeed(false);
     baselinePressure.current = null;
     lastAltitude.current = 0;
     totalGain.current = 0;
@@ -189,6 +199,17 @@ export default function ClimbTrackerModal({ block, visible, onClose, onSave, onU
 
   const handleStop = () => {
     stopTracking();
+    if (elapsed < MIN_VALID_SECONDS) {
+      Alert.alert(
+        'That was really short',
+        `Only ${elapsed}s tracked — this looks like a mis-tap rather than a real climb. Log it anyway?`,
+        [
+          { text: 'Discard', style: 'destructive', onPress: handleClose },
+          { text: 'Log It Anyway', onPress: () => setPhase('summary') },
+        ],
+      );
+      return;
+    }
     setPhase('summary');
   };
 
@@ -213,23 +234,39 @@ export default function ClimbTrackerModal({ block, visible, onClose, onSave, onU
     }
   };
 
+  const openPhotoPicker = () => {
+    Alert.alert('Add Photo', '', [
+      { text: 'Take Photo', onPress: () => pickPhoto('camera') },
+      { text: 'Choose from Library', onPress: () => pickPhoto('library') },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  };
+
   const floorsClimbed = Math.round(elevationGain / METERS_PER_FLOOR);
+
+  const uploadPhoto = async (base64: string): Promise<string | undefined> => {
+    if (!user) return undefined;
+    const photoPath = `feed/${user.id}-${Date.now()}.jpg`;
+    const bytes = base64ToUint8Array(base64);
+    const { error } = await supabase.storage.from('building-photos').upload(photoPath, bytes, { contentType: 'image/jpeg' });
+    if (error) {
+      Alert.alert('Upload Failed', error.message);
+      return undefined;
+    }
+    return photoPath;
+  };
 
   const handleSaveClimb = async () => {
     const finalFloors = Math.max(1, floorsClimbed);
     setSaving(true);
     try {
       let photoPath: string | undefined;
-      if (photoBase64 && user) {
-        photoPath = `feed/${user.id}-${Date.now()}.jpg`;
-        const bytes = base64ToUint8Array(photoBase64);
-        const { error } = await supabase.storage.from('building-photos').upload(photoPath, bytes, { contentType: 'image/jpeg' });
-        if (error) {
-          Alert.alert('Upload Failed', error.message);
-          photoPath = undefined;
-        }
+      if (photoBase64) {
+        photoPath = await uploadPhoto(photoBase64);
       }
-      onSave(finalFloors, captionText.trim() || undefined, photoPath);
+      const climbId = await onSave(finalFloors, captionText.trim() || undefined, photoPath, sensorMode, elapsed);
+      setSavedClimbId(climbId);
+      setPostedToFeed(!!photoPath);
       setSavedFloors(finalFloors);
       setPhase('saved');
     } finally {
@@ -237,10 +274,24 @@ export default function ClimbTrackerModal({ block, visible, onClose, onSave, onU
     }
   };
 
-  const handleShare = () => {
-    Share.share({
-      message: `I just climbed ${savedFloors} floors${block ? ` at Blk ${block.blk_no} ${block.street}` : ''} on Vertical! 🏃‍♂️🏢`,
-    });
+  // Adding a photo after the climb was already saved (without one) — posts
+  // it to the feed retroactively via an update, same as the composer flow
+  // on SocialScreen for climbs logged without a photo.
+  const handlePostToFeedNow = async () => {
+    if (!photoBase64 || !savedClimbId || !user) return;
+    setPosting(true);
+    try {
+      const photoPath = await uploadPhoto(photoBase64);
+      if (!photoPath) return;
+      const { error } = await supabase.from('climbs').update({ photo_path: photoPath }).eq('climb_id', savedClimbId).eq('user_id', user.id);
+      if (error) {
+        Alert.alert('Error', error.message);
+        return;
+      }
+      setPostedToFeed(true);
+    } finally {
+      setPosting(false);
+    }
   };
 
   return (
@@ -372,22 +423,13 @@ export default function ClimbTrackerModal({ block, visible, onClose, onSave, onU
                 multiline
                 maxLength={200}
               />
-              <TouchableOpacity
-                style={styles.summaryPhotoBtn}
-                onPress={() => {
-                  Alert.alert('Add Photo', '', [
-                    { text: 'Take Photo', onPress: () => pickPhoto('camera') },
-                    { text: 'Choose from Library', onPress: () => pickPhoto('library') },
-                    { text: 'Cancel', style: 'cancel' },
-                  ]);
-                }}
-              >
+              <TouchableOpacity style={styles.summaryPhotoBtn} onPress={openPhotoPicker}>
                 {photoBase64 ? (
                   <Image source={{ uri: `data:image/jpeg;base64,${photoBase64}` }} style={styles.summaryPhotoPreview} />
                 ) : (
                   <>
                     <Ionicons name="camera-outline" size={20} color="#6B7280" />
-                    <Text style={styles.summaryPhotoBtnText}>Attach a photo (optional)</Text>
+                    <Text style={styles.summaryPhotoBtnText}>Attach a photo to share to your feed</Text>
                   </>
                 )}
               </TouchableOpacity>
@@ -408,10 +450,38 @@ export default function ClimbTrackerModal({ block, visible, onClose, onSave, onU
             <Text style={styles.summaryTitle}>Saved!</Text>
             <Text style={styles.readyText}>{savedFloors} floors logged to your profile.</Text>
 
-            <TouchableOpacity style={styles.shareBtn} onPress={handleShare} activeOpacity={0.85}>
-              <Ionicons name="share-social-outline" size={18} color="#FFF" />
-              <Text style={styles.primaryBtnText}>Share</Text>
-            </TouchableOpacity>
+            {postedToFeed ? (
+              <>
+                <Text style={[styles.readyText, { marginTop: 4 }]}>It's on your feed for others to see.</Text>
+                <TouchableOpacity style={styles.shareBtn} onPress={() => { onNavigateToSocial?.(); handleClose(); }} activeOpacity={0.85}>
+                  <Ionicons name="people-outline" size={18} color="#FFF" />
+                  <Text style={styles.primaryBtnText}>View in Feed</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <>
+                <Text style={[styles.readyText, { marginTop: 4 }]}>No photo attached — this won't show on your feed.</Text>
+                {photoBase64 ? (
+                  <Image source={{ uri: `data:image/jpeg;base64,${photoBase64}` }} style={styles.savedPhotoPreview} />
+                ) : (
+                  <TouchableOpacity style={styles.summaryPhotoBtn} onPress={openPhotoPicker}>
+                    <Ionicons name="camera-outline" size={20} color="#6B7280" />
+                    <Text style={styles.summaryPhotoBtnText}>Attach a photo to share</Text>
+                  </TouchableOpacity>
+                )}
+                {photoBase64 && (
+                  <TouchableOpacity style={[styles.shareBtn, posting && { opacity: 0.6 }]} onPress={handlePostToFeedNow} disabled={posting} activeOpacity={0.85}>
+                    {posting ? <ActivityIndicator size="small" color="#FFF" /> : (
+                      <>
+                        <Ionicons name="people-outline" size={18} color="#FFF" />
+                        <Text style={styles.primaryBtnText}>Post to Feed</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                )}
+              </>
+            )}
+
             <TouchableOpacity style={styles.textLink} onPress={handleClose}>
               <Text style={styles.textLinkText}>Done</Text>
             </TouchableOpacity>
@@ -493,6 +563,7 @@ const styles = StyleSheet.create({
   },
   summaryPhotoBtnText: { fontSize: 13, color: '#6B7280', fontWeight: '500' },
   summaryPhotoPreview: { width: '100%', height: 140, borderRadius: 10 },
+  savedPhotoPreview: { width: 220, height: 140, borderRadius: 10, marginTop: 8, marginBottom: 8 },
 
   shareBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,

@@ -118,7 +118,7 @@ function PulsingBorder({ children }: { children: React.ReactNode }) {
   );
 }
 
-export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) {
+export default function MapScreen({ isDark: isDarkProp, onNavigateToSocial }: { isDark?: boolean; onNavigateToSocial?: () => void }) {
   const location = useLocation();
   const mapRef = useRef<MapRef>(null);
   const cameraRef = useRef<CameraRef>(null);
@@ -458,10 +458,13 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
     });
   }, []);
 
-  const handleLogClimb = useCallback(async (block: Block, qty: number, partialFloors: number, caption?: string, photoPath?: string) => {
-    if (!user) return;
+  const handleLogClimb = useCallback(async (
+    block: Block, qty: number, partialFloors: number, caption?: string, photoPath?: string,
+    trackingMethod?: 'barometer' | 'pedometer' | 'manual', durationSeconds?: number,
+  ) => {
+    if (!user) return undefined;
 
-    await logClimb(
+    const result = await logClimb(
       user.id,
       block.block_id,
       block.blk_no,
@@ -471,6 +474,8 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
       partialFloors,
       caption,
       photoPath,
+      trackingMethod,
+      durationSeconds,
     );
 
     // Update local state immediately (optimistic)
@@ -488,6 +493,8 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
     checkRecentBadges(user.id).then((keys) => {
       if (keys.length > 0) setCelebratingBadges(keys);
     });
+
+    return result.climbId;
   }, [user]);
 
   const handleSelectSearchBlock = useCallback((block: Block) => {
@@ -920,6 +927,7 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
         distanceKm={selectedBlockDist}
         onLogClimb={handleLogClimb}
         onViewDetails={handleViewDetails}
+        onNavigateToSocial={onNavigateToSocial}
         tapY={tapY}
         isDark={isDark}
       />

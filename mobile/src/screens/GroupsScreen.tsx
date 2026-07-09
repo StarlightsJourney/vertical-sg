@@ -168,7 +168,7 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
               <View style={[s.challengeFill, { width: `${pct}%`, backgroundColor: isInsane ? '#FFFFFF' : color }]} />
             </View>
             <Text style={[s.challengeProgressText, isInsane && { color: '#DDD6FE' }]}>
-              {completed ? 'Completed! 🎉' : `${progressFloors} / ${ch.target_floors} fl`}
+              {completed ? 'Completed!' : `${progressFloors} / ${ch.target_floors} fl`}
             </Text>
           </View>
         )}

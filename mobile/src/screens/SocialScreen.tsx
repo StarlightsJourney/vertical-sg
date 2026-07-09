@@ -55,6 +55,7 @@ interface FeedItem {
   kudosCount: number;
   kudosByMe: boolean;
   commentCount: number;
+  trackingMethod: 'barometer' | 'pedometer' | 'manual';
 }
 
 interface ClimbComment {
@@ -92,6 +93,7 @@ const MOCK_FEED_ITEMS: FeedItem[] = [
     kudosCount: 4,
     kudosByMe: false,
     commentCount: 2,
+    trackingMethod: 'barometer',
   },
   {
     climb_id: 'mock-2',
@@ -106,6 +108,7 @@ const MOCK_FEED_ITEMS: FeedItem[] = [
     kudosCount: 11,
     kudosByMe: true,
     commentCount: 0,
+    trackingMethod: 'barometer',
   },
   {
     climb_id: 'mock-3',
@@ -120,6 +123,7 @@ const MOCK_FEED_ITEMS: FeedItem[] = [
     kudosCount: 0,
     kudosByMe: false,
     commentCount: 0,
+    trackingMethod: 'pedometer',
   },
 ];
 
@@ -137,9 +141,10 @@ interface SocialScreenProps {
   isDark?: boolean;
   onNavigateToProfile?: () => void;
   onNavigateToGroups?: () => void;
+  isActive?: boolean;
 }
 
-export default function SocialScreen({ isDark = false, onNavigateToProfile, onNavigateToGroups }: SocialScreenProps) {
+export default function SocialScreen({ isDark = false, onNavigateToProfile, onNavigateToGroups, isActive }: SocialScreenProps) {
   const { user, isAnonymous, loading: authLoading } = useAuth();
   const [authPromptVisible, setAuthPromptVisible] = useState(false);
   const [feed, setFeed] = useState<FeedItem[]>([]);
@@ -214,9 +219,12 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
   }, []);
 
   const loadFeed = useCallback(async () => {
+    // Feed = posts, not a raw activity log — only climbs with a photo attached
+    // show up here (bare "climbed X floors" entries stay in Profile only).
     const { data: climbs } = await supabase
       .from('climbs')
-      .select('climb_id, user_id, floors_climbed, caption, photo_path, created_at, blocks(blk_no, street)')
+      .select('climb_id, user_id, floors_climbed, caption, photo_path, tracking_method, created_at, blocks(blk_no, street)')
+      .not('photo_path', 'is', null)
       .order('created_at', { ascending: false })
       .limit(30);
 
@@ -250,6 +258,7 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
         kudosCount: rowsForClimb.length,
         kudosByMe: user ? rowsForClimb.some((k: any) => k.user_id === user.id) : false,
         commentCount: commentsForClimb.length,
+        trackingMethod: c.tracking_method ?? 'manual',
       };
     });
 
@@ -353,6 +362,15 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
   useEffect(() => { loadChallenges(); }, [loadChallenges]);
   useEffect(() => { loadRecommended(); }, [loadRecommended]);
   useEffect(() => { loadFollowing(); }, [loadFollowing]);
+
+  // This tab stays mounted after its first visit, so without this, changes
+  // made elsewhere (e.g. setting a featured badge on Profile) wouldn't show
+  // up here until a manual pull-to-refresh — refetch silently on refocus.
+  useEffect(() => {
+    if (!isActive) return;
+    loadFeed();
+    loadHeader();
+  }, [isActive, loadFeed, loadHeader]);
 
   // Locally-hidden posts persist across launches but are per-device only —
   // "hide" just means "stop showing me this," not a report.
@@ -535,6 +553,7 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
       kudosCount: 0,
       kudosByMe: false,
       commentCount: 0,
+      trackingMethod: 'manual' as const,
     })));
     setPickerLoading(false);
   };
@@ -699,7 +718,7 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
                               <View style={[s.challengeFill, { width: `${progressPct}%`, backgroundColor: color }]} />
                             </View>
                             <Text style={s.challengeProgressText}>
-                              {completed ? 'Completed! 🎉' : `${weeklyFloorsForChallenges} / ${ch.target_floors} fl`}
+                              {completed ? 'Completed!' : `${weeklyFloorsForChallenges} / ${ch.target_floors} fl`}
                             </Text>
                           </View>
                         ) : (
@@ -803,10 +822,18 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
               )}
             </View>
 
-            <Text style={[s.feedBody, isDark && { color: '#D1D5DB' }]}>
-              climbed <Text style={s.feedFloors}>{item.floors_climbed} floors</Text>
-              {item.blk_no ? ` at Blk ${item.blk_no} ${item.street}` : ''}
-            </Text>
+            <View style={s.feedBodyRow}>
+              <Text style={[s.feedBody, isDark && { color: '#D1D5DB' }]}>
+                climbed <Text style={s.feedFloors}>{item.floors_climbed} floors</Text>
+                {item.blk_no ? ` at Blk ${item.blk_no} ${item.street}` : ''}
+              </Text>
+              {item.trackingMethod !== 'barometer' && (
+                <View style={s.estimatedPill}>
+                  <Ionicons name="information-circle-outline" size={11} color="#9CA3AF" />
+                  <Text style={s.estimatedPillText}>Estimated</Text>
+                </View>
+              )}
+            </View>
 
             {item.caption && (
               <Text style={[s.feedCaption, isDark && { color: '#F9FAFB' }]}>{item.caption}</Text>
@@ -854,10 +881,16 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
                         )}
                         {(showAllComments ? climbComments : climbComments.slice(-COMMENTS_COLLAPSED)).map((cm) => (
                           <View key={cm.comment_id} style={s.commentRow}>
-                            <Text style={[s.commentUser, isDark && { color: '#F9FAFB' }]}>
-                              {profilesMap[cm.user_id]?.display_name ?? `Climber${cm.user_id.slice(0, 4)}`}
-                            </Text>
-                            <Text style={[s.commentBody, isDark && { color: '#D1D5DB' }]}>{cm.body}</Text>
+                            <MascotAvatar skinIdx={profilesMap[cm.user_id]?.avatar_idx ?? 0} size={26} />
+                            <View style={{ flex: 1 }}>
+                              <View style={s.commentHeaderRow}>
+                                <Text style={[s.commentUser, isDark && { color: '#F9FAFB' }]}>
+                                  {profilesMap[cm.user_id]?.display_name ?? `Climber${cm.user_id.slice(0, 4)}`}
+                                </Text>
+                                <Text style={s.commentTime}>{formatRelativeTime(cm.created_at)}</Text>
+                              </View>
+                              <Text style={[s.commentBody, isDark && { color: '#D1D5DB' }]}>{cm.body}</Text>
+                            </View>
                           </View>
                         ))}
                       </>
@@ -1360,7 +1393,10 @@ const s = StyleSheet.create({
     paddingVertical: 1.5,
   },
   legendChipText: { fontSize: 9.5, fontWeight: '700', color: '#B45309' },
-  feedBody: { fontSize: 14, color: '#374151', lineHeight: 20, marginBottom: 4 },
+  feedBodyRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginBottom: 4 },
+  feedBody: { fontSize: 14, color: '#374151', lineHeight: 20 },
+  estimatedPill: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  estimatedPillText: { fontSize: 10.5, color: '#9CA3AF', fontWeight: '600', fontStyle: 'italic' },
   feedFloors: { fontWeight: '700', color: '#10B981' },
   feedCaption: { fontSize: 14, color: '#111827', marginTop: 6, lineHeight: 19 },
   feedPhoto: { width: '100%', height: 180, borderRadius: 12, marginTop: 10, backgroundColor: '#F3F4F6' },
@@ -1382,7 +1418,9 @@ const s = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: '#E5E7EB',
   },
-  commentRow: { marginBottom: 8 },
+  commentRow: { flexDirection: 'row', gap: 8, marginBottom: 10 },
+  commentHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  commentTime: { fontSize: 10.5, color: '#9CA3AF', fontWeight: '500' },
   viewAllCommentsText: { fontSize: 12.5, fontWeight: '600', color: '#9CA3AF' },
   commentUser: { fontSize: 12.5, fontWeight: '700', color: '#111827' },
   commentBody: { fontSize: 13, color: '#374151', marginTop: 1, lineHeight: 18 },

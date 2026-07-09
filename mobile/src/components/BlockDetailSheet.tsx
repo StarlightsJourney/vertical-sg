@@ -8,8 +8,12 @@ import type { Block } from '../types';
 interface Props {
   block: Block | null;
   distanceKm: number | null;
-  onLogClimb?: (block: Block, qty: number, partialFloors: number, caption?: string, photoPath?: string) => void;
+  onLogClimb?: (
+    block: Block, qty: number, partialFloors: number, caption?: string, photoPath?: string,
+    trackingMethod?: 'barometer' | 'pedometer' | 'manual', durationSeconds?: number,
+  ) => Promise<string | undefined> | void;
   onViewDetails?: (block: Block) => void;
+  onNavigateToSocial?: () => void;
   tapY?: number;
   isDark?: boolean;
 }
@@ -27,7 +31,7 @@ function formatDistance(km: number | null): string {
   return km < 1 ? `${Math.round(km * 1000)}m` : `${km.toFixed(1)}km`;
 }
 
-export default function BlockDetailSheet({ block, distanceKm, onLogClimb, onViewDetails, tapY, isDark = false }: Props) {
+export default function BlockDetailSheet({ block, distanceKm, onLogClimb, onViewDetails, onNavigateToSocial, tapY, isDark = false }: Props) {
   const [climbing, setClimbing] = useState(false); // manual entry panel
   const [trackerVisible, setTrackerVisible] = useState(false); // live barometer tracker
   const [climbQty, setClimbQty] = useState(1);
@@ -61,13 +65,16 @@ export default function BlockDetailSheet({ block, distanceKm, onLogClimb, onView
     }, 1400);
   };
 
-  const handleTrackerSave = (floorsClimbed: number, caption?: string, photoPath?: string) => {
+  const handleTrackerSave = async (
+    floorsClimbed: number, caption?: string, photoPath?: string,
+    trackingMethod?: 'barometer' | 'pedometer' | 'manual', durationSeconds?: number,
+  ): Promise<string | undefined> => {
     // floorsClimbed is a real barometer-measured total (always >= 1, see
     // ClimbTrackerModal's Save button) — split it into full sets + a partial
     // remainder the same way manual entry does, so it reconstructs identically.
     const qty = Math.floor(floorsClimbed / block.storeys);
     const partial = floorsClimbed % block.storeys;
-    onLogClimb?.(block, qty, partial, caption, photoPath);
+    return (await onLogClimb?.(block, qty, partial, caption, photoPath, trackingMethod, durationSeconds)) ?? undefined;
   };
 
   return (
@@ -213,6 +220,7 @@ export default function BlockDetailSheet({ block, distanceKm, onLogClimb, onView
         onClose={() => setTrackerVisible(false)}
         onSave={handleTrackerSave}
         onUseManualEntry={() => setClimbing(true)}
+        onNavigateToSocial={onNavigateToSocial}
       />
     </View>
   );

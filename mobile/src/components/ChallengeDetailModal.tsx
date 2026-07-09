@@ -99,7 +99,7 @@ export default function ChallengeDetailModal({ challenge, visible, onClose, join
                   <View style={[st.progressFill, { width: `${pct}%`, backgroundColor: color }]} />
                 </View>
                 <Text style={[st.progressText, isDark && { color: '#9CA3AF' }]}>
-                  {completed ? 'Completed! 🎉' : `${progressFloors} / ${challenge.target_floors} floors (${pct}%)`}
+                  {completed ? 'Completed!' : `${progressFloors} / ${challenge.target_floors} floors (${pct}%)`}
                 </Text>
               </View>
             )}

@@ -154,12 +154,12 @@ export default function App() {
               don't mount at all, so cold launch only pays for Map. */}
           {visitedTabs.has('social') && (
             <View style={[styles.screen, activeTab !== 'social' && styles.hidden]}>
-              <SocialScreen isDark={isDark} onNavigateToProfile={() => goToTab('profile')} onNavigateToGroups={() => goToTab('groups')} />
+              <SocialScreen isDark={isDark} onNavigateToProfile={() => goToTab('profile')} onNavigateToGroups={() => goToTab('groups')} isActive={activeTab === 'social'} />
             </View>
           )}
           {visitedTabs.has('map') && (
             <View style={[styles.screen, activeTab !== 'map' && styles.hidden]}>
-              <MapScreen isDark={isDark} />
+              <MapScreen isDark={isDark} onNavigateToSocial={() => goToTab('social')} />
             </View>
           )}
           {visitedTabs.has('groups') && (
