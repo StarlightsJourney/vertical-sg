@@ -1,14 +1,18 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Modal, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Modal, ActivityIndicator, TextInput, Image, Alert, Share } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { Barometer, Pedometer } from 'expo-sensors';
+import * as ImagePicker from 'expo-image-picker';
+import { useAuth } from '../contexts/AuthContext';
+import { supabase } from '../config/supabase';
+import { base64ToUint8Array } from '../utils/base64';
 import type { Block } from '../types';
 
 interface Props {
   block: Block | null;
   visible: boolean;
   onClose: () => void;
-  onSave: (floorsClimbed: number) => void;
+  onSave: (floorsClimbed: number, caption?: string, photoPath?: string) => void;
   onUseManualEntry: () => void;
 }
 
@@ -16,7 +20,7 @@ const METERS_PER_FLOOR = 2.8; // matches est_height_m = storeys * 2.8 elsewhere 
 const MIN_DELTA_M = 0.1; // ignore barometer jitter below this per-sample noise floor
 const STEPS_PER_FLOOR = 16; // typical HDB stairwell flight — used when there's no barometer
 
-type Phase = 'checking' | 'unavailable' | 'tracking' | 'summary';
+type Phase = 'checking' | 'unavailable' | 'ready' | 'tracking' | 'summary' | 'saved';
 type SensorMode = 'barometer' | 'pedometer';
 
 const CLIMB_TIPS = [
@@ -34,30 +38,47 @@ function formatElapsed(seconds: number): string {
 }
 
 export default function ClimbTrackerModal({ block, visible, onClose, onSave, onUseManualEntry }: Props) {
+  const { user } = useAuth();
   const [phase, setPhase] = useState<Phase>('checking');
   const [sensorMode, setSensorMode] = useState<SensorMode>('barometer');
+  const [paused, setPaused] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [elevationGain, setElevationGain] = useState(0);
   const [stepCount, setStepCount] = useState(0);
   const [tipIdx, setTipIdx] = useState(0);
 
+  const [captionText, setCaptionText] = useState('');
+  const [photoBase64, setPhotoBase64] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [savedFloors, setSavedFloors] = useState(0);
+
   const baselinePressure = useRef<number | null>(null);
   const lastAltitude = useRef(0);
   const totalGain = useRef(0);
-  const startTime = useRef(0);
+  const elapsedBeforePauseMs = useRef(0);
+  const segmentStart = useRef(0);
+  const stepsBase = useRef(0);
+  const pausedRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const tipTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const subRef = useRef<{ remove: () => void } | null>(null);
 
-  const stopTracking = useCallback(() => {
-    if (timerRef.current) clearInterval(timerRef.current);
-    if (tipTimerRef.current) clearInterval(tipTimerRef.current);
+  const stopSensor = useCallback(() => {
     subRef.current?.remove();
-    timerRef.current = null;
-    tipTimerRef.current = null;
     subRef.current = null;
   }, []);
 
+  const stopTracking = useCallback(() => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    if (tipTimerRef.current) clearInterval(tipTimerRef.current);
+    timerRef.current = null;
+    tipTimerRef.current = null;
+    stopSensor();
+  }, [stopSensor]);
+
+  // Sensor availability check only — does NOT start the timer or begin
+  // listening. Resolves to 'ready' (tap Start when you actually want to
+  // begin) or 'unavailable'.
   useEffect(() => {
     if (!visible) return;
 
@@ -67,9 +88,15 @@ export default function ClimbTrackerModal({ block, visible, onClose, onSave, onU
     setElevationGain(0);
     setStepCount(0);
     setTipIdx(0);
+    setPaused(false);
+    setCaptionText('');
+    setPhotoBase64(null);
     baselinePressure.current = null;
     lastAltitude.current = 0;
     totalGain.current = 0;
+    elapsedBeforePauseMs.current = 0;
+    stepsBase.current = 0;
+    pausedRef.current = false;
 
     (async () => {
       const baroAvailable = await Barometer.isAvailableAsync();
@@ -78,60 +105,20 @@ export default function ClimbTrackerModal({ block, visible, onClose, onSave, onU
       if (baroAvailable) {
         await Barometer.requestPermissionsAsync().catch(() => {});
         if (cancelled) return;
-
         setSensorMode('barometer');
-        Barometer.setUpdateInterval(1000);
-        startTime.current = Date.now();
-
-        subRef.current = Barometer.addListener(({ pressure }) => {
-          if (baselinePressure.current == null) {
-            baselinePressure.current = pressure;
-            return;
-          }
-          // Barometric formula: altitude relative to the baseline pressure captured
-          // at climb start. Only accumulate net upward movement — pressure noise
-          // means small drops are normal mid-climb and shouldn't subtract from gain.
-          const altitude = 44330 * (1 - Math.pow(pressure / baselinePressure.current, 1 / 5.255));
-          const delta = altitude - lastAltitude.current;
-          if (delta > MIN_DELTA_M) {
-            totalGain.current += delta;
-            setElevationGain(totalGain.current);
-          }
-          lastAltitude.current = altitude;
-        });
       } else {
-        // No barometer (common on many Android phones) — fall back to the
-        // step counter so climbs can still be timed and estimated live,
-        // instead of dumping straight to manual entry with no tracking at all.
         const pedAvailable = await Pedometer.isAvailableAsync();
         if (cancelled) return;
-
         if (!pedAvailable) {
           setPhase('unavailable');
           return;
         }
-
         await Pedometer.requestPermissionsAsync().catch(() => {});
         if (cancelled) return;
-
         setSensorMode('pedometer');
-        startTime.current = Date.now();
-
-        subRef.current = Pedometer.watchStepCount(({ steps }) => {
-          setStepCount(steps);
-          setElevationGain(steps / STEPS_PER_FLOOR * METERS_PER_FLOOR);
-        });
       }
 
-      timerRef.current = setInterval(() => {
-        setElapsed(Math.floor((Date.now() - startTime.current) / 1000));
-      }, 1000);
-
-      tipTimerRef.current = setInterval(() => {
-        setTipIdx((i) => (i + 1) % CLIMB_TIPS.length);
-      }, 9000);
-
-      setPhase('tracking');
+      setPhase('ready');
     })();
 
     return () => {
@@ -139,6 +126,66 @@ export default function ClimbTrackerModal({ block, visible, onClose, onSave, onU
       stopTracking();
     };
   }, [visible, stopTracking]);
+
+  const startBarometerListener = useCallback(() => {
+    Barometer.setUpdateInterval(1000);
+    subRef.current = Barometer.addListener(({ pressure }) => {
+      if (baselinePressure.current == null) {
+        baselinePressure.current = pressure;
+        return;
+      }
+      const altitude = 44330 * (1 - Math.pow(pressure / baselinePressure.current, 1 / 5.255));
+      const delta = altitude - lastAltitude.current;
+      if (delta > MIN_DELTA_M && !pausedRef.current) {
+        totalGain.current += delta;
+        setElevationGain(totalGain.current);
+      }
+      lastAltitude.current = altitude;
+    });
+  }, []);
+
+  const startPedometerListener = useCallback(() => {
+    subRef.current = Pedometer.watchStepCount(({ steps }) => {
+      const total = stepsBase.current + steps;
+      setStepCount(total);
+      setElevationGain((total / STEPS_PER_FLOOR) * METERS_PER_FLOOR);
+    });
+  }, []);
+
+  const handleStart = () => {
+    segmentStart.current = Date.now();
+    if (sensorMode === 'barometer') startBarometerListener();
+    else startPedometerListener();
+
+    timerRef.current = setInterval(() => {
+      if (pausedRef.current) return;
+      setElapsed(Math.floor((elapsedBeforePauseMs.current + (Date.now() - segmentStart.current)) / 1000));
+    }, 1000);
+
+    tipTimerRef.current = setInterval(() => {
+      setTipIdx((i) => (i + 1) % CLIMB_TIPS.length);
+    }, 9000);
+
+    setPhase('tracking');
+  };
+
+  const handlePauseResume = () => {
+    if (!paused) {
+      // Pausing: fold the just-finished running segment into the accumulator.
+      elapsedBeforePauseMs.current += Date.now() - segmentStart.current;
+      pausedRef.current = true;
+      setPaused(true);
+      if (sensorMode === 'pedometer') {
+        stepsBase.current = stepCount;
+        stopSensor();
+      }
+    } else {
+      segmentStart.current = Date.now();
+      pausedRef.current = false;
+      setPaused(false);
+      if (sensorMode === 'pedometer') startPedometerListener();
+    }
+  };
 
   const handleStop = () => {
     stopTracking();
@@ -150,7 +197,51 @@ export default function ClimbTrackerModal({ block, visible, onClose, onSave, onU
     onClose();
   };
 
+  const pickPhoto = async (source: 'camera' | 'library') => {
+    const perm = source === 'camera'
+      ? await ImagePicker.requestCameraPermissionsAsync()
+      : await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert('Access needed', 'Enable access in Settings to add a photo.');
+      return;
+    }
+    const result = source === 'camera'
+      ? await ImagePicker.launchCameraAsync({ quality: 0.8, base64: true })
+      : await ImagePicker.launchImageLibraryAsync({ quality: 0.8, base64: true });
+    if (!result.canceled && result.assets?.[0]?.base64) {
+      setPhotoBase64(result.assets[0].base64);
+    }
+  };
+
   const floorsClimbed = Math.round(elevationGain / METERS_PER_FLOOR);
+
+  const handleSaveClimb = async () => {
+    const finalFloors = Math.max(1, floorsClimbed);
+    setSaving(true);
+    try {
+      let photoPath: string | undefined;
+      if (photoBase64 && user) {
+        photoPath = `feed/${user.id}-${Date.now()}.jpg`;
+        const bytes = base64ToUint8Array(photoBase64);
+        const { error } = await supabase.storage.from('building-photos').upload(photoPath, bytes, { contentType: 'image/jpeg' });
+        if (error) {
+          Alert.alert('Upload Failed', error.message);
+          photoPath = undefined;
+        }
+      }
+      onSave(finalFloors, captionText.trim() || undefined, photoPath);
+      setSavedFloors(finalFloors);
+      setPhase('saved');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleShare = () => {
+    Share.share({
+      message: `I just climbed ${savedFloors} floors${block ? ` at Blk ${block.blk_no} ${block.street}` : ''} on Vertical! 🏃‍♂️🏢`,
+    });
+  };
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={handleClose}>
@@ -178,6 +269,25 @@ export default function ClimbTrackerModal({ block, visible, onClose, onSave, onU
           </View>
         )}
 
+        {phase === 'ready' && (
+          <View style={styles.center}>
+            <Ionicons name="footsteps-outline" size={48} color="#2563EB" />
+            <Text style={styles.readyTitle}>Blk {block?.blk_no} {block?.street}</Text>
+            <Text style={styles.readyText}>
+              {sensorMode === 'barometer'
+                ? 'Elevation will be tracked live with your barometer.'
+                : 'No barometer detected — floors will be estimated from your step count.'}
+            </Text>
+            <Text style={styles.readyHint}>Tap start when you're at the bottom and ready to go.</Text>
+            <TouchableOpacity style={styles.startClimbBtn} onPress={handleStart} activeOpacity={0.85}>
+              <Text style={styles.startClimbBtnText}>Start Climb</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.textLink} onPress={handleClose}>
+              <Text style={styles.textLinkText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         {phase === 'tracking' && (
           <View style={styles.trackingWrap}>
             <View style={styles.tipBanner}>
@@ -187,10 +297,11 @@ export default function ClimbTrackerModal({ block, visible, onClose, onSave, onU
 
             <View style={styles.trackingHeader}>
               <Text style={styles.trackingAddress}>Blk {block?.blk_no} {block?.street}</Text>
-              <View style={styles.liveDot} />
+              <View style={[styles.liveDot, paused && { backgroundColor: '#F59E0B' }]} />
             </View>
 
             <View style={styles.center}>
+              {paused && <Text style={styles.pausedLabel}>PAUSED</Text>}
               <Text style={styles.elapsedTime}>{formatElapsed(elapsed)}</Text>
               <Text style={styles.elapsedLabel}>ELAPSED</Text>
 
@@ -216,41 +327,93 @@ export default function ClimbTrackerModal({ block, visible, onClose, onSave, onU
               )}
             </View>
 
-            <TouchableOpacity style={styles.stopBtn} onPress={handleStop} activeOpacity={0.8}>
-              <View style={styles.stopBtnInner} />
-            </TouchableOpacity>
-            <Text style={styles.stopHint}>Tap to finish</Text>
+            <View style={styles.trackingControls}>
+              <TouchableOpacity style={styles.pauseBtn} onPress={handlePauseResume} activeOpacity={0.8}>
+                <Ionicons name={paused ? 'play' : 'pause'} size={24} color="#374151" />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.stopBtn} onPress={handleStop} activeOpacity={0.8}>
+                <View style={styles.stopBtnInner} />
+              </TouchableOpacity>
+              <View style={{ width: 52 }} />
+            </View>
+            <Text style={styles.stopHint}>{paused ? 'Paused — tap play to resume' : 'Tap the square to finish'}</Text>
           </View>
         )}
 
         {phase === 'summary' && (
-          <View style={styles.center}>
-            <Ionicons name="trophy" size={56} color="#F59E0B" />
-            <Text style={styles.summaryTitle}>Climb Complete!</Text>
+          <View style={styles.summaryScroll}>
+            <View style={styles.center}>
+              <Ionicons name="trophy" size={56} color="#F59E0B" />
+              <Text style={styles.summaryTitle}>Climb Complete!</Text>
 
-            <View style={styles.summaryStatsRow}>
-              <View style={styles.summaryStat}>
-                <Text style={styles.summaryValue}>{formatElapsed(elapsed)}</Text>
-                <Text style={styles.summaryLabel}>Time</Text>
-              </View>
-              <View style={styles.summaryStat}>
-                <Text style={styles.summaryValue}>{elevationGain.toFixed(1)}m</Text>
-                <Text style={styles.summaryLabel}>Elevation</Text>
-              </View>
-              <View style={styles.summaryStat}>
-                <Text style={styles.summaryValue}>{floorsClimbed}</Text>
-                <Text style={styles.summaryLabel}>Floors</Text>
+              <View style={styles.summaryStatsRow}>
+                <View style={styles.summaryStat}>
+                  <Text style={styles.summaryValue}>{formatElapsed(elapsed)}</Text>
+                  <Text style={styles.summaryLabel}>Time</Text>
+                </View>
+                <View style={styles.summaryStat}>
+                  <Text style={styles.summaryValue}>{elevationGain.toFixed(1)}m</Text>
+                  <Text style={styles.summaryLabel}>Elevation</Text>
+                </View>
+                <View style={styles.summaryStat}>
+                  <Text style={styles.summaryValue}>{floorsClimbed}</Text>
+                  <Text style={styles.summaryLabel}>Floors</Text>
+                </View>
               </View>
             </View>
 
-            <TouchableOpacity
-              style={styles.primaryBtn}
-              onPress={() => { onSave(Math.max(1, floorsClimbed)); handleClose(); }}
-            >
-              <Text style={styles.primaryBtnText}>Save Climb</Text>
+            <View style={styles.summaryFormBlock}>
+              <TextInput
+                style={styles.summaryCaptionInput}
+                placeholder="Say something about this climb..."
+                placeholderTextColor="#9CA3AF"
+                value={captionText}
+                onChangeText={setCaptionText}
+                multiline
+                maxLength={200}
+              />
+              <TouchableOpacity
+                style={styles.summaryPhotoBtn}
+                onPress={() => {
+                  Alert.alert('Add Photo', '', [
+                    { text: 'Take Photo', onPress: () => pickPhoto('camera') },
+                    { text: 'Choose from Library', onPress: () => pickPhoto('library') },
+                    { text: 'Cancel', style: 'cancel' },
+                  ]);
+                }}
+              >
+                {photoBase64 ? (
+                  <Image source={{ uri: `data:image/jpeg;base64,${photoBase64}` }} style={styles.summaryPhotoPreview} />
+                ) : (
+                  <>
+                    <Ionicons name="camera-outline" size={20} color="#6B7280" />
+                    <Text style={styles.summaryPhotoBtnText}>Attach a photo (optional)</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+
+              <TouchableOpacity style={[styles.primaryBtn, saving && { opacity: 0.6 }]} onPress={handleSaveClimb} disabled={saving}>
+                {saving ? <ActivityIndicator size="small" color="#FFF" /> : <Text style={styles.primaryBtnText}>Save Climb</Text>}
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.textLink} onPress={handleClose} disabled={saving}>
+                <Text style={styles.textLinkText}>Discard</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
+        {phase === 'saved' && (
+          <View style={styles.center}>
+            <Ionicons name="checkmark-circle" size={56} color="#10B981" />
+            <Text style={styles.summaryTitle}>Saved!</Text>
+            <Text style={styles.readyText}>{savedFloors} floors logged to your profile.</Text>
+
+            <TouchableOpacity style={styles.shareBtn} onPress={handleShare} activeOpacity={0.85}>
+              <Ionicons name="share-social-outline" size={18} color="#FFF" />
+              <Text style={styles.primaryBtnText}>Share</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.textLink} onPress={handleClose}>
-              <Text style={styles.textLinkText}>Discard</Text>
+              <Text style={styles.textLinkText}>Done</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -265,6 +428,14 @@ const styles = StyleSheet.create({
   checkingText: { fontSize: 14, color: '#6B7280', marginTop: 14 },
   unavailableTitle: { fontSize: 19, fontWeight: '800', color: '#111827', marginTop: 16, marginBottom: 8 },
   unavailableText: { fontSize: 14, color: '#6B7280', textAlign: 'center', lineHeight: 20, marginBottom: 28 },
+
+  readyTitle: { fontSize: 18, fontWeight: '800', color: '#111827', marginTop: 16, marginBottom: 10, textAlign: 'center' },
+  readyText: { fontSize: 14, color: '#6B7280', textAlign: 'center', lineHeight: 20, marginBottom: 4 },
+  readyHint: { fontSize: 12.5, color: '#9CA3AF', textAlign: 'center', marginTop: 8, marginBottom: 28 },
+  startClimbBtn: {
+    backgroundColor: '#10B981', borderRadius: 16, paddingVertical: 18, paddingHorizontal: 56, alignItems: 'center',
+  },
+  startClimbBtnText: { color: '#FFF', fontSize: 17, fontWeight: '800' },
 
   trackingWrap: { flex: 1, paddingTop: 56 },
   tipBanner: {
@@ -283,24 +454,50 @@ const styles = StyleSheet.create({
   trackingHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingHorizontal: 24 },
   trackingAddress: { fontSize: 14, fontWeight: '600', color: '#6B7280' },
   liveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#EF4444' },
+  pausedLabel: { fontSize: 13, fontWeight: '800', color: '#F59E0B', letterSpacing: 1, marginBottom: 4 },
   elapsedTime: { fontSize: 56, fontWeight: '800', color: '#111827', fontVariant: ['tabular-nums'] },
   elapsedLabel: { fontSize: 12, fontWeight: '700', color: '#9CA3AF', letterSpacing: 1, marginTop: 4, marginBottom: 32 },
   metricRow: { flexDirection: 'row', gap: 40 },
   metric: { alignItems: 'center' },
   metricValue: { fontSize: 28, fontWeight: '800', color: '#2563EB' },
   metricLabel: { fontSize: 11, fontWeight: '600', color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 4 },
+  trackingControls: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 24, marginBottom: 8,
+  },
+  pauseBtn: {
+    width: 52, height: 52, borderRadius: 26, backgroundColor: '#F3F4F6',
+    alignItems: 'center', justifyContent: 'center',
+  },
   stopBtn: {
     width: 76, height: 76, borderRadius: 38, backgroundColor: '#FEE2E2',
-    alignItems: 'center', justifyContent: 'center', alignSelf: 'center', marginBottom: 8,
+    alignItems: 'center', justifyContent: 'center',
   },
   stopBtnInner: { width: 28, height: 28, borderRadius: 6, backgroundColor: '#EF4444' },
   stopHint: { textAlign: 'center', fontSize: 12, color: '#9CA3AF', marginBottom: 48, fontWeight: '600' },
 
+  summaryScroll: { flex: 1, paddingTop: 56, justifyContent: 'space-between' },
   summaryTitle: { fontSize: 22, fontWeight: '800', color: '#111827', marginTop: 16, marginBottom: 28 },
-  summaryStatsRow: { flexDirection: 'row', gap: 28, marginBottom: 36 },
+  summaryStatsRow: { flexDirection: 'row', gap: 28, marginBottom: 8 },
   summaryStat: { alignItems: 'center' },
   summaryValue: { fontSize: 22, fontWeight: '800', color: '#111827', fontVariant: ['tabular-nums'] },
   summaryLabel: { fontSize: 11, fontWeight: '600', color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 4 },
+
+  summaryFormBlock: { paddingHorizontal: 24, paddingBottom: 32 },
+  summaryCaptionInput: {
+    backgroundColor: '#F3F4F6', borderRadius: 12, padding: 14, fontSize: 14,
+    color: '#111827', minHeight: 60, marginBottom: 12, textAlignVertical: 'top',
+  },
+  summaryPhotoBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    backgroundColor: '#F3F4F6', borderRadius: 12, padding: 14, marginBottom: 16, minHeight: 56,
+  },
+  summaryPhotoBtnText: { fontSize: 13, color: '#6B7280', fontWeight: '500' },
+  summaryPhotoPreview: { width: '100%', height: 140, borderRadius: 10 },
+
+  shareBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    backgroundColor: '#2563EB', borderRadius: 12, paddingVertical: 15, paddingHorizontal: 40, marginTop: 8,
+  },
 
   primaryBtn: { backgroundColor: '#10B981', borderRadius: 12, paddingVertical: 15, paddingHorizontal: 40, alignItems: 'center' },
   primaryBtnText: { color: '#FFF', fontSize: 15, fontWeight: '700' },

@@ -8,7 +8,7 @@ import type { Block } from '../types';
 interface Props {
   block: Block | null;
   distanceKm: number | null;
-  onLogClimb?: (block: Block, qty: number, partialFloors: number) => void;
+  onLogClimb?: (block: Block, qty: number, partialFloors: number, caption?: string, photoPath?: string) => void;
   onViewDetails?: (block: Block) => void;
   tapY?: number;
   isDark?: boolean;
@@ -61,13 +61,13 @@ export default function BlockDetailSheet({ block, distanceKm, onLogClimb, onView
     }, 1400);
   };
 
-  const handleTrackerSave = (floorsClimbed: number) => {
+  const handleTrackerSave = (floorsClimbed: number, caption?: string, photoPath?: string) => {
     // floorsClimbed is a real barometer-measured total (always >= 1, see
     // ClimbTrackerModal's Save button) — split it into full sets + a partial
     // remainder the same way manual entry does, so it reconstructs identically.
     const qty = Math.floor(floorsClimbed / block.storeys);
     const partial = floorsClimbed % block.storeys;
-    onLogClimb?.(block, qty, partial);
+    onLogClimb?.(block, qty, partial, caption, photoPath);
   };
 
   return (

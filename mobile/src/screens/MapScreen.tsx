@@ -458,7 +458,7 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
     });
   }, []);
 
-  const handleLogClimb = useCallback(async (block: Block, qty: number, partialFloors: number) => {
+  const handleLogClimb = useCallback(async (block: Block, qty: number, partialFloors: number, caption?: string, photoPath?: string) => {
     if (!user) return;
 
     await logClimb(
@@ -469,6 +469,8 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
       block.storeys,
       qty,
       partialFloors,
+      caption,
+      photoPath,
     );
 
     // Update local state immediately (optimistic)

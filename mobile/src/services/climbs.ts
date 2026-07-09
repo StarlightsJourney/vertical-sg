@@ -26,6 +26,8 @@ export async function logClimb(
   storeys: number,
   qty: number,
   partialFloors: number = 0,
+  caption?: string,
+  photoPath?: string,
 ): Promise<{ synced: boolean; error?: string }> {
   const floorsClimbed = storeys * qty + partialFloors;
 
@@ -37,6 +39,8 @@ export async function logClimb(
       partial_floors: partialFloors,
       floors_climbed: floorsClimbed,
       synced: true,
+      caption: caption ?? null,
+      photo_path: photoPath ?? null,
     });
 
     if (error) {
