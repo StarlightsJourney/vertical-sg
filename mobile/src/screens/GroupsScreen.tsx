@@ -4,11 +4,15 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../config/supabase';
 import AuthPrompt from '../components/AuthPrompt';
-import ChallengeDetailModal from '../components/ChallengeDetailModal';
+import ChallengeDetailModal, { challengeColor } from '../components/ChallengeDetailModal';
 import type { Challenge, UserClub, UserEvent, Profile } from '../types';
 
-const DIFFICULTY_COLOR: Record<string, string> = { easy: '#10B981', medium: '#F59E0B', hard: '#EF4444', insane: '#7C3AED' };
 const CLUB_CATEGORIES = ['All', 'Trail Running', 'Hiking', 'Climbing'] as const;
+
+function formatDateRange(startIso: string, endIso: string): string {
+  const opts: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric' };
+  return `${new Date(startIso).toLocaleDateString(undefined, opts)} – ${new Date(endIso).toLocaleDateString(undefined, opts)}`;
+}
 
 interface Club {
   name: string;
@@ -21,9 +25,7 @@ interface Club {
 // this app), but researched and verified as active groups at time of writing.
 const CLUBS: Club[] = [
   { name: 'Trail Runners Singapore', category: 'Trail Running', description: 'Facebook community for SG trail runners — routes, meetups, race chatter.', url: 'https://www.facebook.com/groups/TrailRunnersSingapore/' },
-  { name: 'Trail Runners Singapore', category: 'Trail Running', description: 'Same crew, Strava club — join to see group activity and segments.', url: 'https://www.strava.com/clubs/575755' },
   { name: 'Adidas Runners Singapore', category: 'Trail Running', description: 'Long-running crew, part of a global 50-city running movement.', url: 'https://www.runmagazine.asia/adidas-runners-singapore/' },
-  { name: 'Alpha Runners', category: 'Trail Running', description: 'Strava running club — group activity, segments, and challenges.', url: 'https://www.strava.com/clubs/alpha-runners-330670' },
   { name: 'SG Hiking and Travel Group', category: 'Hiking', description: 'Weekend and weekday nature walks/hikes around Singapore, running 40+ years.', url: 'https://www.facebook.com/groups/sghikingandtravel/' },
   { name: 'Exploring Singapore Hiking Group', category: 'Hiking', description: 'Urban parks, nature reserves, and island trails — for newcomers and regulars.', url: 'https://www.facebook.com/groups/957889039371788/' },
   { name: 'Singapore Sport Climbing and Mountaineering Federation', category: 'Climbing', description: 'The national association for sport climbing and mountaineering in Singapore.', url: 'https://www.facebook.com/singaporesportclimbingandmountaineeringfederation/' },
@@ -51,10 +53,6 @@ const EVENTS: EventItem[] = [
 ];
 
 type Tab = 'challenges' | 'clubs' | 'events';
-
-function daysUntil(iso: string): number {
-  return Math.max(0, Math.ceil((new Date(iso).getTime() - Date.now()) / 86400000));
-}
 
 /** Sporty hero banner, built from plain Views/Ionicons — no image asset. */
 function CoverBanner({ icon, title, subtitle, color }: { icon: string; title: string; subtitle: string; color: string }) {
@@ -91,6 +89,7 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
   const [tab, setTab] = useState<Tab>('challenges');
   const [authPromptVisible, setAuthPromptVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchVisible, setSearchVisible] = useState(false);
   const [clubCategory, setClubCategory] = useState<typeof CLUB_CATEGORIES[number]>('All');
 
   const [weeklyChallenges, setWeeklyChallenges] = useState<Challenge[]>([]);
@@ -201,28 +200,74 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
 
   const matchesSearch = (text: string) => searchQuery.trim().length === 0 || text.toLowerCase().includes(searchQuery.trim().toLowerCase());
 
+  // Compact card — 2 fit per row. Used for everything except the single
+  // biggest (by target_floors) challenge, which gets the full-width cover
+  // treatment instead (renderHeroChallenge below), Strava-style.
   const renderChallengeCard = (ch: Challenge) => {
     const progressFloors = progressFor(ch);
     const joined = myChallengeIds.has(ch.challenge_id);
     const pct = Math.min(100, Math.round((progressFloors / ch.target_floors) * 100));
     const completed = joined && pct >= 100;
-    const isInsane = ch.difficulty === 'insane';
-    const color = DIFFICULTY_COLOR[ch.difficulty];
+    const color = challengeColor(ch.challenge_id);
+    const isLimitedTime = !!(ch.starts_at && ch.ends_at);
     return (
       <TouchableOpacity
         key={ch.challenge_id}
-        style={[
-          s.challengeCard,
-          isDark && { backgroundColor: '#1F2937' },
-          isInsane && s.insaneCard,
-          isInsane && isDark && { backgroundColor: '#2E1065' },
-        ]}
+        style={[s.gridCard, isDark && { backgroundColor: '#1F2937' }]}
         onPress={() => setSelectedChallenge(ch)}
         activeOpacity={0.85}
       >
-        <View style={s.challengeTopRow}>
-          <View style={[s.bigBadge, { backgroundColor: isInsane ? 'rgba(255,255,255,0.18)' : color + '1F' }]}>
-            <Ionicons name={ch.reward_icon as any} size={34} color={isInsane ? '#FFFFFF' : color} />
+        <View style={[s.gridBadge, { backgroundColor: color + '1F' }]}>
+          <Ionicons name={ch.reward_icon as any} size={26} color={color} />
+          {completed && (
+            <View style={s.bigBadgeCheck}>
+              <Ionicons name="checkmark-circle" size={15} color="#10B981" />
+            </View>
+          )}
+        </View>
+        {ch.creator_id && (
+          <View style={s.communityPill}>
+            <Text style={s.communityPillText}>Community</Text>
+          </View>
+        )}
+        <Text style={[s.gridTitle, isDark && { color: '#F9FAFB' }]} numberOfLines={2}>{ch.title}</Text>
+        <Text style={s.gridDateText} numberOfLines={1}>
+          {isLimitedTime ? formatDateRange(ch.starts_at!, ch.ends_at!) : (ch.period === 'monthly' ? 'Resets monthly' : 'Resets weekly')}
+        </Text>
+
+        {joined ? (
+          <View style={{ marginTop: 8, width: '100%' }}>
+            <View style={s.challengeTrack}>
+              <View style={[s.challengeFill, { width: `${pct}%`, backgroundColor: color }]} />
+            </View>
+            <Text style={s.challengeProgressText}>
+              {completed ? 'Completed!' : `${progressFloors} / ${ch.target_floors} fl`}
+            </Text>
+          </View>
+        ) : (
+          <TouchableOpacity style={[s.gridJoinBtn, { backgroundColor: color }]} onPress={() => handleJoin(ch.challenge_id)}>
+            <Text style={s.joinBtnText}>Join</Text>
+          </TouchableOpacity>
+        )}
+      </TouchableOpacity>
+    );
+  };
+
+  // Full-width cover for the single biggest challenge (by target_floors) —
+  // the "craziest" one, without ranking it via a difficulty label.
+  const renderHeroChallenge = (ch: Challenge) => {
+    const progressFloors = progressFor(ch);
+    const joined = myChallengeIds.has(ch.challenge_id);
+    const pct = Math.min(100, Math.round((progressFloors / ch.target_floors) * 100));
+    const completed = joined && pct >= 100;
+    const color = challengeColor(ch.challenge_id);
+    const isLimitedTime = !!(ch.starts_at && ch.ends_at);
+    return (
+      <TouchableOpacity style={[s.heroCard, { backgroundColor: color }]} onPress={() => setSelectedChallenge(ch)} activeOpacity={0.9}>
+        <Text style={s.heroEyebrow}>FEATURED CHALLENGE</Text>
+        <View style={s.heroTopRow}>
+          <View style={s.heroBadge}>
+            <Ionicons name={ch.reward_icon as any} size={38} color="#FFFFFF" />
             {completed && (
               <View style={s.bigBadgeCheck}>
                 <Ionicons name="checkmark-circle" size={18} color="#10B981" />
@@ -230,44 +275,23 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
             )}
           </View>
           <View style={{ flex: 1 }}>
-            <View style={s.badgeRow}>
-              <View style={[s.difficultyPill, { backgroundColor: isInsane ? 'rgba(255,255,255,0.18)' : color + '1A', alignSelf: 'flex-start' }]}>
-                <Text style={[s.difficultyText, { color: isInsane ? '#FFFFFF' : color }]}>{ch.difficulty.toUpperCase()}</Text>
-              </View>
-              {ch.ends_at && (
-                <View style={s.countdownPill}>
-                  <Ionicons name="time-outline" size={11} color="#EF4444" />
-                  <Text style={s.countdownPillText}>{daysUntil(ch.ends_at)}d left</Text>
-                </View>
-              )}
-              {ch.creator_id && (
-                <View style={s.communityPill}>
-                  <Text style={s.communityPillText}>Community</Text>
-                </View>
-              )}
-            </View>
-            <Text style={[s.rewardLabelBig, isInsane && { color: '#FFFFFF' }, !isInsane && { color }]}>{ch.reward_label}</Text>
-          </View>
-        </View>
-        <Text style={[s.challengeTitle, { marginBottom: 4 }, isDark && { color: '#F9FAFB' }, isInsane && { color: '#FFFFFF' }]}>{ch.title}</Text>
-        <Text style={[s.challengeCardDesc, isDark && { color: '#9CA3AF' }, isInsane && { color: '#DDD6FE' }]} numberOfLines={2}>{ch.description}</Text>
-
-        {joined && (
-          <View style={{ marginTop: 2 }}>
-            <View style={s.challengeTrack}>
-              <View style={[s.challengeFill, { width: `${pct}%`, backgroundColor: isInsane ? '#FFFFFF' : color }]} />
-            </View>
-            <Text style={[s.challengeProgressText, isInsane && { color: '#DDD6FE' }]}>
-              {completed ? 'Completed!' : `${progressFloors} / ${ch.target_floors} fl`}
+            <Text style={s.heroTitle}>{ch.title}</Text>
+            <Text style={s.heroDateText}>
+              {isLimitedTime ? formatDateRange(ch.starts_at!, ch.ends_at!) : `${ch.target_floors} floors, ${ch.period}`}
             </Text>
           </View>
-        )}
-        {!joined && (
-          <TouchableOpacity
-            style={[s.joinBtn, isInsane && { backgroundColor: '#FFFFFF' }]}
-            onPress={() => handleJoin(ch.challenge_id)}
-          >
-            <Text style={[s.joinBtnText, isInsane && { color: '#7C3AED' }]}>Join Challenge</Text>
+        </View>
+        <Text style={s.heroDesc} numberOfLines={2}>{ch.description}</Text>
+        {joined ? (
+          <View>
+            <View style={s.heroTrack}>
+              <View style={[s.heroFill, { width: `${pct}%` }]} />
+            </View>
+            <Text style={s.heroProgressText}>{completed ? 'Completed!' : `${progressFloors} / ${ch.target_floors} fl`}</Text>
+          </View>
+        ) : (
+          <TouchableOpacity style={s.heroJoinBtn} onPress={() => handleJoin(ch.challenge_id)}>
+            <Text style={[s.joinBtnText, { color }]}>Join Challenge</Text>
           </TouchableOpacity>
         )}
       </TouchableOpacity>
@@ -279,10 +303,26 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
   const visibleEvents = EVENTS.filter((e) => matchesSearch(e.name));
   const visibleUserEvents = userEvents.filter((e) => matchesSearch(e.name));
 
+  // The single biggest challenge (by target_floors) gets the full-width
+  // cover treatment; everything else fills a 2-column grid, ordered
+  // limited-time first, then community-created, then the default set —
+  // not by difficulty, just recency/specialness.
+  const allChallenges = [...limitedTimeChallenges, ...monthlyChallenges, ...weeklyChallenges];
+  const heroChallenge = allChallenges.reduce<Challenge | null>((max, c) => (!max || c.target_floors > max.target_floors ? c : max), null);
+  const gridChallengePriority = (c: Challenge) => (c.starts_at && c.ends_at ? 0 : c.creator_id ? 1 : 2);
+  const gridChallenges = allChallenges
+    .filter((c) => c.challenge_id !== heroChallenge?.challenge_id)
+    .sort((a, b) => gridChallengePriority(a) - gridChallengePriority(b));
+
   return (
     <View style={[s.container, isDark && { backgroundColor: '#111827' }]}>
       <View style={[s.header, isDark && { backgroundColor: '#111827', borderBottomColor: '#374151' }]}>
         <Text style={[s.headerTitle, isDark && { color: '#F9FAFB' }]}>Groups</Text>
+        {tab !== 'challenges' && (
+          <TouchableOpacity style={s.headerSearchBtn} onPress={() => setSearchVisible(true)} activeOpacity={0.7}>
+            <Ionicons name="search-outline" size={22} color={isDark ? '#D1D5DB' : '#374151'} />
+          </TouchableOpacity>
+        )}
       </View>
 
       <View style={[s.tabBar, isDark && { backgroundColor: '#1F2937' }]}>
@@ -299,19 +339,6 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
         ))}
       </View>
 
-      {tab !== 'challenges' && (
-        <View style={[s.searchBox, isDark && { backgroundColor: '#1F2937' }]}>
-          <Ionicons name="search" size={16} color="#9CA3AF" />
-          <TextInput
-            style={[s.searchInput, isDark && { color: '#F9FAFB' }]}
-            placeholder={`Search ${tab}...`}
-            placeholderTextColor="#9CA3AF"
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-          />
-        </View>
-      )}
-
       <ScrollView contentContainerStyle={s.scrollContent} showsVerticalScrollIndicator={false}>
         {tab === 'challenges' && (
           <>
@@ -322,22 +349,11 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
               </TouchableOpacity>
             </View>
 
-            {limitedTimeChallenges.length > 0 && (
-              <View style={s.groupSection}>
-                <Text style={[s.groupSectionTitle, isDark && { color: '#F9FAFB' }]}>Limited Time</Text>
-                {limitedTimeChallenges.map((ch) => renderChallengeCard(ch))}
-              </View>
-            )}
-            {monthlyChallenges.length > 0 && (
-              <View style={s.groupSection}>
-                <Text style={[s.groupSectionTitle, isDark && { color: '#F9FAFB' }]}>Monthly Challenge</Text>
-                {monthlyChallenges.map((ch) => renderChallengeCard(ch))}
-              </View>
-            )}
-            {weeklyChallenges.length > 0 && (
-              <View style={s.groupSection}>
-                <Text style={[s.groupSectionTitle, isDark && { color: '#F9FAFB' }]}>Weekly Challenges</Text>
-                {weeklyChallenges.map((ch) => renderChallengeCard(ch))}
+            {heroChallenge && renderHeroChallenge(heroChallenge)}
+
+            {gridChallenges.length > 0 && (
+              <View style={s.gridWrap}>
+                {gridChallenges.map((ch) => renderChallengeCard(ch))}
               </View>
             )}
           </>
@@ -471,6 +487,27 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
         )}
       </ScrollView>
 
+      <Modal visible={searchVisible} animationType="slide" onRequestClose={() => setSearchVisible(false)}>
+        <View style={[s.searchModalContainer, isDark && { backgroundColor: '#111827' }]}>
+          <View style={[s.searchModalHeader, isDark && { borderBottomColor: '#374151' }]}>
+            <View style={[s.searchBox, { flex: 1, marginHorizontal: 0, marginTop: 0 }, isDark && { backgroundColor: '#1F2937' }]}>
+              <Ionicons name="search" size={16} color="#9CA3AF" />
+              <TextInput
+                style={[s.searchInput, isDark && { color: '#F9FAFB' }]}
+                placeholder={`Search ${tab}...`}
+                placeholderTextColor="#9CA3AF"
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                autoFocus
+              />
+            </View>
+            <TouchableOpacity onPress={() => { setSearchVisible(false); setSearchQuery(''); }} style={{ marginLeft: 12 }}>
+              <Text style={s.searchCancelText}>Done</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
       <AuthPrompt
         visible={authPromptVisible}
         reason="create or join challenges, clubs, and events"
@@ -553,7 +590,7 @@ function CreateClubModal({ visible, onClose, isDark, onCreated, userId }: {
             ))}
           </View>
           <TextInput style={[fm.input, fm.textArea, isDark && fm.inputDark]} placeholder="Description" placeholderTextColor="#9CA3AF" value={description} onChangeText={setDescription} multiline maxLength={200} />
-          <TextInput style={[fm.input, isDark && fm.inputDark]} placeholder="Link (Facebook/Strava/etc., optional)" placeholderTextColor="#9CA3AF" value={url} onChangeText={setUrl} autoCapitalize="none" />
+          <TextInput style={[fm.input, isDark && fm.inputDark]} placeholder="Link (Facebook, Instagram, WhatsApp, etc., optional)" placeholderTextColor="#9CA3AF" value={url} onChangeText={setUrl} autoCapitalize="none" />
           <TouchableOpacity style={[fm.submitBtn, (!name.trim() || !description.trim() || saving) && { opacity: 0.5 }]} onPress={handleCreate} disabled={!name.trim() || !description.trim() || saving}>
             <Text style={fm.submitBtnText}>{saving ? 'Adding...' : 'Add Club'}</Text>
           </TouchableOpacity>
@@ -619,12 +656,11 @@ function CreateChallengeModal({ visible, onClose, isDark, onCreated, userId }: {
 }) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [difficulty, setDifficulty] = useState<'easy' | 'medium' | 'hard'>('medium');
   const [period, setPeriod] = useState<'weekly' | 'monthly'>('weekly');
   const [targetFloors, setTargetFloors] = useState('100');
   const [saving, setSaving] = useState(false);
 
-  const reset = () => { setTitle(''); setDescription(''); setDifficulty('medium'); setPeriod('weekly'); setTargetFloors('100'); };
+  const reset = () => { setTitle(''); setDescription(''); setPeriod('weekly'); setTargetFloors('100'); };
 
   const handleCreate = async () => {
     const target = parseInt(targetFloors, 10);
@@ -632,8 +668,10 @@ function CreateChallengeModal({ visible, onClose, isDark, onCreated, userId }: {
     setSaving(true);
     // No badge_key — custom challenges don't grant a real badge (there's no
     // matching BADGE_DEFS entry to award), just the target/progress tracking.
+    // difficulty is kept internally (not-null column, not shown anywhere) —
+    // just a fixed default since the app no longer ranks challenges by it.
     const { data, error } = await supabase.from('challenges').insert({
-      title: title.trim(), description: description.trim(), difficulty, period,
+      title: title.trim(), description: description.trim(), difficulty: 'medium', period,
       target_floors: target, reward_icon: 'trophy-outline', reward_label: 'Custom Challenge',
       organizer: 'A fellow climber', creator_id: userId, is_active: true,
     }).select().single();
@@ -652,13 +690,6 @@ function CreateChallengeModal({ visible, onClose, isDark, onCreated, userId }: {
           <Text style={[fm.title, isDark && { color: '#F9FAFB' }]}>Create a Challenge</Text>
           <TextInput style={[fm.input, isDark && fm.inputDark]} placeholder="Challenge title" placeholderTextColor="#9CA3AF" value={title} onChangeText={setTitle} maxLength={60} />
           <TextInput style={[fm.input, fm.textArea, isDark && fm.inputDark]} placeholder="What does it take to complete this?" placeholderTextColor="#9CA3AF" value={description} onChangeText={setDescription} multiline maxLength={200} />
-          <View style={fm.pillRow}>
-            {(['easy', 'medium', 'hard'] as const).map((d) => (
-              <TouchableOpacity key={d} style={[fm.pill, difficulty === d && fm.pillActive]} onPress={() => setDifficulty(d)}>
-                <Text style={[fm.pillText, difficulty === d && fm.pillTextActive]}>{d.toUpperCase()}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
           <View style={fm.pillRow}>
             {(['weekly', 'monthly'] as const).map((p) => (
               <TouchableOpacity key={p} style={[fm.pill, period === p && fm.pillActive]} onPress={() => setPeriod(p)}>
@@ -697,6 +728,9 @@ const fm = StyleSheet.create({
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F9FAFB' },
   header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     paddingTop: 56,
     paddingBottom: 12,
     paddingHorizontal: 20,
@@ -705,6 +739,7 @@ const s = StyleSheet.create({
     borderBottomColor: '#E5E7EB',
   },
   headerTitle: { fontSize: 28, fontWeight: '800', color: '#111827', letterSpacing: -0.5 },
+  headerSearchBtn: { padding: 4 },
 
   tabBar: {
     flexDirection: 'row',
@@ -731,8 +766,20 @@ const s = StyleSheet.create({
     marginTop: 12,
   },
   searchInput: { flex: 1, fontSize: 14, color: '#111827' },
+  searchModalContainer: { flex: 1, backgroundColor: '#F9FAFB' },
+  searchModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingTop: 56,
+    paddingBottom: 14,
+    paddingHorizontal: 16,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#E5E7EB',
+  },
+  searchCancelText: { fontSize: 14, fontWeight: '600', color: '#2563EB' },
 
-  scrollContent: { padding: 16, paddingBottom: 32 },
+  scrollContent: { padding: 16, paddingBottom: 110 },
 
   createRow: { alignItems: 'flex-end', marginBottom: 12 },
   createBtn: { flexDirection: 'row', alignItems: 'center', gap: 4 },
@@ -767,39 +814,8 @@ const s = StyleSheet.create({
   linkCardCreator: { fontSize: 11, color: '#9CA3AF', marginTop: 4, fontStyle: 'italic' },
   eventsFootnote: { fontSize: 11.5, color: '#9CA3AF', textAlign: 'center', marginTop: 4, lineHeight: 16 },
 
-  challengeCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 12,
-    elevation: 1,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.06,
-    shadowRadius: 6,
-  },
-  insaneCard: { backgroundColor: '#7C3AED' },
-  challengeTopRow: { flexDirection: 'row', alignItems: 'center', gap: 14, marginBottom: 12 },
-  badgeRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
-  countdownPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    backgroundColor: '#FEE2E2',
-    borderRadius: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  countdownPillText: { fontSize: 10, fontWeight: '800', color: '#EF4444' },
-  communityPill: { backgroundColor: '#EFF6FF', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 },
+  communityPill: { alignSelf: 'flex-start', backgroundColor: '#EFF6FF', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, marginBottom: 6 },
   communityPillText: { fontSize: 10, fontWeight: '800', color: '#2563EB' },
-  bigBadge: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   bigBadgeCheck: {
     position: 'absolute',
     bottom: -2,
@@ -807,14 +823,55 @@ const s = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderRadius: 10,
   },
-  rewardLabelBig: { fontSize: 12.5, fontWeight: '800', marginTop: 6 },
-  difficultyPill: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
-  difficultyText: { fontSize: 10.5, fontWeight: '800', letterSpacing: 0.4 },
-  challengeTitle: { fontSize: 16, fontWeight: '700', color: '#111827', marginBottom: 12 },
-  challengeCardDesc: { fontSize: 12.5, color: '#6B7280', lineHeight: 17, marginBottom: 12 },
   challengeTrack: { height: 8, borderRadius: 4, backgroundColor: 'rgba(0,0,0,0.08)', overflow: 'hidden' },
   challengeFill: { height: '100%', borderRadius: 4 },
-  challengeProgressText: { fontSize: 12, fontWeight: '600', color: '#6B7280', marginTop: 6 },
-  joinBtn: { backgroundColor: '#2563EB', borderRadius: 10, paddingVertical: 11, alignItems: 'center' },
+  challengeProgressText: { fontSize: 11, fontWeight: '600', color: '#6B7280', marginTop: 5 },
   joinBtnText: { color: '#FFFFFF', fontWeight: '700', fontSize: 13.5 },
+
+  // 2-column challenge grid
+  gridWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
+  gridCard: {
+    width: '48%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 14,
+    alignItems: 'center',
+    marginBottom: 4,
+    elevation: 1,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
+  },
+  gridBadge: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  gridTitle: { fontSize: 13, fontWeight: '700', color: '#111827', textAlign: 'center', minHeight: 34 },
+  gridDateText: { fontSize: 10.5, color: '#9CA3AF', fontWeight: '600', marginTop: 3, marginBottom: 4 },
+  gridJoinBtn: { borderRadius: 8, paddingVertical: 8, paddingHorizontal: 18, marginTop: 6 },
+
+  // Full-width featured/hero challenge
+  heroCard: { borderRadius: 20, padding: 20, marginBottom: 16 },
+  heroEyebrow: { fontSize: 11, fontWeight: '800', color: 'rgba(255,255,255,0.85)', letterSpacing: 0.6, marginBottom: 12 },
+  heroTopRow: { flexDirection: 'row', alignItems: 'center', gap: 14, marginBottom: 12 },
+  heroBadge: {
+    width: 68,
+    height: 68,
+    borderRadius: 34,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  heroTitle: { fontSize: 19, fontWeight: '800', color: '#FFFFFF' },
+  heroDateText: { fontSize: 12.5, color: 'rgba(255,255,255,0.85)', fontWeight: '600', marginTop: 3 },
+  heroDesc: { fontSize: 13.5, color: 'rgba(255,255,255,0.9)', lineHeight: 19, marginBottom: 16 },
+  heroTrack: { height: 10, borderRadius: 5, backgroundColor: 'rgba(255,255,255,0.25)', overflow: 'hidden' },
+  heroFill: { height: '100%', borderRadius: 5, backgroundColor: '#FFFFFF' },
+  heroProgressText: { fontSize: 12.5, fontWeight: '700', color: '#FFFFFF', marginTop: 8 },
+  heroJoinBtn: { backgroundColor: '#FFFFFF', borderRadius: 12, paddingVertical: 13, alignItems: 'center' },
 });

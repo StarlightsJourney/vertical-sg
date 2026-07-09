@@ -27,11 +27,16 @@ import MascotAvatar from '../components/MascotAvatar';
 import PublicProfileModal from '../components/PublicProfileModal';
 import LeaderboardModal from '../components/LeaderboardModal';
 import NotificationsModal from '../components/NotificationsModal';
-import ChallengeDetailModal from '../components/ChallengeDetailModal';
+import ChallengeDetailModal, { challengeColor } from '../components/ChallengeDetailModal';
 import type { Profile, Challenge } from '../types';
 import { BADGE_DEFS } from '../types';
 
 const HIDDEN_POSTS_KEY = 'hidden_feed_posts';
+
+function formatDateRange(startIso: string, endIso: string): string {
+  const opts: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric' };
+  return `${new Date(startIso).toLocaleDateString(undefined, opts)} – ${new Date(endIso).toLocaleDateString(undefined, opts)}`;
+}
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const MOCK_PHOTOS = [
@@ -71,8 +76,6 @@ interface LeaderboardRow {
   total_floors: number;
   best_single_climb: number;
 }
-
-const DIFFICULTY_COLOR: Record<string, string> = { easy: '#10B981', medium: '#F59E0B', hard: '#EF4444', insane: '#7C3AED' };
 
 // Client-side only — never written to the database. Real "other users" need
 // real accounts, which isn't something to fake in a live database. This is
@@ -190,6 +193,8 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
   const [challenges, setChallenges] = useState<Challenge[]>([]);
   const [myChallengeIds, setMyChallengeIds] = useState<Set<string>>(new Set());
   const [weeklyFloorsForChallenges, setWeeklyFloorsForChallenges] = useState(0);
+  const [monthlyFloorsForChallenges, setMonthlyFloorsForChallenges] = useState(0);
+  const [limitedTimeProgress, setLimitedTimeProgress] = useState<Record<string, number>>({});
 
   // Recommended climbers
   const [recommended, setRecommended] = useState<(LeaderboardRow & { profile?: Profile })[]>([]);
@@ -311,25 +316,41 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
   }, [user]);
 
   const loadChallenges = useCallback(async () => {
-    // Only the standard weekly challenges show here — the monthly challenge,
-    // the insane-tier Everest Gauntlet, and limited-time dated challenges are
-    // reserved for "Explore All Challenges" on the Groups tab.
-    const { data: challengeData } = await supabase
-      .from('challenges')
-      .select('*')
-      .eq('is_active', true)
-      .eq('period', 'weekly')
-      .neq('difficulty', 'insane')
-      .is('starts_at', null);
-    if (challengeData) setChallenges(challengeData as Challenge[]);
+    const { data: challengeData } = await supabase.from('challenges').select('*').eq('is_active', true);
+    const all = (challengeData ?? []) as Challenge[];
 
-    if (!user) return;
-    const [{ data: joined }, { data: myClimbs }] = await Promise.all([
+    if (!user) {
+      setChallenges(all.slice(0, 3));
+      return;
+    }
+
+    const [{ data: joined }, { data: climbs }] = await Promise.all([
       supabase.from('challenge_participants').select('challenge_id').eq('user_id', user.id),
-      supabase.from('climbs').select('floors_climbed').eq('user_id', user.id).gte('created_at', new Date(Date.now() - 7 * 86400000).toISOString()),
+      supabase.from('climbs').select('floors_climbed, created_at').eq('user_id', user.id).gte('created_at', new Date(Date.now() - 60 * 86400000).toISOString()),
     ]);
-    if (joined) setMyChallengeIds(new Set(joined.map((j: any) => j.challenge_id)));
-    if (myClimbs) setWeeklyFloorsForChallenges(myClimbs.reduce((s, c: any) => s + c.floors_climbed, 0));
+    const joinedIds = new Set((joined ?? []).map((j: any) => j.challenge_id));
+    setMyChallengeIds(joinedIds);
+
+    if (climbs) {
+      const now = Date.now();
+      setWeeklyFloorsForChallenges(climbs.filter((c: any) => now - new Date(c.created_at).getTime() < 7 * 86400000).reduce((s, c: any) => s + c.floors_climbed, 0));
+      setMonthlyFloorsForChallenges(climbs.filter((c: any) => now - new Date(c.created_at).getTime() < 30 * 86400000).reduce((s, c: any) => s + c.floors_climbed, 0));
+
+      const ltProgress: Record<string, number> = {};
+      for (const ch of all.filter((c) => c.starts_at && c.ends_at)) {
+        const start = new Date(ch.starts_at!).getTime();
+        const end = new Date(ch.ends_at!).getTime();
+        ltProgress[ch.challenge_id] = climbs.filter((c: any) => { const t = new Date(c.created_at).getTime(); return t >= start && t <= end; }).reduce((s, c: any) => s + c.floors_climbed, 0);
+      }
+      setLimitedTimeProgress(ltProgress);
+    }
+
+    // Suggested = not already joined, prioritizing limited-time and
+    // unique/community/special challenges over the plain default set —
+    // once you've joined one it moves to "My Challenges" on Map instead.
+    const notJoined = all.filter((c) => !joinedIds.has(c.challenge_id));
+    const priority = (c: Challenge) => (c.starts_at && c.ends_at ? 0 : c.creator_id || c.difficulty === 'insane' ? 1 : 2);
+    setChallenges(notJoined.sort((a, b) => priority(a) - priority(b)).slice(0, 5));
   }, [user]);
 
   const loadRecommended = useCallback(async () => {
@@ -685,9 +706,11 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.challengeRow}>
                   {challenges.map((ch) => {
                     const joined = myChallengeIds.has(ch.challenge_id);
-                    const progressPct = Math.min(100, Math.round((weeklyFloorsForChallenges / ch.target_floors) * 100));
+                    const isLimitedTime = !!(ch.starts_at && ch.ends_at);
+                    const progressFloors = isLimitedTime ? (limitedTimeProgress[ch.challenge_id] ?? 0) : (ch.period === 'monthly' ? monthlyFloorsForChallenges : weeklyFloorsForChallenges);
+                    const progressPct = Math.min(100, Math.round((progressFloors / ch.target_floors) * 100));
                     const completed = joined && progressPct >= 100;
-                    const color = DIFFICULTY_COLOR[ch.difficulty];
+                    const color = challengeColor(ch.challenge_id);
                     return (
                       <TouchableOpacity
                         key={ch.challenge_id}
@@ -695,9 +718,19 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
                         onPress={() => setSelectedChallenge(ch)}
                         activeOpacity={0.85}
                       >
-                        <View style={[s.difficultyPill, s.challengeDifficultyPill, { backgroundColor: color + '1A' }]}>
-                          <Text style={[s.difficultyText, { color }]}>{ch.difficulty.toUpperCase()}</Text>
-                        </View>
+                        {ch.creator_id ? (
+                          <View style={[s.difficultyPill, s.challengeDifficultyPill, { backgroundColor: '#EFF6FF' }]}>
+                            <Text style={[s.difficultyText, { color: '#2563EB' }]}>COMMUNITY</Text>
+                          </View>
+                        ) : isLimitedTime ? (
+                          <View style={[s.difficultyPill, s.challengeDifficultyPill, { backgroundColor: color + '1A' }]}>
+                            <Text style={[s.difficultyText, { color }]}>{formatDateRange(ch.starts_at!, ch.ends_at!)}</Text>
+                          </View>
+                        ) : (
+                          <View style={[s.difficultyPill, s.challengeDifficultyPill, { backgroundColor: color + '1A' }]}>
+                            <Text style={[s.difficultyText, { color }]}>{ch.period === 'monthly' ? 'MONTHLY' : 'WEEKLY'}</Text>
+                          </View>
+                        )}
 
                         <View style={[s.bigBadge, { backgroundColor: color + '1F' }]}>
                           <Ionicons name={ch.reward_icon as any} size={38} color={color} />
@@ -718,7 +751,7 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
                               <View style={[s.challengeFill, { width: `${progressPct}%`, backgroundColor: color }]} />
                             </View>
                             <Text style={s.challengeProgressText}>
-                              {completed ? 'Completed!' : `${weeklyFloorsForChallenges} / ${ch.target_floors} fl`}
+                              {completed ? 'Completed!' : `${progressFloors} / ${ch.target_floors} fl`}
                             </Text>
                           </View>
                         ) : (
@@ -1049,7 +1082,11 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
         visible={!!selectedChallenge}
         onClose={() => setSelectedChallenge(null)}
         joined={!!selectedChallenge && myChallengeIds.has(selectedChallenge.challenge_id)}
-        progressFloors={weeklyFloorsForChallenges}
+        progressFloors={
+          selectedChallenge?.starts_at && selectedChallenge?.ends_at
+            ? (limitedTimeProgress[selectedChallenge.challenge_id] ?? 0)
+            : selectedChallenge?.period === 'monthly' ? monthlyFloorsForChallenges : weeklyFloorsForChallenges
+        }
         onJoin={() => selectedChallenge && handleJoinChallenge(selectedChallenge.challenge_id)}
         isDark={isDark}
       />
@@ -1156,7 +1193,7 @@ const s = StyleSheet.create({
   },
   scrollContent: {
     padding: 16,
-    paddingBottom: 32,
+    paddingBottom: 110,
   },
   card: {
     backgroundColor: '#FFFFFF',

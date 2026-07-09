@@ -693,7 +693,7 @@ const s = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
-    paddingBottom: 48,
+    paddingBottom: 110,
   },
   banner: {
     height: 96,

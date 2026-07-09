@@ -12,16 +12,24 @@ interface Props {
   isDark?: boolean;
 }
 
-const DIFFICULTY_COLOR: Record<string, string> = { easy: '#10B981', medium: '#F59E0B', hard: '#EF4444', insane: '#7C3AED' };
+// A varied palette keyed off the challenge id — not a difficulty ranking,
+// just visual variety so cards don't all look the same.
+const CHALLENGE_PALETTE = ['#2563EB', '#7C3AED', '#0D9488', '#DB2777', '#D97706', '#059669'];
+export function challengeColor(id: string): string {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) >>> 0;
+  return CHALLENGE_PALETTE[hash % CHALLENGE_PALETTE.length];
+}
 
-function daysUntil(iso: string): number {
-  return Math.max(0, Math.ceil((new Date(iso).getTime() - Date.now()) / 86400000));
+function formatDateRange(startIso: string, endIso: string): string {
+  const opts: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric' };
+  return `${new Date(startIso).toLocaleDateString(undefined, opts)} – ${new Date(endIso).toLocaleDateString(undefined, opts)}`;
 }
 
 export default function ChallengeDetailModal({ challenge, visible, onClose, joined, progressFloors, onJoin, isDark = false }: Props) {
   if (!challenge) return null;
 
-  const color = DIFFICULTY_COLOR[challenge.difficulty] ?? '#6B7280';
+  const color = challengeColor(challenge.challenge_id);
   const pct = Math.min(100, Math.round((progressFloors / challenge.target_floors) * 100));
   const completed = joined && pct >= 100;
   const isLimitedTime = !!(challenge.starts_at && challenge.ends_at);
@@ -62,17 +70,15 @@ export default function ChallengeDetailModal({ challenge, visible, onClose, join
             </View>
 
             <View style={st.pillRow}>
-              <View style={[st.pill, { backgroundColor: color + '1A' }]}>
-                <Text style={[st.pillText, { color }]}>{challenge.difficulty.toUpperCase()}</Text>
-              </View>
               {isLimitedTime ? (
-                <View style={[st.pill, { backgroundColor: '#FEE2E2' }]}>
-                  <Text style={[st.pillText, { color: '#EF4444' }]}>{daysUntil(challenge.ends_at!)}D LEFT</Text>
+                <View style={[st.pill, { backgroundColor: color + '1A' }]}>
+                  <Ionicons name="calendar-outline" size={12} color={color} />
+                  <Text style={[st.pillText, { color, marginLeft: 4 }]}>{formatDateRange(challenge.starts_at!, challenge.ends_at!)}</Text>
                 </View>
               ) : (
                 <View style={[st.pill, isDark && { backgroundColor: '#374151' }]}>
                   <Text style={[st.pillText, { color: isDark ? '#D1D5DB' : '#6B7280' }]}>
-                    {challenge.period === 'monthly' ? 'MONTHLY' : 'WEEKLY'}
+                    {challenge.period === 'monthly' ? 'RESETS MONTHLY' : 'RESETS WEEKLY'}
                   </Text>
                 </View>
               )}
@@ -147,7 +153,7 @@ const st = StyleSheet.create({
   orgRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 16 },
   orgText: { fontSize: 13, color: '#9CA3AF', fontWeight: '500' },
   pillRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 24 },
-  pill: { backgroundColor: '#F3F4F6', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5 },
+  pill: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F3F4F6', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5 },
   pillText: { fontSize: 10.5, fontWeight: '800', letterSpacing: 0.4 },
   sectionLabel: {
     fontSize: 12,
