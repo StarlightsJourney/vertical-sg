@@ -284,21 +284,23 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
       .sort((a, b) => a.dist - b.dist);
 
     const picked: typeof withDist = [];
-    const usedTiers = new Set<number>();
+    const alreadyPicked = (id: string) => picked.some((p) => p.block.block_id === id);
+
+    // Reserve a slot each for 21-30, 31-39, and 40+ storeys first (the
+    // buildings actually worth suggesting a climb for) — otherwise nearby
+    // 1-10 storey blocks tend to crowd out the taller ones entirely.
+    for (const tier of [2, 3, 4]) {
+      const nearest = withDist.find((c) => tierIndex(c.block.storeys) === tier && !alreadyPicked(c.block.block_id));
+      if (nearest) picked.push(nearest);
+    }
+    // Fill remaining slots (up to 5) with whatever's nearest overall.
     for (const cand of withDist) {
-      if (usedTiers.has(tierIndex(cand.block.storeys))) continue;
-      usedTiers.add(tierIndex(cand.block.storeys));
-      picked.push(cand);
       if (picked.length === 5) break;
+      if (alreadyPicked(cand.block.block_id)) continue;
+      picked.push(cand);
     }
-    if (picked.length < 5) {
-      for (const cand of withDist) {
-        if (picked.length === 5) break;
-        if (picked.some((p) => p.block.block_id === cand.block.block_id)) continue;
-        picked.push(cand);
-      }
-    }
-    return picked;
+
+    return picked.sort((a, b) => a.dist - b.dist);
   }, [blocks, location.loading, location.latitude, location.longitude]);
 
   // Popularity per recommended block — distinct climbers, fetched only for the
@@ -854,33 +856,33 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
         </>
       )}
 
-      {/* Description modal */}
-      <Modal visible={descModalVisible} transparent animationType="fade">
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}>
-          <View style={{ backgroundColor: '#FFF', borderRadius: 16, padding: 24, width: '85%', maxWidth: 360 }}>
-            <Text style={{ fontSize: 18, fontWeight: '700', color: '#111827', marginBottom: 8 }}>
+      {/* Description modal — same rounded-card pattern as the alert/report and layers pop-ups */}
+      <Modal visible={descModalVisible} transparent animationType="fade" onRequestClose={() => setDescModalVisible(false)}>
+        <View style={styles.alertBackdrop}>
+          <View style={[styles.alertGrid, isDark && { backgroundColor: '#1F2937' }]}>
+            <Text style={[styles.alertGridTitle, { marginBottom: 8, textAlign: 'left' }, isDark && { color: '#F9FAFB' }]}>
               New {placementType}
             </Text>
-            <Text style={{ fontSize: 13, color: '#6B7280', marginBottom: 16 }}>
+            <Text style={[styles.descModalHint, isDark && { color: '#9CA3AF' }]}>
               This will appear as unverified until confirmed by the community.
             </Text>
             <TextInput
-              style={{ backgroundColor: '#F3F4F6', borderRadius: 10, padding: 14, fontSize: 14, color: '#111827', marginBottom: 16 }}
+              style={[styles.descModalInput, isDark && { backgroundColor: '#111827', color: '#F9FAFB' }]}
               placeholder='e.g. "Level 1 void deck, near lift B"'
               placeholderTextColor="#9CA3AF"
               value={descText}
               onChangeText={setDescText}
               maxLength={120}
             />
-            <View style={{ flexDirection: 'row', gap: 10 }}>
+            <View style={styles.descModalActions}>
               <TouchableOpacity
-                style={{ flex: 1, padding: 14, borderRadius: 12, backgroundColor: '#F3F4F6', alignItems: 'center' }}
+                style={[styles.descModalSkipBtn, isDark && { backgroundColor: '#374151' }]}
                 onPress={() => { setDescModalVisible(false); setDescText(''); }}
               >
-                <Text style={{ fontWeight: '600', color: '#6B7280' }}>Skip</Text>
+                <Text style={[styles.descModalSkipText, isDark && { color: '#D1D5DB' }]}>Skip</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={{ flex: 2, padding: 14, borderRadius: 12, backgroundColor: '#2563EB', alignItems: 'center' }}
+                style={styles.descModalSubmitBtn}
                 onPress={async () => {
                   const [lng, lat] = placementCenter;
                   const newReport = {
@@ -903,7 +905,7 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
                   Alert.alert('Reported', `${placementType} submitted as unverified. Visible immediately.`);
                 }}
               >
-                <Text style={{ fontWeight: '700', color: '#FFF' }}>Submit</Text>
+                <Text style={styles.descModalSubmitText}>Submit</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -917,6 +919,7 @@ export default function MapScreen({ isDark: isDarkProp }: { isDark?: boolean }) 
         onLogClimb={handleLogClimb}
         onViewDetails={handleViewDetails}
         tapY={tapY}
+        isDark={isDark}
       />
 
       {/* Building Detail Sheet (expanded view) */}
@@ -1397,6 +1400,48 @@ const styles = StyleSheet.create({
     color: '#6B7280',
     textAlign: 'center',
     fontWeight: '500',
+  },
+
+  // Description modal (new amenity) — reuses alertGrid/alertBackdrop as the card shell
+  descModalHint: {
+    fontSize: 13,
+    color: '#6B7280',
+    marginBottom: 16,
+    lineHeight: 18,
+  },
+  descModalInput: {
+    backgroundColor: '#F3F4F6',
+    borderRadius: 10,
+    padding: 14,
+    fontSize: 14,
+    color: '#111827',
+    marginBottom: 16,
+  },
+  descModalActions: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  descModalSkipBtn: {
+    flex: 1,
+    padding: 14,
+    borderRadius: 12,
+    backgroundColor: '#F3F4F6',
+    alignItems: 'center',
+  },
+  descModalSkipText: {
+    fontWeight: '600',
+    color: '#6B7280',
+  },
+  descModalSubmitBtn: {
+    flex: 2,
+    padding: 14,
+    borderRadius: 12,
+    backgroundColor: '#2563EB',
+    alignItems: 'center',
+  },
+  descModalSubmitText: {
+    fontWeight: '700',
+    color: '#FFF',
   },
 
   // Placement mode

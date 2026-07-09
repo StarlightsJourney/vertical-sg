@@ -11,6 +11,7 @@ interface Props {
   onLogClimb?: (block: Block, qty: number, partialFloors: number) => void;
   onViewDetails?: (block: Block) => void;
   tapY?: number;
+  isDark?: boolean;
 }
 
 function getTier(storeys: number) {
@@ -26,7 +27,7 @@ function formatDistance(km: number | null): string {
   return km < 1 ? `${Math.round(km * 1000)}m` : `${km.toFixed(1)}km`;
 }
 
-export default function BlockDetailSheet({ block, distanceKm, onLogClimb, onViewDetails, tapY }: Props) {
+export default function BlockDetailSheet({ block, distanceKm, onLogClimb, onViewDetails, tapY, isDark = false }: Props) {
   const [climbing, setClimbing] = useState(false); // manual entry panel
   const [trackerVisible, setTrackerVisible] = useState(false); // live barometer tracker
   const [climbQty, setClimbQty] = useState(1);
@@ -78,34 +79,34 @@ export default function BlockDetailSheet({ block, distanceKm, onLogClimb, onView
           ? { top: Math.max(80, tapY - 160) }
           : { top: '30%' },
       ]}>
-        <View style={styles.card}>
+        <View style={[styles.card, isDark && { backgroundColor: 'rgba(31,41,55,0.94)' }]}>
           <View style={styles.content}>
             {/* Top row: storey count + address + directions arrow */}
             <View style={styles.topRow}>
-              <View style={styles.storeyBadge}>
+              <View style={[styles.storeyBadge, { backgroundColor: tier.color + '22' }]}>
                 <Text style={[styles.storeyValue, { color: tier.color }]}>{block.storeys}</Text>
-                <Text style={styles.storeyLabel}>floors</Text>
+                <Text style={[styles.storeyLabel, isDark && { color: '#9CA3AF' }]}>floors</Text>
               </View>
               <View style={styles.addressBlock}>
                 <View style={styles.addressRow}>
-                  <Text style={styles.address}>Blk {block.blk_no}</Text>
+                  <Text style={[styles.address, isDark && { color: '#F9FAFB' }]}>Blk {block.blk_no}</Text>
                   <TouchableOpacity onPress={handleDirections} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                     <Ionicons name="navigate-outline" size={18} color="#2563EB" />
                   </TouchableOpacity>
                 </View>
-                <Text style={styles.street}>{block.street}</Text>
-                {block.town && <Text style={styles.town}>{block.town}</Text>}
+                <Text style={[styles.street, isDark && { color: '#D1D5DB' }]}>{block.street}</Text>
+                {block.town && <Text style={[styles.town, isDark && { color: '#9CA3AF' }]}>{block.town}</Text>}
               </View>
             </View>
 
             {/* Row 2: Quick stats */}
             <View style={styles.statsRow}>
               <View style={styles.stat}>
-                <Text style={styles.statValue}>{block.est_height_m}m</Text>
+                <Text style={[styles.statValue, isDark && { color: '#F9FAFB' }]}>{block.est_height_m}m</Text>
                 <Text style={styles.statLabel}>Height</Text>
               </View>
               <View style={styles.stat}>
-                <Text style={styles.statValue}>{formatDistance(distanceKm)}</Text>
+                <Text style={[styles.statValue, isDark && { color: '#F9FAFB' }]}>{formatDistance(distanceKm)}</Text>
                 <Text style={styles.statLabel}>Away</Text>
               </View>
               {block.height_source === 'verified' && (
@@ -131,7 +132,7 @@ export default function BlockDetailSheet({ block, distanceKm, onLogClimb, onView
                   <Text style={styles.startBtnText}>Start Climb</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={styles.detailsBtn}
+                  style={[styles.detailsBtn, isDark && { backgroundColor: 'rgba(37,99,235,0.18)' }]}
                   onPress={() => onViewDetails?.(block)}
                   activeOpacity={0.8}
                 >
@@ -141,16 +142,16 @@ export default function BlockDetailSheet({ block, distanceKm, onLogClimb, onView
               </View>
             ) : (
               /* Expanded logging panel — only shown once you've committed to Start Climb */
-              <View style={styles.logPanel}>
+              <View style={[styles.logPanel, isDark && { borderTopColor: '#374151' }]}>
                 <View style={styles.qtyRow}>
                   <TouchableOpacity onPress={() => setClimbQty(Math.max(1, climbQty - 1))} activeOpacity={0.7}>
-                    <Text style={styles.qtyBtn}>−</Text>
+                    <Text style={[styles.qtyBtn, isDark && { backgroundColor: '#374151', color: '#F9FAFB' }]}>−</Text>
                   </TouchableOpacity>
-                  <Text style={styles.qtyValue}>{climbQty}</Text>
+                  <Text style={[styles.qtyValue, isDark && { color: '#F9FAFB' }]}>{climbQty}</Text>
                   <TouchableOpacity onPress={() => setClimbQty(climbQty + 1)} activeOpacity={0.7}>
-                    <Text style={styles.qtyBtn}>+</Text>
+                    <Text style={[styles.qtyBtn, isDark && { backgroundColor: '#374151', color: '#F9FAFB' }]}>+</Text>
                   </TouchableOpacity>
-                  <Text style={styles.qtyLabel}>full sets</Text>
+                  <Text style={[styles.qtyLabel, isDark && { color: '#D1D5DB' }]}>full sets</Text>
                 </View>
 
                 <View style={styles.partialRow}>
@@ -158,31 +159,31 @@ export default function BlockDetailSheet({ block, distanceKm, onLogClimb, onView
                     onPress={() => setPartialFloors(Math.max(0, partialFloors - 1))}
                     activeOpacity={0.7}
                   >
-                    <Text style={styles.partialBtn}>−</Text>
+                    <Text style={[styles.partialBtn, isDark && { backgroundColor: '#374151', color: '#F9FAFB' }]}>−</Text>
                   </TouchableOpacity>
-                  <Text style={styles.partialValue}>{partialFloors}</Text>
+                  <Text style={[styles.partialValue, isDark && { color: '#F9FAFB' }]}>{partialFloors}</Text>
                   <TouchableOpacity
                     onPress={() => setPartialFloors(Math.min(block.storeys - 1, partialFloors + 1))}
                     activeOpacity={0.7}
                   >
-                    <Text style={styles.partialBtn}>+</Text>
+                    <Text style={[styles.partialBtn, isDark && { backgroundColor: '#374151', color: '#F9FAFB' }]}>+</Text>
                   </TouchableOpacity>
                   <Text style={styles.partialLabel}>+ partial floors last set</Text>
                 </View>
 
-                <Text style={styles.totalPreview}>
+                <Text style={[styles.totalPreview, isDark && { color: '#F9FAFB' }]}>
                   Total: {climbQty * block.storeys + partialFloors} floors
                   {' '}(~{Math.round((climbQty * block.storeys + partialFloors) * 2.8)}m)
                 </Text>
 
                 <View style={styles.actionRow}>
                   <TouchableOpacity
-                    style={styles.cancelBtn}
+                    style={[styles.cancelBtn, isDark && { backgroundColor: '#374151' }]}
                     onPress={() => { setClimbing(false); setClimbQty(1); setPartialFloors(0); }}
                     activeOpacity={0.8}
                     disabled={justLogged}
                   >
-                    <Text style={styles.cancelBtnText}>Cancel</Text>
+                    <Text style={[styles.cancelBtnText, isDark && { color: '#D1D5DB' }]}>Cancel</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={[styles.startBtn, justLogged && styles.startBtnConfirmed]}
@@ -239,11 +240,14 @@ const styles = StyleSheet.create({
   content: { padding: 14 },
   topRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
   storeyBadge: {
-    backgroundColor: 'transparent',
     marginRight: 12,
     alignItems: 'center',
+    justifyContent: 'center',
+    width: 64,
+    height: 64,
+    borderRadius: 32,
   },
-  storeyValue: { fontSize: 28, fontWeight: '800', lineHeight: 30 },
+  storeyValue: { fontSize: 24, fontWeight: '800', lineHeight: 26 },
   storeyLabel: { fontSize: 10, color: '#9CA3AF', marginTop: 1, letterSpacing: 0.5 },
   addressBlock: { flex: 1 },
   addressRow: { flexDirection: 'row', alignItems: 'center' },
