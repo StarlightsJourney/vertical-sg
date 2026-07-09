@@ -1,8 +1,10 @@
-import { View, StyleSheet } from 'react-native';
+import { View, Image, StyleSheet } from 'react-native';
 
 interface Props {
   skinIdx: number;
   size?: number;
+  /** Real profile photo URL — when set, renders this instead of the illustrated mascot skin. */
+  photoUri?: string | null;
 }
 
 // Five simple ape/monkey skins — plain View shapes (no SVG/image dependency),
@@ -16,7 +18,11 @@ const SKINS = [
   { body: '#10B981', cheek: '#5EEAB8', earSize: 15 },   // Green
 ];
 
-export default function MascotAvatar({ skinIdx, size = 64 }: Props) {
+export default function MascotAvatar({ skinIdx, size = 64, photoUri }: Props) {
+  if (photoUri) {
+    return <Image source={{ uri: photoUri }} style={{ width: size, height: size, borderRadius: size / 2 }} />;
+  }
+
   const skin = SKINS[skinIdx % SKINS.length];
   const scale = size / 64;
 

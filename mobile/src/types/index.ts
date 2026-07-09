@@ -38,6 +38,8 @@ export interface Profile {
   avatar_idx: number;
   featured_badge: string | null;
   is_pro: boolean;
+  /** Storage path (building-photos bucket, avatars/ prefix) for a real uploaded photo — takes priority over the mascot skin when set. */
+  avatar_photo_path?: string | null;
   created_at: string;
   updated_at: string;
 }

@@ -15,6 +15,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../config/supabase';
 import storage from '../utils/storage';
 import MascotAvatar from '../components/MascotAvatar';
+import { avatarUriFor } from '../utils/avatarUri';
 import BadgeDetailModal from '../components/BadgeDetailModal';
 import SettingsModal from '../components/SettingsModal';
 import { computeXP, computeLevelProgress } from '../utils/leveling';
@@ -286,8 +287,14 @@ export default function ProfileScreen({ isDark = false, themeMode = 'auto', onSe
 
   const handleChangeSkin = async (idx: number) => {
     if (!user || !profile) return;
-    setProfile({ ...profile, avatar_idx: idx }); // optimistic
-    await supabase.from('profiles').update({ avatar_idx: idx }).eq('user_id', user.id);
+    // Picking a mascot skin is an explicit "use the mascot, not my photo" —
+    // clear any uploaded photo so it doesn't keep taking priority everywhere.
+    setProfile({ ...profile, avatar_idx: idx, avatar_photo_path: null }); // optimistic
+    await supabase.from('profiles').update({ avatar_idx: idx, avatar_photo_path: null }).eq('user_id', user.id);
+  };
+
+  const handlePhotoChanged = (path: string | null) => {
+    setProfile((p) => (p ? { ...p, avatar_photo_path: path } : p));
   };
 
   const handleDeleteClimb = (climb: ClimbLog, index: number) => {
@@ -392,7 +399,7 @@ export default function ProfileScreen({ isDark = false, themeMode = 'auto', onSe
             activeOpacity={0.7}
           >
             <Animated.View style={[s.avatarFrame, isLegendary && { borderColor: legendaryColor }]}>
-              <MascotAvatar skinIdx={profile?.avatar_idx ?? 0} size={72} />
+              <MascotAvatar skinIdx={profile?.avatar_idx ?? 0} photoUri={avatarUriFor(profile)} size={72} />
             </Animated.View>
             <View style={s.avatarEditBadge}>
               <Ionicons name="settings-outline" size={13} color="#FFF" />
@@ -688,6 +695,7 @@ export default function ProfileScreen({ isDark = false, themeMode = 'auto', onSe
         onSetThemeMode={onSetThemeMode ?? (() => {})}
         profile={profile}
         onChangeSkin={handleChangeSkin}
+        onPhotoChanged={handlePhotoChanged}
         onRequestSignIn={() => setAuthPromptVisible(true)}
       />
     </View>

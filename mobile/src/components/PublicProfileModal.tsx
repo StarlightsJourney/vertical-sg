@@ -4,6 +4,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { supabase } from '../config/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import MascotAvatar from './MascotAvatar';
+import { avatarUriFor } from '../utils/avatarUri';
 import BadgeDetailModal from './BadgeDetailModal';
 import { computeXP, computeLevelProgress } from '../utils/leveling';
 import { BADGE_DEFS } from '../types';
@@ -134,7 +135,7 @@ export default function PublicProfileModal({ userId, visible, onClose }: Props) 
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
               <View style={styles.header}>
                 <View>
-                  <MascotAvatar skinIdx={profile?.avatar_idx ?? 0} size={72} />
+                  <MascotAvatar skinIdx={profile?.avatar_idx ?? 0} photoUri={avatarUriFor(profile)} size={72} />
                   <View style={styles.levelChip}>
                     <Text style={styles.levelChipText}>Lv {levelInfo.level}</Text>
                   </View>

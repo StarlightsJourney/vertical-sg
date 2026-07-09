@@ -24,6 +24,7 @@ import { base64ToUint8Array } from '../utils/base64';
 import storage from '../utils/storage';
 import AuthPrompt from '../components/AuthPrompt';
 import MascotAvatar from '../components/MascotAvatar';
+import { avatarUriFor } from '../utils/avatarUri';
 import PublicProfileModal from '../components/PublicProfileModal';
 import LeaderboardModal from '../components/LeaderboardModal';
 import NotificationsModal from '../components/NotificationsModal';
@@ -307,6 +308,7 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
 
   const nameFor = (userId: string) => profilesMap[userId]?.display_name ?? `Climber${userId.slice(0, 4)}`;
   const skinFor = (userId: string) => profilesMap[userId]?.avatar_idx ?? 0;
+  const photoFor = (userId: string) => avatarUriFor(profilesMap[userId]);
 
   const loadLeaderboard = useCallback(async () => {
     const { data } = await supabase
@@ -678,7 +680,7 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
             </TouchableOpacity>
           )}
           <TouchableOpacity onPress={onNavigateToProfile} activeOpacity={0.7}>
-            <MascotAvatar skinIdx={myProfile?.avatar_idx ?? 0} size={34} />
+            <MascotAvatar skinIdx={myProfile?.avatar_idx ?? 0} photoUri={avatarUriFor(myProfile)} size={34} />
           </TouchableOpacity>
         </View>
       </View>
@@ -709,7 +711,7 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
                       disabled={!!isMe || isMock}
                     >
                       <Text style={[s.lbRank, i < 3 && s.lbRankTop]}>{i + 1}</Text>
-                      <MascotAvatar skinIdx={skinFor(row.user_id)} size={26} />
+                      <MascotAvatar skinIdx={skinFor(row.user_id)} photoUri={photoFor(row.user_id)} size={26} />
                       <Text style={[s.lbName, isDark && { color: '#F9FAFB' }]}>
                         {isMe ? 'You' : nameFor(row.user_id)}
                       </Text>
@@ -803,7 +805,7 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
                       onPress={() => setViewingProfileId(r.user_id)}
                       activeOpacity={0.8}
                     >
-                      <MascotAvatar skinIdx={r.profile?.avatar_idx ?? 0} size={44} />
+                      <MascotAvatar skinIdx={r.profile?.avatar_idx ?? 0} photoUri={avatarUriFor(r.profile)} size={44} />
                       <Text style={[s.recName, isDark && { color: '#F9FAFB' }]} numberOfLines={1}>
                         {r.profile?.display_name ?? `Climber${r.user_id.slice(0, 4)}`}
                       </Text>
@@ -846,7 +848,7 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
                 onPress={() => !isMock && !isOwnPost && setViewingProfileId(item.user_id)}
                 activeOpacity={0.7}
               >
-                <MascotAvatar skinIdx={skinFor(item.user_id)} size={36} />
+                <MascotAvatar skinIdx={skinFor(item.user_id)} photoUri={photoFor(item.user_id)} size={36} />
                 <View style={{ flex: 1 }}>
                   <View style={s.feedNameRow}>
                     <Text style={[s.feedName, isDark && { color: '#F9FAFB' }]}>
@@ -935,7 +937,7 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
                         )}
                         {(showAllComments ? climbComments : climbComments.slice(-COMMENTS_COLLAPSED)).map((cm) => (
                           <View key={cm.comment_id} style={s.commentRow}>
-                            <MascotAvatar skinIdx={profilesMap[cm.user_id]?.avatar_idx ?? 0} size={26} />
+                            <MascotAvatar skinIdx={profilesMap[cm.user_id]?.avatar_idx ?? 0} photoUri={photoFor(cm.user_id)} size={26} />
                             <View style={{ flex: 1 }}>
                               <View style={s.commentHeaderRow}>
                                 <Text style={[s.commentUser, isDark && { color: '#F9FAFB' }]}>
@@ -1142,7 +1144,7 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
                     style={s.searchResultRow}
                     onPress={() => { setSearchModalVisible(false); setViewingProfileId(p.user_id); }}
                   >
-                    <MascotAvatar skinIdx={p.avatar_idx} size={32} />
+                    <MascotAvatar skinIdx={p.avatar_idx} photoUri={avatarUriFor(p)} size={32} />
                     <Text style={[s.searchResultName, isDark && { color: '#F9FAFB' }]}>{p.display_name}</Text>
                   </TouchableOpacity>
                 ))

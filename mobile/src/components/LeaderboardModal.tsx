@@ -4,6 +4,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { supabase } from '../config/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import MascotAvatar from './MascotAvatar';
+import { avatarUriFor } from '../utils/avatarUri';
 import type { Profile } from '../types';
 
 interface Props {
@@ -124,7 +125,7 @@ export default function LeaderboardModal({ visible, onClose, onViewProfile, isDa
                     disabled={isMe || isMock}
                   >
                     <Text style={[styles.rank, index < 3 && styles.rankTop]}>{index + 1}</Text>
-                    <MascotAvatar skinIdx={profilesMap[item.user_id]?.avatar_idx ?? 0} size={32} />
+                    <MascotAvatar skinIdx={profilesMap[item.user_id]?.avatar_idx ?? 0} photoUri={avatarUriFor(profilesMap[item.user_id])} size={32} />
                     <Text style={[styles.name, isDark && { color: '#F9FAFB' }]}>{isMe ? 'You' : (profilesMap[item.user_id]?.display_name ?? `Climber${item.user_id.slice(0, 4)}`)}</Text>
                     <Text style={styles.floors}>{item.total_floors} fl</Text>
                   </TouchableOpacity>

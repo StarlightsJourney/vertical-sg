@@ -1,8 +1,11 @@
 import { useState } from 'react';
 import { View, Text, StyleSheet, Modal, TouchableOpacity, ScrollView, Alert, ActivityIndicator } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
+import * as ImagePicker from 'expo-image-picker';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../config/supabase';
+import { base64ToUint8Array } from '../utils/base64';
+import { avatarUriFor } from '../utils/avatarUri';
 import MascotAvatar from './MascotAvatar';
 import type { Profile } from '../types';
 
@@ -14,6 +17,7 @@ interface Props {
   onSetThemeMode: (mode: 'light' | 'dark' | 'auto') => void;
   profile: Profile | null;
   onChangeSkin: (idx: number) => void;
+  onPhotoChanged: (path: string | null) => void;
   onRequestSignIn: () => void;
 }
 
@@ -25,10 +29,46 @@ const THEME_OPTIONS = [
 ];
 
 export default function SettingsModal({
-  visible, onClose, isDark, themeMode, onSetThemeMode, profile, onChangeSkin, onRequestSignIn,
+  visible, onClose, isDark, themeMode, onSetThemeMode, profile, onChangeSkin, onPhotoChanged, onRequestSignIn,
 }: Props) {
   const { user, isAnonymous, signOut } = useAuth();
   const [deleting, setDeleting] = useState(false);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+
+  const pickAvatarPhoto = async (source: 'camera' | 'library') => {
+    if (!user) return;
+    const perm = source === 'camera'
+      ? await ImagePicker.requestCameraPermissionsAsync()
+      : await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert('Access needed', 'Enable access in Settings to add a photo.');
+      return;
+    }
+    const result = source === 'camera'
+      ? await ImagePicker.launchCameraAsync({ quality: 0.7, base64: true, allowsEditing: true, aspect: [1, 1] })
+      : await ImagePicker.launchImageLibraryAsync({ quality: 0.7, base64: true, allowsEditing: true, aspect: [1, 1] });
+    if (result.canceled || !result.assets?.[0]?.base64) return;
+
+    setUploadingPhoto(true);
+    try {
+      const path = `avatars/${user.id}-${Date.now()}.jpg`;
+      const bytes = base64ToUint8Array(result.assets[0].base64);
+      const { error: uploadError } = await supabase.storage.from('building-photos').upload(path, bytes, { contentType: 'image/jpeg' });
+      if (uploadError) { Alert.alert('Upload Failed', uploadError.message); return; }
+
+      const { error } = await supabase.from('profiles').update({ avatar_photo_path: path }).eq('user_id', user.id);
+      if (error) { Alert.alert('Error', error.message); return; }
+      onPhotoChanged(path);
+    } finally {
+      setUploadingPhoto(false);
+    }
+  };
+
+  const handleRemovePhoto = async () => {
+    if (!user) return;
+    await supabase.from('profiles').update({ avatar_photo_path: null }).eq('user_id', user.id);
+    onPhotoChanged(null);
+  };
 
   const handleDeleteAccount = () => {
     Alert.alert(
@@ -112,11 +152,37 @@ export default function SettingsModal({
           {!isAnonymous && (
             <>
               <Text style={[st.sectionLabel, isDark && { color: '#9CA3AF' }]}>Avatar</Text>
-              <View style={[st.card, isDark && { backgroundColor: '#1F2937' }, st.avatarRow]}>
+              <View style={[st.card, isDark && { backgroundColor: '#1F2937' }]}>
+                <View style={st.photoRow}>
+                  <MascotAvatar skinIdx={profile?.avatar_idx ?? 0} photoUri={avatarUriFor(profile)} size={56} />
+                  <View style={{ flex: 1, gap: 8 }}>
+                    <TouchableOpacity
+                      style={[st.photoBtn, isDark && { backgroundColor: '#374151' }]}
+                      onPress={() => Alert.alert('Profile Photo', '', [
+                        { text: 'Take Photo', onPress: () => pickAvatarPhoto('camera') },
+                        { text: 'Choose from Library', onPress: () => pickAvatarPhoto('library') },
+                        { text: 'Cancel', style: 'cancel' },
+                      ])}
+                      disabled={uploadingPhoto}
+                    >
+                      {uploadingPhoto ? <ActivityIndicator size="small" color="#2563EB" /> : (
+                        <Text style={st.photoBtnText}>{profile?.avatar_photo_path ? 'Change Photo' : 'Upload a Photo'}</Text>
+                      )}
+                    </TouchableOpacity>
+                    {profile?.avatar_photo_path && (
+                      <TouchableOpacity onPress={handleRemovePhoto}>
+                        <Text style={st.removePhotoText}>Use mascot avatar instead</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                </View>
+              </View>
+
+              <View style={[st.card, isDark && { backgroundColor: '#1F2937' }, st.avatarRow, { marginTop: 12 }]}>
                 {Array.from({ length: SKIN_COUNT }).map((_, idx) => (
                   <TouchableOpacity
                     key={idx}
-                    style={[st.avatarOption, profile?.avatar_idx === idx && st.avatarOptionActive]}
+                    style={[st.avatarOption, !profile?.avatar_photo_path && profile?.avatar_idx === idx && st.avatarOptionActive]}
                     onPress={() => onChangeSkin(idx)}
                   >
                     <MascotAvatar skinIdx={idx} size={44} />
@@ -187,6 +253,10 @@ const st = StyleSheet.create({
   themeOptionActive: { backgroundColor: '#2563EB' },
   themeOptionText: { fontSize: 12, fontWeight: '600', color: '#6B7280' },
   themeOptionTextActive: { color: '#FFFFFF' },
+  photoRow: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  photoBtn: { backgroundColor: '#F3F4F6', borderRadius: 10, paddingVertical: 10, alignItems: 'center' },
+  photoBtnText: { fontSize: 13, fontWeight: '700', color: '#2563EB' },
+  removePhotoText: { fontSize: 12, fontWeight: '600', color: '#9CA3AF' },
   avatarRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, justifyContent: 'center' },
   avatarOption: { padding: 6, borderRadius: 30, borderWidth: 2, borderColor: 'transparent' },
   avatarOptionActive: { borderColor: '#2563EB' },
