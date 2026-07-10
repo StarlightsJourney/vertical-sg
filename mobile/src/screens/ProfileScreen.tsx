@@ -24,6 +24,7 @@ import { StatCell, GridDivider } from '../components/StatGrid';
 import RadialProgress from '../components/RadialProgress';
 import TrendSparkline from '../components/TrendSparkline';
 import MedalBadge, { medalEmblemFor } from '../components/MedalBadge';
+import { medalColorForBadgeKey } from '../utils/medalColor';
 import { computeXP, computeLevelProgress } from '../utils/leveling';
 import type { ClimbLog, UserBadge, Profile, BadgeDef } from '../types';
 import { BADGE_DEFS } from '../types';
@@ -106,23 +107,12 @@ function getTierColor(storeys: number): string {
   return '#7C3AED';
 }
 
-// The four "resets: monthly" HDB Elevation badges are deliberately meant to
-// read as tiers of one family (same medal emblem, via medalEmblemFor's
-// `generic` flag) rather than unique achievements — only the shade shifts,
-// lightest target to toughest, like Overwatch season-tier rings.
-const MONTHLY_BADGE_TIER_COLORS: Record<string, string> = {
-  century_sprint_challenge: '#93C5FD',
-  elevation_chaser_challenge: '#60A5FA',
-  iron_legs_challenge: '#3B82F6',
-  long_haul_challenge: '#1D4ED8',
-};
-
-/** Medal color for a challenge-category badge — special (legendary) badges get gold,
- * monthly-resetting badges get their tier shade, everything else a plain blue. */
+// Shared with GroupsScreen/ChallengeDetailModal (src/utils/medalColor.ts) so
+// the same badge always shows the same color everywhere in the app — this
+// used to be computed independently here and in Groups, which could show
+// two different colors for the same badge.
 function medalColorFor(def: BadgeDef): string {
-  if (def.special) return '#F59E0B';
-  if (def.resets === 'monthly') return MONTHLY_BADGE_TIER_COLORS[def.key] ?? '#3B82F6';
-  return '#2563EB';
+  return medalColorForBadgeKey(def.key, !!def.special);
 }
 
 /** Floors climbed per week for the last N weeks (oldest first, this week last). */

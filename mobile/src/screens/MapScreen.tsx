@@ -574,10 +574,50 @@ export default function MapScreen({ isDark: isDarkProp, onNavigateToSocial, isAc
     );
   }, []);
 
-  // Open the verify popup for a tapped *static* (bundled JSON) amenity —
-  // same shape as openReportDetail below, minus the comment fetch, since
-  // static entries aren't backed by an amenity_reports row and have no
-  // amenity_comments to load.
+  // Fetch the single highest-liked comment (ties broken by most recent)
+  // alongside a plain count(*) of every comment on an entry — the count is
+  // what makes "most helpful comment" a legible, checkable claim in the UI
+  // instead of one comment appearing with no context. Shared between
+  // openReportDetail and openStaticAmenityDetail since amenity_comments
+  // (phase2a_addendum26.sql) now backs both DB-backed reports (filtered by
+  // report_id) and static/bundled entries (filtered by static_key).
+  const loadTopComment = useCallback(async (entry: AmenityReport, currentUser: { id: string } | null) => {
+    const filterColumn = entry.static_key ? 'static_key' : 'report_id';
+    const filterValue = entry.static_key ? entry.static_key : entry.report_id;
+
+    const [{ data: comments }, { count }] = await Promise.all([
+      supabase
+        .from('amenity_comments')
+        .select('comment_id, user_id, body, like_count, created_at')
+        .eq(filterColumn, filterValue)
+        .order('like_count', { ascending: false })
+        .order('created_at', { ascending: false })
+        .limit(1),
+      supabase
+        .from('amenity_comments')
+        .select('comment_id', { count: 'exact', head: true })
+        .eq(filterColumn, filterValue),
+    ]);
+
+    const top = (comments?.[0] as AmenityComment | undefined) ?? null;
+    setReportTopComment(top);
+    setReportCommentCount(count ?? 0);
+
+    if (top && currentUser) {
+      const { data: likeRow } = await supabase
+        .from('amenity_comment_likes')
+        .select('comment_id')
+        .eq('comment_id', top.comment_id)
+        .eq('user_id', currentUser.id)
+        .maybeSingle();
+      setHasLikedTopComment(!!likeRow);
+    }
+  }, []);
+
+  // Open the verify/comment popup for a tapped *static* (bundled JSON)
+  // amenity. Comments now work the same as for DB-backed reports (see
+  // loadTopComment above) — static entries are addressed by static_key
+  // instead of report_id since they have no amenity_reports row.
   const openStaticAmenityDetail = useCallback(async (entry: AmenityReport) => {
     setSelectedReport(entry);
     setReportCommentText('');
@@ -595,7 +635,9 @@ export default function MapScreen({ isDark: isDarkProp, onNavigateToSocial, isAc
         .maybeSingle();
       setHasVerifiedSelected(!!verifRow);
     }
-  }, [user]);
+
+    await loadTopComment(entry, user);
+  }, [user, loadTopComment]);
 
   // Open the verify/comment popup for a tapped amenity report, fetching the
   // caller's own verification/like state plus the single highest-liked
@@ -618,38 +660,8 @@ export default function MapScreen({ isDark: isDarkProp, onNavigateToSocial, isAc
       setHasVerifiedSelected(!!verifRow);
     }
 
-    // Fetch the single highest-liked comment (ties broken by most recent)
-    // alongside a plain count(*) of every comment on this report — the
-    // count is what makes "most helpful comment" a legible, checkable claim
-    // in the UI instead of one comment appearing with no context.
-    const [{ data: comments }, { count }] = await Promise.all([
-      supabase
-        .from('amenity_comments')
-        .select('comment_id, user_id, body, like_count, created_at')
-        .eq('report_id', report.report_id)
-        .order('like_count', { ascending: false })
-        .order('created_at', { ascending: false })
-        .limit(1),
-      supabase
-        .from('amenity_comments')
-        .select('comment_id', { count: 'exact', head: true })
-        .eq('report_id', report.report_id),
-    ]);
-
-    const top = (comments?.[0] as AmenityComment | undefined) ?? null;
-    setReportTopComment(top);
-    setReportCommentCount(count ?? 0);
-
-    if (top && user) {
-      const { data: likeRow } = await supabase
-        .from('amenity_comment_likes')
-        .select('comment_id')
-        .eq('comment_id', top.comment_id)
-        .eq('user_id', user.id)
-        .maybeSingle();
-      setHasLikedTopComment(!!likeRow);
-    }
-  }, [user]);
+    await loadTopComment(report, user);
+  }, [user, loadTopComment]);
 
   const handleVerifyReport = useCallback(async () => {
     if (!selectedReport || !user || reportActionLoading) return;
@@ -686,8 +698,10 @@ export default function MapScreen({ isDark: isDarkProp, onNavigateToSocial, isAc
     if (!selectedReport || !user || !reportCommentText.trim() || reportActionLoading) return;
     setReportActionLoading(true);
     try {
+      const isStatic = !!selectedReport.static_key;
       const { error } = await supabase.from('amenity_comments').insert({
-        report_id: selectedReport.report_id,
+        report_id: isStatic ? null : selectedReport.report_id,
+        static_key: isStatic ? selectedReport.static_key : null,
         user_id: user.id,
         body: reportCommentText.trim(),
       });
@@ -695,11 +709,11 @@ export default function MapScreen({ isDark: isDarkProp, onNavigateToSocial, isAc
         Alert.alert('Could not post comment', error.message);
         return;
       }
-      await openReportDetail(selectedReport);
+      await (isStatic ? openStaticAmenityDetail(selectedReport) : openReportDetail(selectedReport));
     } finally {
       setReportActionLoading(false);
     }
-  }, [selectedReport, user, reportCommentText, reportActionLoading, openReportDetail]);
+  }, [selectedReport, user, reportCommentText, reportActionLoading, openReportDetail, openStaticAmenityDetail]);
 
   const handleToggleCommentLike = useCallback(async () => {
     if (!reportTopComment || !user || !selectedReport || reportActionLoading) return;
@@ -710,11 +724,11 @@ export default function MapScreen({ isDark: isDarkProp, onNavigateToSocial, isAc
         Alert.alert('Could not update like', error.message);
         return;
       }
-      await openReportDetail(selectedReport);
+      await (selectedReport.static_key ? openStaticAmenityDetail(selectedReport) : openReportDetail(selectedReport));
     } finally {
       setReportActionLoading(false);
     }
-  }, [reportTopComment, user, selectedReport, reportActionLoading, openReportDetail]);
+  }, [reportTopComment, user, selectedReport, reportActionLoading, openReportDetail, openStaticAmenityDetail]);
 
   // Let a user remove a report they created themselves — asks for
   // confirmation first since this can't be undone, then relies on the
@@ -1598,68 +1612,65 @@ export default function MapScreen({ isDark: isDarkProp, onNavigateToSocial, isAc
                   </TouchableOpacity>
                 )}
 
-                {/* Comments are only meaningful for DB-backed reports (they
-                    live in amenity_comments, keyed by report_id) — static
-                    (bundled JSON) entries have no report row to hang a
-                    comment off, so this whole section is skipped for them. */}
-                {!selectedReport.static_key && (
-                  <>
-                    <Text style={[styles.layersSectionLabel, isDark && { color: '#9CA3AF' }, { marginTop: 16 }]}>
-                      Most helpful comment
-                    </Text>
-                    {reportTopComment ? (
-                      <View style={[styles.reportTopComment, isDark && { backgroundColor: '#111827' }]}>
-                        <Text style={[styles.reportTopCommentBody, isDark && { color: '#F9FAFB' }]}>{reportTopComment.body}</Text>
-                        <View style={styles.reportTopCommentFooter}>
-                          {/* Makes the "most helpful" ranking legible/checkable —
-                              without this, one comment shown alone with no count
-                              looks arbitrary rather than genuinely top-liked. */}
-                          <Text style={[styles.reportMostHelpfulCaption, isDark && { color: '#9CA3AF' }]}>
-                            👍 {reportTopComment.like_count} · most helpful
-                          </Text>
-                          <TouchableOpacity
-                            style={styles.reportLikeBtn}
-                            disabled={!user || reportActionLoading}
-                            onPress={handleToggleCommentLike}
-                          >
-                            <Ionicons
-                              name={hasLikedTopComment ? 'heart' : 'heart-outline'}
-                              size={16}
-                              color={hasLikedTopComment ? '#EF4444' : (isDark ? '#9CA3AF' : '#6B7280')}
-                            />
-                          </TouchableOpacity>
-                        </View>
-                        {reportCommentCount > 1 && (
-                          <Text style={[styles.reportMoreComments, isDark && { color: '#6B7280' }]}>
-                            +{reportCommentCount - 1} more comment{reportCommentCount - 1 === 1 ? '' : 's'}
-                          </Text>
-                        )}
-                      </View>
-                    ) : (
-                      <Text style={[styles.reportNoComments, isDark && { color: '#6B7280' }]}>
-                        No comments yet — be the first to add a note.
+                {/* Comments work the same for both DB-backed reports and
+                    static (bundled JSON) entries — amenity_comments
+                    (phase2a_addendum26.sql) accepts either a report_id or a
+                    static_key, so this section is no longer gated on
+                    selectedReport.static_key. */}
+                <Text style={[styles.layersSectionLabel, isDark && { color: '#9CA3AF' }, { marginTop: 16 }]}>
+                  Most helpful comment
+                </Text>
+                {reportTopComment ? (
+                  <View style={[styles.reportTopComment, isDark && { backgroundColor: '#111827' }]}>
+                    <Text style={[styles.reportTopCommentBody, isDark && { color: '#F9FAFB' }]}>{reportTopComment.body}</Text>
+                    <View style={styles.reportTopCommentFooter}>
+                      {/* Makes the "most helpful" ranking legible/checkable —
+                          without this, one comment shown alone with no count
+                          looks arbitrary rather than genuinely top-liked. */}
+                      <Text style={[styles.reportMostHelpfulCaption, isDark && { color: '#9CA3AF' }]}>
+                        👍 {reportTopComment.like_count} · most helpful
                       </Text>
-                    )}
-
-                    <View style={styles.reportCommentInputRow}>
-                      <TextInput
-                        style={[styles.reportCommentInput, isDark && { backgroundColor: '#111827', color: '#F9FAFB' }]}
-                        placeholder='e.g. "Entrance is round the back, use the side door"'
-                        placeholderTextColor="#9CA3AF"
-                        value={reportCommentText}
-                        onChangeText={setReportCommentText}
-                        maxLength={200}
-                      />
                       <TouchableOpacity
-                        style={[styles.reportCommentPostBtn, (!reportCommentText.trim() || !user) && { opacity: 0.5 }]}
-                        disabled={!reportCommentText.trim() || !user || reportActionLoading}
-                        onPress={handleSubmitReportComment}
+                        style={styles.reportLikeBtn}
+                        disabled={!user || reportActionLoading}
+                        onPress={handleToggleCommentLike}
                       >
-                        <Ionicons name="send" size={16} color="#FFFFFF" />
+                        <Ionicons
+                          name={hasLikedTopComment ? 'heart' : 'heart-outline'}
+                          size={16}
+                          color={hasLikedTopComment ? '#EF4444' : (isDark ? '#9CA3AF' : '#6B7280')}
+                        />
                       </TouchableOpacity>
                     </View>
-                  </>
+                    {reportCommentCount > 1 && (
+                      <Text style={[styles.reportMoreComments, isDark && { color: '#6B7280' }]}>
+                        +{reportCommentCount - 1} more comment{reportCommentCount - 1 === 1 ? '' : 's'}
+                      </Text>
+                    )}
+                  </View>
+                ) : (
+                  <Text style={[styles.reportNoComments, isDark && { color: '#6B7280' }]}>
+                    No comments yet — be the first to add a note.
+                  </Text>
                 )}
+
+                <View style={styles.reportCommentInputRow}>
+                  <TextInput
+                    style={[styles.reportCommentInput, isDark && { backgroundColor: '#111827', color: '#F9FAFB' }]}
+                    placeholder='e.g. "Entrance is round the back, use the side door"'
+                    placeholderTextColor="#9CA3AF"
+                    value={reportCommentText}
+                    onChangeText={setReportCommentText}
+                    maxLength={200}
+                  />
+                  <TouchableOpacity
+                    style={[styles.reportCommentPostBtn, (!reportCommentText.trim() || !user) && { opacity: 0.5 }]}
+                    disabled={!reportCommentText.trim() || !user || reportActionLoading}
+                    onPress={handleSubmitReportComment}
+                  >
+                    <Ionicons name="send" size={16} color="#FFFFFF" />
+                  </TouchableOpacity>
+                </View>
 
                 <TouchableOpacity style={styles.reportCloseBtn} onPress={() => setSelectedReport(null)}>
                   <Text style={[styles.reportCloseBtnText, isDark && { color: '#9CA3AF' }]}>Close</Text>

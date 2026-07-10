@@ -56,6 +56,12 @@ interface FeedItem {
    * when set, since mock items don't have a real Supabase Storage path. */
   photoSource?: any;
   created_at: string;
+  /** When this climb was actually shared to the feed (photo attached) —
+   * distinct from created_at (when the climb itself was logged/completed).
+   * Null for rows that predate this column; the feed falls back to
+   * created_at in that case. Not present on ClimbRecord (types/index.ts)
+   * since it's feed-display-only, so it's declared locally here. */
+  posted_at?: string | null;
   blk_no: string;
   street: string;
   kudosCount: number;
@@ -149,6 +155,14 @@ const MOCK_FEED_ITEMS: FeedItem[] = [
     trackingMethod: 'pedometer',
   },
 ];
+
+/** The timestamp a feed post should sort/display by: when it was actually
+ * shared to the feed, falling back to when the climb itself was logged for
+ * rows that predate the posted_at column (or were never explicitly posted,
+ * e.g. mock items). */
+function feedTimestamp(item: FeedItem): string {
+  return item.posted_at ?? item.created_at;
+}
 
 function formatRelativeTime(iso: string): string {
   const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
@@ -248,15 +262,20 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
     // show up here (bare "climbed X floors" entries stay in Profile only).
     const { data: climbs } = await supabase
       .from('climbs')
-      .select('climb_id, user_id, floors_climbed, caption, photo_path, tracking_method, created_at, blocks(blk_no, street)')
+      .select('climb_id, user_id, floors_climbed, caption, photo_path, tracking_method, created_at, posted_at, blocks(blk_no, street)')
       .not('photo_path', 'is', null)
+      // Approximates ordering by coalesce(posted_at, created_at) desc —
+      // Postgrest can't express a coalesce directly, so order by posted_at
+      // first (nulls last) then created_at as the tiebreaker/fallback for
+      // rows that predate the posted_at column.
+      .order('posted_at', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false })
       .limit(30);
 
     if (!climbs || climbs.length === 0) {
       // Mock items interleave by time even when there's no real data yet —
       // see the comment on MOCK_FEED_ITEMS above.
-      setFeed([...MOCK_FEED_ITEMS].sort((a, b) => b.created_at.localeCompare(a.created_at)));
+      setFeed([...MOCK_FEED_ITEMS].sort((a, b) => feedTimestamp(b).localeCompare(feedTimestamp(a))));
       setFeedLoading(false);
       setRefreshing(false);
       return;
@@ -278,6 +297,7 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
         caption: c.caption,
         photo_path: c.photo_path,
         created_at: c.created_at,
+        posted_at: c.posted_at ?? null,
         blk_no: c.blocks?.blk_no ?? '',
         street: c.blocks?.street ?? '',
         kudosCount: rowsForClimb.length,
@@ -287,7 +307,7 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
       };
     });
 
-    const merged = [...items, ...MOCK_FEED_ITEMS].sort((a, b) => b.created_at.localeCompare(a.created_at));
+    const merged = [...items, ...MOCK_FEED_ITEMS].sort((a, b) => feedTimestamp(b).localeCompare(feedTimestamp(a)));
     setFeed(merged);
     setFeedLoading(false);
     setRefreshing(false);
@@ -642,9 +662,12 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
         return;
       }
 
+      // posted_at is stamped now, distinct from the climb's created_at (when
+      // it was originally logged/completed) — this is the moment it actually
+      // became a feed post, which is what the feed should sort/display by.
       const { error } = await supabase
         .from('climbs')
-        .update({ caption: captionText.trim() || null, photo_path: photoPath })
+        .update({ caption: captionText.trim() || null, photo_path: photoPath, posted_at: new Date().toISOString() })
         .eq('climb_id', editingClimbId)
         .eq('user_id', user.id);
 
@@ -871,7 +894,7 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
                       </View>
                     )}
                   </View>
-                  <Text style={s.feedTime}>{formatRelativeTime(item.created_at)}</Text>
+                  <Text style={s.feedTime}>{formatRelativeTime(feedTimestamp(item))}</Text>
                 </View>
               </TouchableOpacity>
 

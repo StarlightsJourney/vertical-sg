@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { View, Image, StyleSheet } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Path, Circle, Polygon, Defs, LinearGradient as SvgGradient, Stop } from 'react-native-svg';
+import { wikimediaThumb } from '../utils/wikimediaThumb';
 
 export type SceneryVariant = 'mountains' | 'skyline' | 'sunrise';
 
@@ -30,7 +31,7 @@ export default function SceneryBanner({ variant, height = 150, borderRadius = 18
     <View style={[styles.wrap, { height, borderRadius }]}>
       {showPhoto ? (
         <>
-          <Image source={{ uri: photoUri }} style={StyleSheet.absoluteFill} resizeMode="cover" onError={() => setPhotoFailed(true)} />
+          <Image source={{ uri: wikimediaThumb(photoUri!, 960) }} style={StyleSheet.absoluteFill} resizeMode="cover" onError={() => setPhotoFailed(true)} />
           <LinearGradient colors={['rgba(0,0,0,0.05)', 'rgba(0,0,0,0.45)']} start={{ x: 0, y: 0 }} end={{ x: 0, y: 1 }} style={StyleSheet.absoluteFill} />
         </>
       ) : (

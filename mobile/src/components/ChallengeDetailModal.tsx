@@ -7,6 +7,8 @@ import MascotAvatar from './MascotAvatar';
 import { avatarUriFor } from '../utils/avatarUri';
 import MedalBadge, { medalEmblemFor } from './MedalBadge';
 import SceneryBanner from './SceneryBanner';
+import { medalColorForBadgeKey } from '../utils/medalColor';
+import { BADGE_DEFS } from '../types';
 import type { Challenge, Profile } from '../types';
 
 interface Props {
@@ -89,7 +91,8 @@ export default function ChallengeDetailModal({ challenge, visible, onClose, join
 
   if (!challenge) return null;
 
-  const color = challengeColor(challenge.challenge_id);
+  const isSpecial = !!BADGE_DEFS.find((b) => b.key === challenge.badge_key)?.special;
+  const color = challenge.badge_key ? medalColorForBadgeKey(challenge.badge_key, isSpecial) : challengeColor(challenge.challenge_id);
   const pct = Math.min(100, Math.round((progressFloors / challenge.target_floors) * 100));
   const completed = joined && pct >= 100;
   const isLimitedTime = !!(challenge.starts_at && challenge.ends_at);

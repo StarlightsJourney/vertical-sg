@@ -283,7 +283,10 @@ export default function ClimbTrackerModal({ block, visible, onClose, onSave, onU
     try {
       const photoPath = await uploadPhoto(photoBase64);
       if (!photoPath) return;
-      const { error } = await supabase.from('climbs').update({ photo_path: photoPath }).eq('climb_id', savedClimbId).eq('user_id', user.id);
+      // posted_at is stamped now (not copied from the climb's created_at) so
+      // a climb tracked earlier but shared right now sorts and displays as a
+      // fresh post in the feed, not "Xd ago".
+      const { error } = await supabase.from('climbs').update({ photo_path: photoPath, posted_at: new Date().toISOString() }).eq('climb_id', savedClimbId).eq('user_id', user.id);
       if (error) {
         Alert.alert('Error', error.message);
         return;

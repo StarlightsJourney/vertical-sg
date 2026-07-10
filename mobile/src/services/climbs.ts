@@ -34,6 +34,13 @@ export async function logClimb(
   const floorsClimbed = storeys * qty + partialFloors;
 
   try {
+    // A photo attached right at logging time means this climb is being
+    // posted to the feed immediately — stamp posted_at distinctly from
+    // created_at so "logged today, posted today" and "logged yesterday,
+    // posted today" (via a later add-photo flow) don't collapse into the
+    // same timestamp. See SocialScreen.tsx's submitPost() and
+    // ClimbTrackerModal.tsx's handlePostToFeedNow() for the "post an
+    // already-logged climb later" paths, which set posted_at the same way.
     const { data, error } = await supabase.from('climbs').insert({
       user_id: userId,
       block_id: blockId,
@@ -43,6 +50,7 @@ export async function logClimb(
       synced: true,
       caption: caption ?? null,
       photo_path: photoPath ?? null,
+      posted_at: photoPath ? new Date().toISOString() : null,
       tracking_method: trackingMethod,
       duration_seconds: durationSeconds ?? null,
     }).select('climb_id').single();

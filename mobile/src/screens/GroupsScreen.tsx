@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { View, Text, Image, StyleSheet, ScrollView, TouchableOpacity, Linking, Modal, TextInput, Alert, Animated, NativeSyntheticEvent, NativeScrollEvent, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, Image, StyleSheet, ScrollView, TouchableOpacity, Linking, Modal, TextInput, Alert, LayoutAnimation, NativeSyntheticEvent, NativeScrollEvent, KeyboardAvoidingView, Platform } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../config/supabase';
@@ -11,6 +11,8 @@ import ClubIcon from '../components/ClubIcon';
 import ClubDetailModal from '../components/ClubDetailModal';
 import PublicProfileModal from '../components/PublicProfileModal';
 import { displayChallengeTitle as displayTitle, displayChallengeDescription as displayDescription } from '../utils/challengeDisplay';
+import { wikimediaThumb } from '../utils/wikimediaThumb';
+import { medalColorForBadgeKey } from '../utils/medalColor';
 import { BADGE_DEFS } from '../types';
 import type { Challenge, UserClub, UserEvent, Profile, OfficialClub } from '../types';
 
@@ -25,6 +27,30 @@ function formatShortDate(iso: string): string {
 
 function isSpecial(ch: Challenge): boolean {
   return !!BADGE_DEFS.find((b) => b.key === ch.badge_key)?.special;
+}
+
+// Same color source Profile uses for the same badge — official challenges
+// with a real badge_key get the shared tier/special color; user-created
+// challenges (no badge_key, no real badge) fall back to a hash-based
+// palette purely for visual variety between them.
+function medalColorForChallenge(ch: Challenge): string {
+  if (ch.badge_key) return medalColorForBadgeKey(ch.badge_key, isSpecial(ch));
+  return challengeColor(ch.challenge_id);
+}
+
+interface NormalizedEvent {
+  name: string;
+  location: string;
+  blurb: string;
+  scope: 'Local' | 'Worldwide';
+  url: string | null;
+  date: string | null;
+  distance?: string;
+  eventType?: string;
+  photoUri?: string;
+  isUser: boolean;
+  creatorName?: string;
+  eventId?: string;
 }
 
 const CLUB_COLOR: Record<OfficialClub['category'], string> = {
@@ -139,28 +165,33 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
   const [createChallengeVisible, setCreateChallengeVisible] = useState(false);
   const [challengeVisibilityDefault, setChallengeVisibilityDefault] = useState<'public' | 'peers'>('public');
   const [viewAllSection, setViewAllSection] = useState<'training' | 'races' | null>(null);
+  const [selectedEvent, setSelectedEvent] = useState<NormalizedEvent | null>(null);
 
   // Sticky header, hide-on-scroll-down / show-on-scroll-up tab bar
-  // (Strava-style). Animates opacity + translateY only — NOT height — so it
-  // can run on the native thread (useNativeDriver: true). The earlier
-  // height-interpolation version animated on the JS thread (height can't be
-  // natively driven) and depended on onLayout measurements that raced with
-  // the animation, which is what caused the stutter/flicker/invisible-text
-  // bugs. This version reserves the bar's space at all times (a plain,
-  // un-animated wrapper) and only fades+slides its contents, trading a
-  // literal space-reclaim for guaranteed smoothness and correctness.
-  const tabBarAnim = useRef(new Animated.Value(1)).current;
+  // (Strava-style). Two earlier attempts both had real bugs: a JS-driven
+  // height interpolation coupled to onLayout measurement (stutter, and the
+  // bar could get stuck near-zero-height), then an opacity/translateY-only
+  // native-driven version (smooth, but left the bar's background box
+  // visible with nothing in it, since only its *contents* were faded, not
+  // its layout footprint). This version uses LayoutAnimation + a plain
+  // boolean instead of Animated at all: the bar is genuinely
+  // mounted/unmounted, and LayoutAnimation smooths the resulting layout
+  // shift on the native side — this is the same mechanism (and precedent)
+  // already used for NotificationsModal's swipe-to-dismiss animation.
+  const [tabBarVisible, setTabBarVisible] = useState(true);
   const lastScrollY = useRef(0);
   const handleScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
     const y = e.nativeEvent.contentOffset.y;
     const delta = y - lastScrollY.current;
-    if (y <= 10) {
-      Animated.timing(tabBarAnim, { toValue: 1, duration: 180, useNativeDriver: true }).start();
-    } else if (delta > 8) {
-      Animated.timing(tabBarAnim, { toValue: 0, duration: 180, useNativeDriver: true }).start();
-    } else if (delta < -8) {
-      Animated.timing(tabBarAnim, { toValue: 1, duration: 180, useNativeDriver: true }).start();
-    }
+    const showBar = () => {
+      if (!tabBarVisible) { LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); setTabBarVisible(true); }
+    };
+    const hideBar = () => {
+      if (tabBarVisible) { LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); setTabBarVisible(false); }
+    };
+    if (y <= 10) showBar();
+    else if (delta > 8) hideBar();
+    else if (delta < -8) showBar();
     lastScrollY.current = y;
   };
 
@@ -275,7 +306,7 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
     const joined = myChallengeIds.has(ch.challenge_id);
     const pct = Math.min(100, Math.round((progressFloors / ch.target_floors) * 100));
     const completed = joined && pct >= 100;
-    const color = challengeColor(ch.challenge_id);
+    const color = medalColorForChallenge(ch);
     const isLimitedTime = !!(ch.starts_at && ch.ends_at);
     return (
       <TouchableOpacity
@@ -335,7 +366,7 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
     const joined = myChallengeIds.has(ch.challenge_id);
     const pct = Math.min(100, Math.round((progressFloors / ch.target_floors) * 100));
     const completed = joined && pct >= 100;
-    const color = challengeColor(ch.challenge_id);
+    const color = medalColorForChallenge(ch);
     return (
       <TouchableOpacity key={ch.challenge_id} style={[s.featCard, isDark && { backgroundColor: '#1F2937' }]} onPress={() => setSelectedChallenge(ch)} activeOpacity={0.9}>
         <SceneryBanner variant="mountains" height={150} borderRadius={0}>
@@ -394,11 +425,17 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
     const eventType = isUser ? undefined : ev.eventType;
     const url = ev.url;
     const photoUri = isUser ? undefined : ev.photoUri;
+    const openDetail = () => setSelectedEvent({
+      name: ev.name, location: ev.location, blurb: ev.blurb, scope: ev.scope, url, date,
+      distance, eventType, photoUri, isUser,
+      creatorName: isUser ? (creatorNames[ev.creator_id] ?? 'a climber') : undefined,
+      eventId: isUser ? ev.event_id : undefined,
+    });
     return (
       <TouchableOpacity
         key={key}
         style={[s.eventCard, width ? { width } : { width: '100%' }, isDark && { backgroundColor: '#1F2937' }]}
-        onPress={() => url && Linking.openURL(url)}
+        onPress={openDetail}
         activeOpacity={0.85}
       >
         <SceneryBanner variant={ev.scope === 'Worldwide' ? 'skyline' : 'sunrise'} height={110} borderRadius={0} photoUri={photoUri}>
@@ -487,27 +524,24 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
         </TouchableOpacity>
       </View>
 
-      {/* Tab bar fades + slides on scroll (native-driven — smooth, no
-          measurement/height animation involved, see comment above). */}
-      <Animated.View
-        style={[
-          s.tabBar,
-          isDark && { backgroundColor: '#1F2937' },
-          { opacity: tabBarAnim, transform: [{ translateY: tabBarAnim.interpolate({ inputRange: [0, 1], outputRange: [-6, 0] }) }] },
-        ]}
-      >
-        {(['challenges', 'clubs', 'events'] as Tab[]).map((t) => (
-          <TouchableOpacity
-            key={t}
-            style={[s.tabBtn, tab === t && s.tabBtnActive, tab === t && isDark && { backgroundColor: '#374151' }]}
-            onPress={() => setTab(t)}
-          >
-            <Text style={[s.tabBtnText, tab === t && s.tabBtnTextActive, isDark && { color: tab === t ? '#F9FAFB' : '#9CA3AF' }]}>
-              {t === 'challenges' ? 'Challenges' : t === 'clubs' ? 'Clubs' : 'Events'}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </Animated.View>
+      {/* Tab bar hides on scroll-down, reappears on scroll-up — genuinely
+          mounted/unmounted (LayoutAnimation smooths the transition), so
+          nothing is left behind when it's gone. */}
+      {tabBarVisible && (
+        <View style={[s.tabBar, isDark && { backgroundColor: '#1F2937' }]}>
+          {(['challenges', 'clubs', 'events'] as Tab[]).map((t) => (
+            <TouchableOpacity
+              key={t}
+              style={[s.tabBtn, tab === t && s.tabBtnActive, tab === t && isDark && { backgroundColor: '#374151' }]}
+              onPress={() => setTab(t)}
+            >
+              <Text style={[s.tabBtnText, tab === t && s.tabBtnTextActive, isDark && { color: tab === t ? '#F9FAFB' : '#9CA3AF' }]}>
+                {t === 'challenges' ? 'Challenges' : t === 'clubs' ? 'Clubs' : 'Events'}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
 
       <ScrollView contentContainerStyle={s.scrollContent} showsVerticalScrollIndicator={false} onScroll={handleScroll} scrollEventThrottle={16}>
         {tab === 'challenges' && (
@@ -539,16 +573,20 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
 
         {tab === 'clubs' && (
           <>
-            {/* Plain, full-width — just an ask + a button, no illustrated banner */}
+            {/* Same layout as "Challenge Your Crew" — icon + title/subtitle + chevron */}
             <TouchableOpacity
-              style={[s.plainCreateRow, isDark && { backgroundColor: '#1F2937' }]}
+              style={[s.peerCta, isDark && { backgroundColor: '#1F2937' }]}
               onPress={() => requireAuth(() => setCreateClubVisible(true))}
-              activeOpacity={0.85}
+              activeOpacity={0.9}
             >
-              <Text style={[s.plainCreateText, isDark && { color: '#F9FAFB' }]}>Create your own Vertical Club</Text>
-              <View style={s.plainCreateBtn}>
-                <Text style={s.plainCreateBtnText}>Create</Text>
+              <View style={s.peerCtaIcon}>
+                <Ionicons name="people-circle-outline" size={26} color={PRIMARY_BLUE} />
               </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[s.peerCtaTitle, isDark && { color: '#F9FAFB' }]}>Create your own Vertical Club</Text>
+                <Text style={[s.peerCtaSubtitle, isDark && { color: '#9CA3AF' }]}>Rally your own crew around trail running, hiking, or climbing.</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={isDark ? '#6B7280' : '#9CA3AF'} />
             </TouchableOpacity>
 
             {announcementsClub && (
@@ -577,7 +615,7 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
               {sportClubs.filter((c) => matchesSearch(c.name)).map((club) => (
                 <TouchableOpacity key={club.club_id} style={[s.gridCard, isDark && { backgroundColor: '#1F2937' }]} onPress={() => setSelectedClub(club)} activeOpacity={0.85}>
                   {CLUB_PHOTO[club.category] ? (
-                    <Image source={{ uri: CLUB_PHOTO[club.category] }} style={s.clubIconCircle} />
+                    <Image source={{ uri: wikimediaThumb(CLUB_PHOTO[club.category]!, 250) }} style={s.clubIconCircle} resizeMode="cover" />
                   ) : (
                     <View style={[s.clubIconCircle, { backgroundColor: CLUB_COLOR[club.category] + '1F', alignItems: 'center', justifyContent: 'center' }]}>
                       <ClubIcon category={club.category} color={CLUB_COLOR[club.category]} size={26} />
@@ -754,6 +792,13 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
 
       <ClubDetailModal club={selectedClub} visible={!!selectedClub} onClose={() => setSelectedClub(null)} isDark={isDark} />
       <PublicProfileModal userId={viewingProfileId} visible={!!viewingProfileId} onClose={() => setViewingProfileId(null)} />
+      <EventDetailModal
+        event={selectedEvent}
+        visible={!!selectedEvent}
+        onClose={() => setSelectedEvent(null)}
+        isDark={isDark}
+        onReport={selectedEvent?.eventId ? () => { handleReportEvent(selectedEvent.eventId!); setSelectedEvent(null); } : undefined}
+      />
 
       <CreateClubModal
         visible={createClubVisible}
@@ -780,6 +825,97 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
     </View>
   );
 }
+
+// --- Event detail — shown in-app before ever leaving the app, instead of
+// jumping straight to Linking.openURL on tap ---
+function EventDetailModal({ event, visible, onClose, isDark, onReport }: {
+  event: NormalizedEvent | null; visible: boolean; onClose: () => void; isDark: boolean; onReport?: () => void;
+}) {
+  if (!event) return null;
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+      <View style={[ed.container, isDark && { backgroundColor: '#111827' }]}>
+        <ScrollView showsVerticalScrollIndicator={false}>
+          <SceneryBanner variant={event.scope === 'Worldwide' ? 'skyline' : 'sunrise'} height={220} borderRadius={0} photoUri={event.photoUri}>
+            <TouchableOpacity style={ed.closeBtn} onPress={onClose}>
+              <Ionicons name="close" size={24} color="#FFFFFF" />
+            </TouchableOpacity>
+            {event.date && (
+              <View style={ed.dateBadge}>
+                <Text style={ed.dateBadgeText}>{formatShortDate(event.date)}</Text>
+              </View>
+            )}
+          </SceneryBanner>
+
+          <View style={ed.body}>
+            <Text style={[ed.title, isDark && { color: '#F9FAFB' }]}>{event.name}</Text>
+            <View style={ed.locationRow}>
+              <Ionicons name="location-outline" size={14} color="#9CA3AF" />
+              <Text style={ed.locationText}>{event.location}</Text>
+            </View>
+
+            <View style={ed.tagRow}>
+              {event.distance && (
+                <View style={[ed.tag, isDark && { backgroundColor: '#1F2937' }]}>
+                  <Text style={[ed.tagText, isDark && { color: '#D1D5DB' }]}>{event.distance}</Text>
+                </View>
+              )}
+              {event.eventType && (
+                <View style={[ed.tag, isDark && { backgroundColor: '#1F2937' }]}>
+                  <Text style={[ed.tagText, isDark && { color: '#D1D5DB' }]}>{event.eventType}</Text>
+                </View>
+              )}
+              <View style={[ed.tag, isDark && { backgroundColor: '#1F2937' }]}>
+                <Text style={[ed.tagText, isDark && { color: '#D1D5DB' }]}>{event.scope}</Text>
+              </View>
+            </View>
+
+            <Text style={[ed.sectionLabel, isDark && { color: '#9CA3AF' }]}>About</Text>
+            <Text style={[ed.blurb, isDark && { color: '#D1D5DB' }]}>{event.blurb}</Text>
+
+            {event.isUser && (
+              <Text style={ed.creatorText}>Added by {event.creatorName}</Text>
+            )}
+
+            {event.url && (
+              <TouchableOpacity style={ed.openBtn} onPress={() => Linking.openURL(event.url!)}>
+                <Ionicons name="open-outline" size={16} color="#FFFFFF" />
+                <Text style={ed.openBtnText}>Open Official Page</Text>
+              </TouchableOpacity>
+            )}
+
+            {onReport && (
+              <TouchableOpacity style={ed.reportBtn} onPress={onReport}>
+                <Text style={ed.reportBtnText}>Report this event</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </ScrollView>
+      </View>
+    </Modal>
+  );
+}
+
+const ed = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#F9FAFB' },
+  closeBtn: { position: 'absolute', top: 52, right: 16, padding: 6 },
+  dateBadge: { position: 'absolute', bottom: 16, right: 16, backgroundColor: 'rgba(255,255,255,0.92)', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6 },
+  dateBadgeText: { fontSize: 13, fontWeight: '800', color: '#111827' },
+  body: { padding: 20, paddingBottom: 48 },
+  title: { fontSize: 21, fontWeight: '800', color: '#111827', marginBottom: 8 },
+  locationRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 14 },
+  locationText: { fontSize: 13.5, color: '#6B7280', fontWeight: '500' },
+  tagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 22 },
+  tag: { backgroundColor: '#F3F4F6', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5 },
+  tagText: { fontSize: 11, fontWeight: '700', color: '#374151' },
+  sectionLabel: { fontSize: 12, fontWeight: '700', color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 },
+  blurb: { fontSize: 14.5, color: '#374151', lineHeight: 21, marginBottom: 20 },
+  creatorText: { fontSize: 12, color: '#9CA3AF', fontStyle: 'italic', marginBottom: 20 },
+  openBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: PRIMARY_BLUE, borderRadius: 12, paddingVertical: 15, marginBottom: 12 },
+  openBtnText: { color: '#FFFFFF', fontWeight: '700', fontSize: 14.5 },
+  reportBtn: { alignItems: 'center', paddingVertical: 10 },
+  reportBtnText: { fontSize: 12.5, color: '#9CA3AF', fontWeight: '600' },
+});
 
 // --- Creation modals ---
 
@@ -1134,15 +1270,6 @@ const s = StyleSheet.create({
   peerCtaTitle: { fontSize: 15, fontWeight: '800', color: '#111827' },
   peerCtaSubtitle: { fontSize: 12, color: '#6B7280', marginTop: 2, lineHeight: 16 },
 
-  // Plain "Create your own Vertical Club" row — full device width, no illustration
-  plainCreateRow: {
-    marginHorizontal: -16, borderRadius: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    backgroundColor: '#FFFFFF', padding: 20, marginBottom: 16,
-    elevation: 1, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 6,
-  },
-  plainCreateText: { fontSize: 15, fontWeight: '700', color: '#111827', flex: 1, marginRight: 12 },
-  plainCreateBtn: { backgroundColor: PRIMARY_BLUE, borderRadius: 10, paddingHorizontal: 18, paddingVertical: 10 },
-  plainCreateBtnText: { color: '#FFFFFF', fontWeight: '700', fontSize: 13.5 },
 
   // Clubs/Events CTA banner overlay text
   ctaBannerOverlay: { position: 'absolute', left: 18, right: 18, bottom: 16 },
