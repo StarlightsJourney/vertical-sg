@@ -37,6 +37,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import storage from '../utils/storage';
 import * as Linking from 'expo-linking';
 import { useAuth } from '../contexts/AuthContext';
+import { displayChallengeTitle, displayChallengeDescription } from '../utils/challengeDisplay';
 
 // Light (default) and dark map styles for day/night auto-switching
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -82,8 +83,57 @@ const FILTER_OPTIONS = [
   { value: 0, label: 'All' },
 ] as const;
 
-const FILTER_COLORS: Record<number, string> = { 21: '#FF3B30', 31: '#8B0000', 40: '#7C3AED', 0: '#6B7280' };
+// Mirrors HEIGHT_TIERS[2..4] so the height-filter chips use the same ramp as
+// the legend/map (0 = "All" stays neutral gray, it isn't part of the ramp).
+const FILTER_COLORS: Record<number, string> = {
+  21: HEIGHT_TIERS[2].color,
+  31: HEIGHT_TIERS[3].color,
+  40: HEIGHT_TIERS[4].color,
+  0: '#6B7280',
+};
 const MAP_DIFFICULTY_COLOR: Record<string, string> = { easy: '#10B981', medium: '#F59E0B', hard: '#EF4444', insane: '#7C3AED' };
+
+/**
+ * A verifiable amenity pin shown in the detail/verify popup — either a
+ * user-submitted report backed by the `amenity_reports` table (`report_id`
+ * set, `static_key` unset), or a static/bundled JSON entry (e.g. from
+ * assets/water-coolers.json) backed by `static_amenity_status` instead
+ * (`static_key` set, `report_id` == '', `reporter_id` == null since nobody
+ * "submitted" it — there's no self-verification case to guard for these).
+ */
+type AmenityReport = {
+  report_id: string;
+  static_key?: string;
+  reporter_id: string | null;
+  name: string;
+  lat: number;
+  lng: number;
+  type: string;
+  desc: string;
+  status: string;
+  verified_count: number;
+  at: string;
+};
+
+/**
+ * Deterministic, stable identifier for a *static* (bundled JSON) amenity —
+ * these aren't DB rows and have no real UUID, so the key is derived from the
+ * entry's own data instead: type + name + lat/lng rounded to 4dp (~11m),
+ * which stays stable across app loads/reloads of the same JSON while still
+ * being effectively unique per entry.
+ */
+function staticAmenityKey(type: string, name: string, lat: number, lng: number): string {
+  return `${type}|${name}|${lat.toFixed(4)}|${lng.toFixed(4)}`;
+}
+
+/** Top (most-liked, tie-broken by most recent) comment on an amenity report. */
+type AmenityComment = {
+  comment_id: string;
+  user_id: string;
+  body: string;
+  like_count: number;
+  created_at: string;
+};
 
 /** Bucket a building's storey count into the same 5 tiers as HEIGHT_TIERS. */
 function tierIndex(storeys: number): number {
@@ -120,7 +170,7 @@ function PulsingBorder({ children }: { children: React.ReactNode }) {
   );
 }
 
-export default function MapScreen({ isDark: isDarkProp, onNavigateToSocial }: { isDark?: boolean; onNavigateToSocial?: () => void }) {
+export default function MapScreen({ isDark: isDarkProp, onNavigateToSocial, isActive }: { isDark?: boolean; onNavigateToSocial?: () => void; isActive?: boolean }) {
   const location = useLocation();
   const mapRef = useRef<MapRef>(null);
   const cameraRef = useRef<CameraRef>(null);
@@ -144,7 +194,27 @@ export default function MapScreen({ isDark: isDarkProp, onNavigateToSocial }: { 
   const [placementCenter, setPlacementCenter] = useState<[number, number]>([103.8198, 1.3521]);
   const [descModalVisible, setDescModalVisible] = useState(false);
   const [descText, setDescText] = useState('');
-  const [pendingReports, setPendingReports] = useState<Array<{ name: string; lat: number; lng: number; type: string; desc: string; at: string; status: string }>>([]);
+  const [pendingReports, setPendingReports] = useState<AmenityReport[]>([]);
+  // Live verification state for static/bundled amenity entries (keyed by
+  // staticAmenityKey), loaded from static_amenity_status — small table,
+  // loaded in full the same way pendingReports is. Absence of a key here
+  // just means "no one has verified it yet", so the JSON's own baked-in
+  // status is used as the fallback (see amenitiesGeojson below).
+  const [staticAmenityStatus, setStaticAmenityStatus] = useState<Map<string, { verified_count: number; status: string }>>(new Map());
+
+  // Amenity report detail popup — tapping a reported (DB-backed) amenity pin
+  // opens this instead of the plain read-only selectedWaterCooler card, since
+  // reports support verification + comments.
+  const [selectedReport, setSelectedReport] = useState<AmenityReport | null>(null);
+  const [hasVerifiedSelected, setHasVerifiedSelected] = useState(false);
+  const [reportTopComment, setReportTopComment] = useState<AmenityComment | null>(null);
+  // Total comment count on the currently open report — shown alongside the
+  // single top comment so "most helpful" is a legible, verifiable claim
+  // ("+N more comments") rather than just one comment appearing from nowhere.
+  const [reportCommentCount, setReportCommentCount] = useState(0);
+  const [hasLikedTopComment, setHasLikedTopComment] = useState(false);
+  const [reportCommentText, setReportCommentText] = useState('');
+  const [reportActionLoading, setReportActionLoading] = useState(false);
   const [recentBlocks, setRecentBlocks] = useState<Block[]>([]);
   const [starredIds, setStarredIds] = useState<Set<string>>(new Set());
   const [climbCounts, setClimbCounts] = useState<Map<string, number>>(new Map());
@@ -172,7 +242,7 @@ export default function MapScreen({ isDark: isDarkProp, onNavigateToSocial }: { 
 
   // Map layers panel — amenity visibility toggles + shortcut to the height filter
   const [layersVisible, setLayersVisible] = useState(false);
-  const [amenityVisibility, setAmenityVisibility] = useState({ water: true, toilet: true, foodShop: true });
+  const [amenityVisibility, setAmenityVisibility] = useState({ water: true, toilet: true, foodShop: true, unverified: true });
 
   // Challenges the user has joined and not yet completed — surfaced here too,
   // not just on Social/Groups, so progress is visible while you're actually
@@ -224,17 +294,35 @@ export default function MapScreen({ isDark: isDarkProp, onNavigateToSocial }: { 
     if (amenityVisibility.water) {
       for (const wc of WATER_COOLERS_RAW) {
         if (!wc.lat || !wc.lng) continue;
+        // This curated dataset (assets/water-coolers.json) predates the
+        // user-submitted amenity_reports table and has its own unverified
+        // entries too (scraped, never confirmed). Its *effective* status
+        // prefers the live static_amenity_status row (populated once anyone
+        // taps "Verify this exists" on it) over the JSON's own baked-in
+        // status, so a static entry doesn't stay unverified forever.
+        const key = staticAmenityKey('Water Cooler', wc.name, wc.lat, wc.lng);
+        const live = staticAmenityStatus.get(key);
+        const effectiveStatus = live?.status ?? wc.status;
+        const isVerified = effectiveStatus === 'verified';
+        // The "Unverified Reports" Layers toggle below needs to hide these
+        // the same way it hides unverified community reports, not just the
+        // new DB-backed ones.
+        if (!isVerified && !amenityVisibility.unverified) continue;
         features.push({
           type: 'Feature',
           geometry: { type: 'Point', coordinates: [wc.lng, wc.lat] },
           properties: {
-            amenity_type: wc.status,
+            amenity_type: effectiveStatus,
             icon: 'water-outline',
-            color: wc.status === 'verified' ? '#06B6D4' : '#EC4899',
-            pending: false,
+            color: isVerified ? '#06B6D4' : '#EC4899',
+            pending: !isVerified,
             name: wc.name,
             lat: wc.lat,
             lng: wc.lng,
+            static_key: key,
+            static_type: 'Water Cooler',
+            status: effectiveStatus,
+            verified_count: live?.verified_count ?? 0,
           },
         });
       }
@@ -263,23 +351,33 @@ export default function MapScreen({ isDark: isDarkProp, onNavigateToSocial }: { 
       if (!r.lat || !r.lng) continue;
       const category = r.type === 'Toilet' ? 'toilet' : r.type === 'Food / Shop' ? 'foodShop' : 'water';
       if (!amenityVisibility[category]) continue;
+      const isVerified = r.status === 'verified';
+      // Hide/show unverified toggle only affects reports still awaiting the
+      // 3 corroborating verifications — verified ones stay on regardless.
+      if (!isVerified && !amenityVisibility.unverified) continue;
       features.push({
         type: 'Feature',
         geometry: { type: 'Point', coordinates: [r.lng, r.lat] },
         properties: {
-          amenity_type: `unverified-${r.type}`,
+          // Preserve the existing `unverified-` prefixed amenity_type styling
+          // hook, now driven by the real `status` column instead of always
+          // being unverified.
+          amenity_type: isVerified ? r.type : `unverified-${r.type}`,
           icon: r.type === 'Toilet' ? 'male-female-outline' : r.type === 'Food / Shop' ? 'cafe-outline' : 'water-outline',
-          color: '#9CA3AF',
-          pending: true,
+          color: isVerified
+            ? (r.type === 'Toilet' ? '#8B5CF6' : r.type === 'Food / Shop' ? '#F59E0B' : '#06B6D4')
+            : '#9CA3AF',
+          pending: !isVerified,
           name: r.name,
           lat: r.lat,
           lng: r.lng,
+          report_id: r.report_id,
         },
       });
     }
 
     return { type: 'FeatureCollection', features };
-  }, [pendingReports, amenityVisibility]);
+  }, [pendingReports, amenityVisibility, staticAmenityStatus]);
 
   // Tall buildings (21+ storeys) across all of Singapore, fetched once —
   // `blocks` is scoped to whatever's currently on screen, so if there's no
@@ -432,15 +530,254 @@ export default function MapScreen({ isDark: isDarkProp, onNavigateToSocial }: { 
     [fetchBounds],
   );
 
+  // Load (or reload) all shared amenity reports from Supabase. Small,
+  // Singapore-scoped dataset — fetched in full on mount and after any
+  // report/verify/comment mutation, the same way the static water-cooler
+  // and amenities JSON is loaded wholesale rather than bounds-filtered.
+  const loadAmenityReports = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('amenity_reports')
+      .select('report_id, reporter_id, name, lat, lng, type, desc, status, verified_count, created_at');
+    if (error) {
+      console.error('Error fetching amenity reports:', error.message);
+      return;
+    }
+    setPendingReports(
+      (data ?? []).map((r: any) => ({
+        report_id: r.report_id,
+        reporter_id: r.reporter_id,
+        name: r.name,
+        lat: r.lat,
+        lng: r.lng,
+        type: r.type,
+        desc: r.desc,
+        status: r.status,
+        verified_count: r.verified_count,
+        at: r.created_at,
+      })),
+    );
+  }, []);
+
+  // Load (or reload) live verification state for static/bundled amenity
+  // entries. Small table (only ever has a row once someone's verified that
+  // entry at least once) — fetched in full, same as loadAmenityReports.
+  const loadStaticAmenityStatus = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('static_amenity_status')
+      .select('amenity_key, verified_count, status');
+    if (error) {
+      console.error('Error fetching static amenity status:', error.message);
+      return;
+    }
+    setStaticAmenityStatus(
+      new Map((data ?? []).map((r: any) => [r.amenity_key, { verified_count: r.verified_count, status: r.status }])),
+    );
+  }, []);
+
+  // Open the verify popup for a tapped *static* (bundled JSON) amenity —
+  // same shape as openReportDetail below, minus the comment fetch, since
+  // static entries aren't backed by an amenity_reports row and have no
+  // amenity_comments to load.
+  const openStaticAmenityDetail = useCallback(async (entry: AmenityReport) => {
+    setSelectedReport(entry);
+    setReportCommentText('');
+    setReportTopComment(null);
+    setReportCommentCount(0);
+    setHasVerifiedSelected(false);
+    setHasLikedTopComment(false);
+
+    if (user && entry.static_key) {
+      const { data: verifRow } = await supabase
+        .from('static_amenity_verifications')
+        .select('amenity_key')
+        .eq('amenity_key', entry.static_key)
+        .eq('user_id', user.id)
+        .maybeSingle();
+      setHasVerifiedSelected(!!verifRow);
+    }
+  }, [user]);
+
+  // Open the verify/comment popup for a tapped amenity report, fetching the
+  // caller's own verification/like state plus the single highest-liked
+  // comment (ties broken by most recent) for that report.
+  const openReportDetail = useCallback(async (report: AmenityReport) => {
+    setSelectedReport(report);
+    setReportCommentText('');
+    setReportTopComment(null);
+    setReportCommentCount(0);
+    setHasVerifiedSelected(false);
+    setHasLikedTopComment(false);
+
+    if (user) {
+      const { data: verifRow } = await supabase
+        .from('amenity_report_verifications')
+        .select('report_id')
+        .eq('report_id', report.report_id)
+        .eq('user_id', user.id)
+        .maybeSingle();
+      setHasVerifiedSelected(!!verifRow);
+    }
+
+    // Fetch the single highest-liked comment (ties broken by most recent)
+    // alongside a plain count(*) of every comment on this report — the
+    // count is what makes "most helpful comment" a legible, checkable claim
+    // in the UI instead of one comment appearing with no context.
+    const [{ data: comments }, { count }] = await Promise.all([
+      supabase
+        .from('amenity_comments')
+        .select('comment_id, user_id, body, like_count, created_at')
+        .eq('report_id', report.report_id)
+        .order('like_count', { ascending: false })
+        .order('created_at', { ascending: false })
+        .limit(1),
+      supabase
+        .from('amenity_comments')
+        .select('comment_id', { count: 'exact', head: true })
+        .eq('report_id', report.report_id),
+    ]);
+
+    const top = (comments?.[0] as AmenityComment | undefined) ?? null;
+    setReportTopComment(top);
+    setReportCommentCount(count ?? 0);
+
+    if (top && user) {
+      const { data: likeRow } = await supabase
+        .from('amenity_comment_likes')
+        .select('comment_id')
+        .eq('comment_id', top.comment_id)
+        .eq('user_id', user.id)
+        .maybeSingle();
+      setHasLikedTopComment(!!likeRow);
+    }
+  }, [user]);
+
+  const handleVerifyReport = useCallback(async () => {
+    if (!selectedReport || !user || reportActionLoading) return;
+    setReportActionLoading(true);
+    try {
+      // Static (bundled JSON) entries route to verify_static_amenity instead
+      // of verify_amenity_report — same 3-confirmation mechanism, different
+      // backing tables since static entries have no amenity_reports row.
+      const isStatic = !!selectedReport.static_key;
+      const { error } = isStatic
+        ? await supabase.rpc('verify_static_amenity', { p_amenity_key: selectedReport.static_key })
+        : await supabase.rpc('verify_amenity_report', { p_report_id: selectedReport.report_id });
+      if (error) {
+        Alert.alert('Could not verify', error.message);
+        return;
+      }
+      setHasVerifiedSelected(true);
+      setSelectedReport((prev) => {
+        if (!prev) return prev;
+        const verified_count = prev.verified_count + 1;
+        return { ...prev, verified_count, status: verified_count >= 3 ? 'verified' : prev.status };
+      });
+      if (isStatic) {
+        await loadStaticAmenityStatus();
+      } else {
+        await loadAmenityReports();
+      }
+    } finally {
+      setReportActionLoading(false);
+    }
+  }, [selectedReport, user, reportActionLoading, loadAmenityReports, loadStaticAmenityStatus]);
+
+  const handleSubmitReportComment = useCallback(async () => {
+    if (!selectedReport || !user || !reportCommentText.trim() || reportActionLoading) return;
+    setReportActionLoading(true);
+    try {
+      const { error } = await supabase.from('amenity_comments').insert({
+        report_id: selectedReport.report_id,
+        user_id: user.id,
+        body: reportCommentText.trim(),
+      });
+      if (error) {
+        Alert.alert('Could not post comment', error.message);
+        return;
+      }
+      await openReportDetail(selectedReport);
+    } finally {
+      setReportActionLoading(false);
+    }
+  }, [selectedReport, user, reportCommentText, reportActionLoading, openReportDetail]);
+
+  const handleToggleCommentLike = useCallback(async () => {
+    if (!reportTopComment || !user || !selectedReport || reportActionLoading) return;
+    setReportActionLoading(true);
+    try {
+      const { error } = await supabase.rpc('toggle_amenity_comment_like', { p_comment_id: reportTopComment.comment_id });
+      if (error) {
+        Alert.alert('Could not update like', error.message);
+        return;
+      }
+      await openReportDetail(selectedReport);
+    } finally {
+      setReportActionLoading(false);
+    }
+  }, [reportTopComment, user, selectedReport, reportActionLoading, openReportDetail]);
+
+  // Let a user remove a report they created themselves — asks for
+  // confirmation first since this can't be undone, then relies on the
+  // "auth.uid() = reporter_id" delete policy in phase2a_addendum24.sql to
+  // enforce server-side that only the reporter can actually delete it.
+  const handleDeleteReport = useCallback(() => {
+    if (!selectedReport || !user || selectedReport.reporter_id !== user.id) return;
+    const reportId = selectedReport.report_id;
+    Alert.alert(
+      'Remove this report?',
+      'This removes it for everyone, along with any verifications and comments on it. This can\'t be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            setReportActionLoading(true);
+            try {
+              const { error } = await supabase.from('amenity_reports').delete().eq('report_id', reportId);
+              if (error) {
+                Alert.alert('Could not remove report', error.message);
+                return;
+              }
+              setSelectedReport(null);
+              await loadAmenityReports();
+            } finally {
+              setReportActionLoading(false);
+            }
+          },
+        },
+      ],
+    );
+  }, [selectedReport, user, loadAmenityReports]);
+
   // Handle tap on map: show block detail sheet for tapped pin
   const handleMapPress = useCallback(async (event: any) => {
     const point = event.nativeEvent?.point;
     if (!point) return;
 
-    const features = await mapRef.current?.queryRenderedFeatures(point);
+    // Scope the hit-test to our own interactive layers only. Querying with
+    // no `layers` filter (the old behaviour) hits every rendered layer,
+    // including the base map style's own building-footprint/POI/label
+    // layers underneath — those can easily win the top slot at the tapped
+    // pixel and silently swallow a tap that was clearly aimed at an
+    // amenity/report pin (this was the root cause of "tapping an unverified
+    // pin doesn't reliably open the popup"). Also scan the whole result
+    // array rather than just features[0]: the amenity source renders two
+    // stacked layers per point (circle background + icon), and whichever
+    // one happens to sort first shouldn't matter.
+    const features = await mapRef.current?.queryRenderedFeatures(point, {
+      layers: ['block-pins', 'amenity-bg', 'amenity-icon'],
+    });
     if (!features || features.length === 0) return;
 
-    const props = features[0].properties ?? {};
+    const byBlockId = features.find((f) => f.properties?.block_id)?.properties;
+    const byReportId = features.find((f) => f.properties?.report_id)?.properties;
+    // Static (bundled JSON) amenities carry both `static_key` and
+    // `amenity_type` — check static_key first so these route to the
+    // verify popup rather than falling through to the plain read-only card.
+    const byStaticKey = features.find((f) => f.properties?.static_key)?.properties;
+    const byAmenityType = features.find((f) => f.properties?.amenity_type)?.properties;
+    const props = byBlockId ?? byReportId ?? byStaticKey ?? byAmenityType ?? {};
     if (props.block_id) {
       const block = blocksRef.current.find(
         (b) => b.block_id === props.block_id,
@@ -448,6 +785,7 @@ export default function MapScreen({ isDark: isDarkProp, onNavigateToSocial }: { 
       if (block) {
         setSelectedBlock(block);
         setSelectedWaterCooler(null); // deselect any water cooler
+        setSelectedReport(null); // deselect any amenity report
         setTapY(point[1]);
         setRecentBlocks((prev) => {
           const filtered = prev.filter((b) => b.block_id !== block.block_id);
@@ -464,6 +802,35 @@ export default function MapScreen({ isDark: isDarkProp, onNavigateToSocial }: { 
           setSelectedBlockDist(null);
         }
       }
+    } else if (props.report_id) {
+      // Community-reported amenity (backed by amenity_reports) — open the
+      // verify/comment detail popup instead of the plain read-only card.
+      const report = pendingReports.find((r) => r.report_id === props.report_id);
+      if (report) openReportDetail(report);
+      setSelectedBlock(null);
+      setSelectedWaterCooler(null);
+    } else if (props.static_key) {
+      // Static (bundled JSON) amenity, e.g. water-coolers.json — same verify
+      // popup as a community report, minus comments, since there's no
+      // amenity_reports row and no reporter to restrict self-verification
+      // against. Built straight from the feature's properties (already
+      // carrying the effective status/verified_count computed in
+      // amenitiesGeojson) rather than re-deriving them here.
+      openStaticAmenityDetail({
+        report_id: '',
+        static_key: props.static_key,
+        reporter_id: null,
+        name: props.name,
+        lat: props.lat,
+        lng: props.lng,
+        type: props.static_type ?? 'Water Cooler',
+        desc: '',
+        status: props.status,
+        verified_count: props.verified_count ?? 0,
+        at: '',
+      });
+      setSelectedBlock(null);
+      setSelectedWaterCooler(null);
     } else if (props.amenity_type) {
       setSelectedWaterCooler({
         name: props.name,
@@ -472,13 +839,15 @@ export default function MapScreen({ isDark: isDarkProp, onNavigateToSocial }: { 
         lng: props.lng,
       });
       setSelectedBlock(null); // deselect any building
+      setSelectedReport(null); // deselect any amenity report
     }
-  }, [location.latitude, location.longitude]);
+  }, [location.latitude, location.longitude, pendingReports, openReportDetail, openStaticAmenityDetail]);
 
   const handleCloseDetail = useCallback(() => {
     setSelectedBlock(null);
     setSelectedBlockDist(null);
     setSelectedWaterCooler(null);
+    setSelectedReport(null);
     setTapY(0);
   }, []);
 
@@ -574,12 +943,15 @@ export default function MapScreen({ isDark: isDarkProp, onNavigateToSocial }: { 
     };
   }, []);
 
-  // Load pending reports + starred blocks from storage on mount
+  // Load shared amenity reports from Supabase on mount
   useEffect(() => {
-    storage.getItem('pending_reports').then((val) => {
-      if (val) { try { setPendingReports(JSON.parse(val)); } catch {} }
-    });
-  }, []);
+    loadAmenityReports();
+  }, [loadAmenityReports]);
+
+  // Load live verification state for static/bundled amenity entries on mount
+  useEffect(() => {
+    loadStaticAmenityStatus();
+  }, [loadStaticAmenityStatus]);
 
   // Load starred blocks from storage on mount
   useEffect(() => {
@@ -609,35 +981,45 @@ export default function MapScreen({ isDark: isDarkProp, onNavigateToSocial }: { 
   // Load challenges the user has joined but not yet completed, with progress
   // computed against whichever window each one uses (rolling weekly/monthly,
   // or a fixed dated window for limited-time challenges).
-  useEffect(() => {
+  const loadMyActiveChallenges = useCallback(async () => {
     if (!user) { setMyActiveChallenges([]); return; }
-    (async () => {
-      const [{ data: joined }, { data: climbs }] = await Promise.all([
-        supabase.from('challenge_participants').select('challenge_id').eq('user_id', user.id).is('completed_at', null),
-        supabase.from('climbs').select('floors_climbed, created_at').eq('user_id', user.id).gte('created_at', new Date(Date.now() - 60 * 86400000).toISOString()),
-      ]);
-      if (!joined || joined.length === 0) { setMyActiveChallenges([]); return; }
+    const [{ data: joined }, { data: climbs }] = await Promise.all([
+      supabase.from('challenge_participants').select('challenge_id').eq('user_id', user.id).is('completed_at', null),
+      supabase.from('climbs').select('floors_climbed, created_at').eq('user_id', user.id).gte('created_at', new Date(Date.now() - 60 * 86400000).toISOString()),
+    ]);
+    if (!joined || joined.length === 0) { setMyActiveChallenges([]); return; }
 
-      const { data: challenges } = await supabase.from('challenges').select('*').in('challenge_id', joined.map((j: any) => j.challenge_id));
-      if (!challenges) { setMyActiveChallenges([]); return; }
+    const { data: challenges } = await supabase.from('challenges').select('*').in('challenge_id', joined.map((j: any) => j.challenge_id));
+    if (!challenges) { setMyActiveChallenges([]); return; }
 
-      const now = Date.now();
-      const withProgress = (challenges as Challenge[]).map((ch) => {
-        let progressFloors = 0;
-        if (ch.starts_at && ch.ends_at) {
-          const start = new Date(ch.starts_at).getTime();
-          const end = new Date(ch.ends_at).getTime();
-          progressFloors = (climbs ?? []).filter((c: any) => { const t = new Date(c.created_at).getTime(); return t >= start && t <= end; }).reduce((s, c: any) => s + c.floors_climbed, 0);
-        } else if (ch.period === 'monthly') {
-          progressFloors = (climbs ?? []).filter((c: any) => now - new Date(c.created_at).getTime() < 30 * 86400000).reduce((s, c: any) => s + c.floors_climbed, 0);
-        } else {
-          progressFloors = (climbs ?? []).filter((c: any) => now - new Date(c.created_at).getTime() < 7 * 86400000).reduce((s, c: any) => s + c.floors_climbed, 0);
-        }
-        return { ...ch, progressFloors };
-      });
-      setMyActiveChallenges(withProgress);
-    })();
+    const now = Date.now();
+    const withProgress = (challenges as Challenge[]).map((ch) => {
+      let progressFloors = 0;
+      if (ch.starts_at && ch.ends_at) {
+        const start = new Date(ch.starts_at).getTime();
+        const end = new Date(ch.ends_at).getTime();
+        progressFloors = (climbs ?? []).filter((c: any) => { const t = new Date(c.created_at).getTime(); return t >= start && t <= end; }).reduce((s, c: any) => s + c.floors_climbed, 0);
+      } else if (ch.period === 'monthly') {
+        progressFloors = (climbs ?? []).filter((c: any) => now - new Date(c.created_at).getTime() < 30 * 86400000).reduce((s, c: any) => s + c.floors_climbed, 0);
+      } else {
+        progressFloors = (climbs ?? []).filter((c: any) => now - new Date(c.created_at).getTime() < 7 * 86400000).reduce((s, c: any) => s + c.floors_climbed, 0);
+      }
+      return { ...ch, progressFloors };
+    });
+    setMyActiveChallenges(withProgress);
   }, [user]);
+
+  useEffect(() => { loadMyActiveChallenges(); }, [loadMyActiveChallenges]);
+
+  // This tab stays mounted (hidden, not unmounted) after the first visit, so
+  // without this, a challenge joined in the Groups tab wouldn't show up here
+  // in the "My Challenges" banner until the app fully reloaded — refetch
+  // silently whenever Map becomes the active tab again. Doesn't reset any
+  // loading flag, so this is a background refresh, not a spinner flash —
+  // same pattern as SocialScreen.tsx/ProfileScreen.tsx's isActive effects.
+  useEffect(() => {
+    if (isActive) loadMyActiveChallenges();
+  }, [isActive, loadMyActiveChallenges]);
 
   // Load climb history on mount
   useEffect(() => {
@@ -681,6 +1063,7 @@ export default function MapScreen({ isDark: isDarkProp, onNavigateToSocial }: { 
         onRegionIsChanging={() => {
           if (selectedBlock) handleCloseDetail();
           if (selectedWaterCooler) setSelectedWaterCooler(null);
+          if (selectedReport) setSelectedReport(null);
         }}
       >
         <Camera
@@ -743,17 +1126,19 @@ export default function MapScreen({ isDark: isDarkProp, onNavigateToSocial }: { 
             type="circle"
             paint={{
               'circle-color': [
+                // Reads straight from HEIGHT_TIERS so the on-map fill can
+                // never drift out of sync with the Layers panel legend.
                 'step',
                 ['get', 'storeys'],
-                '#4A90D9', // 1-10: blue
+                HEIGHT_TIERS[0].color, // 1-10
                 11,
-                '#FF9500', // 11-20: orange
+                HEIGHT_TIERS[1].color, // 11-20
                 21,
-                '#FF3B30', // 21-30: red
+                HEIGHT_TIERS[2].color, // 21-30
                 31,
-                '#8B0000', // 31-39: dark red
+                HEIGHT_TIERS[3].color, // 31-39
                 40,
-                '#7C3AED', // 40+: purple
+                HEIGHT_TIERS[4].color, // 40+
               ],
               'circle-radius': 5,
               'circle-stroke-width': [
@@ -858,7 +1243,7 @@ export default function MapScreen({ isDark: isDarkProp, onNavigateToSocial }: { 
               >
                 <Ionicons name={ch.reward_icon as any} size={14} color={color} />
                 <Text style={[styles.myChallengeChipText, { color: isDark ? '#F9FAFB' : '#111827' }]} numberOfLines={1}>
-                  {ch.title}
+                  {displayChallengeTitle(ch)}
                 </Text>
                 <View style={styles.myChallengeTrack}>
                   <View style={[styles.myChallengeFill, { width: `${pct}%`, backgroundColor: color }]} />
@@ -997,25 +1382,40 @@ export default function MapScreen({ isDark: isDarkProp, onNavigateToSocial }: { 
               <TouchableOpacity
                 style={styles.descModalSubmitBtn}
                 onPress={async () => {
+                  if (!user) {
+                    Alert.alert('Sign in required', 'You need to be signed in to report a new amenity.');
+                    return;
+                  }
                   const [lng, lat] = placementCenter;
-                  const newReport = {
-                    name: descText ? `${placementType}: ${descText.slice(0, 40)}` : (placementType ?? ''),
+                  const name = descText ? `${placementType}: ${descText.slice(0, 40)}` : (placementType ?? '');
+                  const { error } = await supabase.from('amenity_reports').insert({
+                    reporter_id: user.id,
+                    name,
                     lat, lng,
                     type: placementType!,
                     desc: descText,
-                    at: new Date().toISOString(),
-                    status: 'pending',
-                  };
-                  // Store locally
-                  const existing = await storage.getItem('pending_reports');
-                  const reports: typeof pendingReports = existing ? JSON.parse(existing) : [];
-                  reports.push(newReport);
-                  await storage.setItem('pending_reports', JSON.stringify(reports));
-                  setPendingReports(reports);
+                  });
+                  if (error) {
+                    // Anti-spam RLS check in phase2a_addendum24.sql rejects
+                    // the insert (a raw row-level-security policy error,
+                    // code 42501) once this user already has 5+ unverified
+                    // reports outstanding — surface that as a friendly
+                    // message instead of the raw Postgres error text.
+                    if (error.code === '42501') {
+                      Alert.alert(
+                        'Too many pending reports',
+                        'You already have 5 unverified reports awaiting confirmation. Wait for the community to verify some before adding more.',
+                      );
+                    } else {
+                      Alert.alert('Failed to report', error.message);
+                    }
+                    return;
+                  }
+                  await loadAmenityReports();
                   setPlacementType(null);
                   setDescModalVisible(false);
                   setDescText('');
-                  Alert.alert('Reported', `${placementType} submitted as unverified. Visible immediately.`);
+                  Alert.alert('Reported', `${placementType} submitted as unverified. Visible immediately, shared with everyone.`);
                 }}
               >
                 <Text style={styles.descModalSubmitText}>Submit</Text>
@@ -1058,6 +1458,8 @@ export default function MapScreen({ isDark: isDarkProp, onNavigateToSocial }: { 
         progressFloors={myActiveChallenges.find((c) => c.challenge_id === selectedChallenge?.challenge_id)?.progressFloors ?? 0}
         onJoin={() => {}}
         isDark={isDark}
+        displayTitleOverride={selectedChallenge ? displayChallengeTitle(selectedChallenge) : undefined}
+        displayDescriptionOverride={selectedChallenge ? displayChallengeDescription(selectedChallenge) : undefined}
       />
 
       {/* Badge celebration toast — pops up right after a climb earns one */}
@@ -1114,6 +1516,160 @@ export default function MapScreen({ isDark: isDarkProp, onNavigateToSocial }: { 
         </View>
       )}
 
+      {/* Amenity report detail — verify / comment popup for a community-
+          reported (DB-backed) amenity pin, or a static/bundled JSON amenity
+          (e.g. water-coolers.json) once `openStaticAmenityDetail` is used
+          instead — that variant just hides the comment section since static
+          entries have no amenity_reports row to hang comments off. Only the
+          single highest-liked comment is shown (ties broken by most
+          recent), not a full list. */}
+      <Modal visible={!!selectedReport} transparent animationType="fade" onRequestClose={() => setSelectedReport(null)}>
+        <TouchableOpacity style={styles.alertBackdrop} onPress={() => setSelectedReport(null)} activeOpacity={1}>
+          <TouchableOpacity activeOpacity={1} style={[styles.alertGrid, isDark && { backgroundColor: '#1F2937' }, { width: '88%' }]}>
+            {selectedReport && (
+              <>
+                <Text style={[styles.alertGridTitle, { marginBottom: 6 }, isDark && { color: '#F9FAFB' }]}>
+                  {selectedReport.type}
+                </Text>
+                <Text style={[
+                  styles.reportStatusBadge,
+                  selectedReport.status === 'verified' ? styles.reportStatusVerified : styles.reportStatusUnverified,
+                ]}>
+                  {selectedReport.status === 'verified' ? '✓ Verified' : `Unverified · ${selectedReport.verified_count}/3 verified`}
+                </Text>
+                {!!selectedReport.name && (
+                  <Text style={[styles.reportDetailName, isDark && { color: '#F9FAFB' }]}>{selectedReport.name}</Text>
+                )}
+                {!!selectedReport.desc && (
+                  <Text style={[styles.reportDetailDesc, isDark && { color: '#9CA3AF' }]}>{selectedReport.desc}</Text>
+                )}
+
+                {/* Verify button — an obvious call-to-action (icon + explicit
+                    "Verify this exists" label + live X/3 count on the button
+                    itself, not just in the status badge above), plus a
+                    always-visible hint line explaining *why* the button is
+                    disabled rather than leaving that silent. */}
+                <TouchableOpacity
+                  style={[
+                    styles.reportVerifyBtn,
+                    (selectedReport.reporter_id === user?.id || hasVerifiedSelected) && styles.reportVerifyBtnDisabled,
+                  ]}
+                  disabled={selectedReport.reporter_id === user?.id || hasVerifiedSelected || reportActionLoading || !user}
+                  onPress={handleVerifyReport}
+                >
+                  <Ionicons
+                    name={hasVerifiedSelected ? 'checkmark-circle' : 'checkmark-circle-outline'}
+                    size={18}
+                    color={(selectedReport.reporter_id === user?.id || hasVerifiedSelected) ? '#9CA3AF' : '#FFFFFF'}
+                  />
+                  <Text style={[
+                    styles.reportVerifyBtnText,
+                    (selectedReport.reporter_id === user?.id || hasVerifiedSelected) && { color: '#9CA3AF' },
+                  ]}>
+                    {hasVerifiedSelected ? 'Verified by you' : 'Verify this exists'}
+                  </Text>
+                  {!hasVerifiedSelected && (
+                    <View style={styles.reportVerifyCountPill}>
+                      <Text style={styles.reportVerifyCountPillText}>{selectedReport.verified_count}/3</Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+                <Text style={[styles.reportVerifyHint, isDark && { color: '#9CA3AF' }]}>
+                  {!user
+                    ? 'Sign in to verify this report.'
+                    : selectedReport.reporter_id === user.id
+                      ? "You reported this — verification has to come from someone else."
+                      : hasVerifiedSelected
+                        ? "You've already verified this — thanks for confirming it."
+                        : `${3 - selectedReport.verified_count} more verification${3 - selectedReport.verified_count === 1 ? '' : 's'} needed to mark this verified.`}
+                </Text>
+
+                {/* Only the reporter can remove their own report — enforced
+                    server-side by the delete policy in
+                    phase2a_addendum24.sql, this is just the entry point. */}
+                {selectedReport.reporter_id === user?.id && (
+                  <TouchableOpacity
+                    style={styles.reportRemoveBtn}
+                    disabled={reportActionLoading}
+                    onPress={handleDeleteReport}
+                  >
+                    <Ionicons name="trash-outline" size={13} color="#EF4444" />
+                    <Text style={styles.reportRemoveBtnText}>Remove my report</Text>
+                  </TouchableOpacity>
+                )}
+
+                {/* Comments are only meaningful for DB-backed reports (they
+                    live in amenity_comments, keyed by report_id) — static
+                    (bundled JSON) entries have no report row to hang a
+                    comment off, so this whole section is skipped for them. */}
+                {!selectedReport.static_key && (
+                  <>
+                    <Text style={[styles.layersSectionLabel, isDark && { color: '#9CA3AF' }, { marginTop: 16 }]}>
+                      Most helpful comment
+                    </Text>
+                    {reportTopComment ? (
+                      <View style={[styles.reportTopComment, isDark && { backgroundColor: '#111827' }]}>
+                        <Text style={[styles.reportTopCommentBody, isDark && { color: '#F9FAFB' }]}>{reportTopComment.body}</Text>
+                        <View style={styles.reportTopCommentFooter}>
+                          {/* Makes the "most helpful" ranking legible/checkable —
+                              without this, one comment shown alone with no count
+                              looks arbitrary rather than genuinely top-liked. */}
+                          <Text style={[styles.reportMostHelpfulCaption, isDark && { color: '#9CA3AF' }]}>
+                            👍 {reportTopComment.like_count} · most helpful
+                          </Text>
+                          <TouchableOpacity
+                            style={styles.reportLikeBtn}
+                            disabled={!user || reportActionLoading}
+                            onPress={handleToggleCommentLike}
+                          >
+                            <Ionicons
+                              name={hasLikedTopComment ? 'heart' : 'heart-outline'}
+                              size={16}
+                              color={hasLikedTopComment ? '#EF4444' : (isDark ? '#9CA3AF' : '#6B7280')}
+                            />
+                          </TouchableOpacity>
+                        </View>
+                        {reportCommentCount > 1 && (
+                          <Text style={[styles.reportMoreComments, isDark && { color: '#6B7280' }]}>
+                            +{reportCommentCount - 1} more comment{reportCommentCount - 1 === 1 ? '' : 's'}
+                          </Text>
+                        )}
+                      </View>
+                    ) : (
+                      <Text style={[styles.reportNoComments, isDark && { color: '#6B7280' }]}>
+                        No comments yet — be the first to add a note.
+                      </Text>
+                    )}
+
+                    <View style={styles.reportCommentInputRow}>
+                      <TextInput
+                        style={[styles.reportCommentInput, isDark && { backgroundColor: '#111827', color: '#F9FAFB' }]}
+                        placeholder='e.g. "Entrance is round the back, use the side door"'
+                        placeholderTextColor="#9CA3AF"
+                        value={reportCommentText}
+                        onChangeText={setReportCommentText}
+                        maxLength={200}
+                      />
+                      <TouchableOpacity
+                        style={[styles.reportCommentPostBtn, (!reportCommentText.trim() || !user) && { opacity: 0.5 }]}
+                        disabled={!reportCommentText.trim() || !user || reportActionLoading}
+                        onPress={handleSubmitReportComment}
+                      >
+                        <Ionicons name="send" size={16} color="#FFFFFF" />
+                      </TouchableOpacity>
+                    </View>
+                  </>
+                )}
+
+                <TouchableOpacity style={styles.reportCloseBtn} onPress={() => setSelectedReport(null)}>
+                  <Text style={[styles.reportCloseBtnText, isDark && { color: '#9CA3AF' }]}>Close</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
       {/* Search screen */}
       <SearchScreen
         visible={searchVisible}
@@ -1126,11 +1682,15 @@ export default function MapScreen({ isDark: isDarkProp, onNavigateToSocial }: { 
         climbHistory={climbHistory}
       />
 
-      {/* Alert/Report modal — centered icon grid */}
+      {/* Alert/Report modal — centered icon grid. Styled to match the Layers
+          panel's design system: same card sizing, the same uppercase
+          section-label treatment above its content, and bordered chip
+          buttons (like layersFilterChip) instead of flat borderless tiles. */}
       <Modal visible={alertVisible} transparent animationType="fade" onRequestClose={() => setAlertVisible(false)}>
         <TouchableOpacity style={styles.alertBackdrop} onPress={() => setAlertVisible(false)} activeOpacity={1}>
           <View style={[styles.alertGrid, isDark && { backgroundColor: '#1F2937' }]}>
             <Text style={[styles.alertGridTitle, isDark && { color: '#F9FAFB' }]}>Report nearby...</Text>
+            <Text style={[styles.layersSectionLabel, styles.alertGridSectionLabel, isDark && { color: '#9CA3AF' }]}>Select a type</Text>
             <View style={styles.alertGridItems}>
               {[
                 { icon: 'water-outline', label: 'Water Cooler', color: '#06B6D4' },
@@ -1139,14 +1699,17 @@ export default function MapScreen({ isDark: isDarkProp, onNavigateToSocial }: { 
               ].map((item) => (
                 <TouchableOpacity
                   key={item.label}
-                  style={[styles.alertGridItem, { backgroundColor: item.color + (isDark ? '1F' : '15') }]}
+                  style={[
+                    styles.alertGridItem,
+                    { backgroundColor: item.color + (isDark ? '1F' : '15'), borderColor: item.color },
+                  ]}
                   onPress={() => {
                     setAlertVisible(false);
                     setPlacementType(item.label);
                   }}
                 >
                   <Ionicons name={item.icon as any} size={26} color={item.color} />
-                  <Text style={[styles.alertGridLabel, isDark && { color: '#D1D5DB' }]}>{item.label}</Text>
+                  <Text style={[styles.alertGridLabel, isDark && { color: '#F9FAFB' }]}>{item.label}</Text>
                 </TouchableOpacity>
               ))}
             </View>
@@ -1176,6 +1739,22 @@ export default function MapScreen({ isDark: isDarkProp, onNavigateToSocial }: { 
                 />
               </View>
             ))}
+            {/* Filters anything unverified — DB-backed community reports
+                still awaiting their 3 corroborating verifications, AND the
+                curated water-coolers.json entries that were scraped but
+                never confirmed — so users can cut clutter down to only
+                verified pins from either source. Verified pins from both
+                sources stay visible regardless — this only hides the
+                `status !== 'verified'` ones. */}
+            <View style={styles.layersRow}>
+              <Ionicons name="help-circle-outline" size={18} color="#9CA3AF" style={{ marginRight: 10 }} />
+              <Text style={[styles.layersRowLabel, isDark && { color: '#F9FAFB' }]}>Unverified Reports</Text>
+              <Switch
+                value={amenityVisibility.unverified}
+                onValueChange={(val) => setAmenityVisibility((prev) => ({ ...prev, unverified: val }))}
+                trackColor={{ true: '#9CA3AF' }}
+              />
+            </View>
 
             <Text style={[styles.layersSectionLabel, isDark && { color: '#9CA3AF' }, { marginTop: 16 }]}>Building Height</Text>
             <View style={styles.layersFilterRow}>
@@ -1520,11 +2099,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   alertGrid: {
+    // Same card chrome + sizing as layersPanel (width/maxWidth included) so
+    // the two pop-ups read as the same design system.
     backgroundColor: '#FFFFFF',
     borderRadius: 20,
     padding: 24,
-    width: '80%',
-    maxWidth: 320,
+    width: '85%',
+    maxWidth: 360,
     elevation: 8,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
@@ -1538,22 +2119,35 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 20,
   },
+  // Centered variant of layersSectionLabel (which is left-aligned for the
+  // Layers panel's row lists) — same uppercase/muted eyebrow treatment above
+  // this grid's content instead.
+  alertGridSectionLabel: {
+    textAlign: 'center',
+    marginBottom: 14,
+  },
   alertGridItems: {
     flexDirection: 'row',
     justifyContent: 'center',
     gap: 12,
   },
   alertGridItem: {
+    // Bordered chip, matching layersFilterChip's button language, instead of
+    // a flat borderless tinted tile.
     width: 90,
     alignItems: 'center',
     paddingVertical: 12,
     borderRadius: 12,
+    borderWidth: 1.5,
   },
   alertGridLabel: {
+    // Same weight/prominence as layersRowLabel (dark, semi-bold) rather than
+    // low-emphasis gray, matching the Layers panel's row labels.
     fontSize: 11,
-    color: '#6B7280',
+    color: '#111827',
     textAlign: 'center',
-    fontWeight: '500',
+    fontWeight: '600',
+    marginTop: 6,
   },
 
   // Description modal (new amenity) — reuses alertGrid/alertBackdrop as the card shell
@@ -1674,6 +2268,157 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#FFFFFF',
     fontSize: 14,
+  },
+
+  // Amenity report detail popup — verify / comment / most-helpful-comment
+  reportStatusBadge: {
+    alignSelf: 'center',
+    fontSize: 11.5,
+    fontWeight: '700',
+    marginBottom: 12,
+  },
+  reportStatusVerified: {
+    color: '#059669',
+  },
+  reportStatusUnverified: {
+    color: '#9CA3AF',
+  },
+  reportDetailName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111827',
+    textAlign: 'center',
+    marginBottom: 4,
+  },
+  reportDetailDesc: {
+    fontSize: 13,
+    color: '#6B7280',
+    textAlign: 'center',
+    marginBottom: 14,
+    lineHeight: 18,
+  },
+  reportVerifyBtn: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#2563EB',
+    borderRadius: 12,
+    paddingVertical: 12,
+  },
+  reportVerifyBtnDisabled: {
+    backgroundColor: '#F3F4F6',
+  },
+  reportVerifyBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  // X/3 pill on the verify button itself — the count needs to be visible on
+  // the CTA, not just tucked into the status badge above it.
+  reportVerifyCountPill: {
+    backgroundColor: 'rgba(255,255,255,0.25)',
+    borderRadius: 8,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+  },
+  reportVerifyCountPillText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  // Always-visible explanation of the verify button's current state — why
+  // it's disabled (own report / already verified / signed out), or how many
+  // more verifications are still needed.
+  reportVerifyHint: {
+    fontSize: 11.5,
+    color: '#6B7280',
+    textAlign: 'center',
+    marginTop: 6,
+    lineHeight: 15,
+  },
+  reportRemoveBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    marginTop: 10,
+    paddingVertical: 6,
+  },
+  reportRemoveBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#EF4444',
+  },
+  reportTopComment: {
+    backgroundColor: '#F9FAFB',
+    borderRadius: 10,
+    padding: 12,
+  },
+  reportTopCommentBody: {
+    fontSize: 13,
+    color: '#111827',
+    lineHeight: 18,
+    marginBottom: 8,
+  },
+  reportTopCommentFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  // "👍 12 · most helpful" — makes the single-shown-comment's ranking
+  // legible instead of an unverifiable claim.
+  reportMostHelpfulCaption: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#6B7280',
+  },
+  reportMoreComments: {
+    fontSize: 11.5,
+    color: '#9CA3AF',
+    marginTop: 6,
+    fontStyle: 'italic',
+  },
+  reportLikeBtn: {
+    padding: 2,
+  },
+  reportNoComments: {
+    fontSize: 12.5,
+    color: '#9CA3AF',
+    fontStyle: 'italic',
+  },
+  reportCommentInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 14,
+  },
+  reportCommentInput: {
+    flex: 1,
+    backgroundColor: '#F3F4F6',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 13,
+    color: '#111827',
+  },
+  reportCommentPostBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: '#2563EB',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  reportCloseBtn: {
+    alignItems: 'center',
+    marginTop: 14,
+    paddingVertical: 6,
+  },
+  reportCloseBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#6B7280',
   },
 });
 

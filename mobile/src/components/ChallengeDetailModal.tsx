@@ -1,6 +1,13 @@
-import { View, Text, StyleSheet, Modal, TouchableOpacity, ScrollView, Share } from 'react-native';
+import { useState, useEffect, useCallback } from 'react';
+import { View, Text, StyleSheet, Modal, TouchableOpacity, ScrollView, Share, Dimensions, ActivityIndicator } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import type { Challenge } from '../types';
+import { supabase } from '../config/supabase';
+import { useAuth } from '../contexts/AuthContext';
+import MascotAvatar from './MascotAvatar';
+import { avatarUriFor } from '../utils/avatarUri';
+import MedalBadge, { medalEmblemFor } from './MedalBadge';
+import SceneryBanner from './SceneryBanner';
+import type { Challenge, Profile } from '../types';
 
 interface Props {
   challenge: Challenge | null;
@@ -10,7 +17,13 @@ interface Props {
   progressFloors: number;
   onJoin: () => void;
   isDark?: boolean;
+  /** Computed display name for generic (non-branded) challenges — falls back to challenge.title when absent. */
+  displayTitleOverride?: string;
+  /** Computed display description for generic challenges — falls back to challenge.description (which is otherwise stale/desynced from target_floors for generic ones). */
+  displayDescriptionOverride?: string;
 }
+
+export const PRIMARY_BLUE = '#2563EB';
 
 // A varied palette keyed off the challenge id — not a difficulty ranking,
 // just visual variety so cards don't all look the same.
@@ -26,43 +39,95 @@ function formatDateRange(startIso: string, endIso: string): string {
   return `${new Date(startIso).toLocaleDateString(undefined, opts)} – ${new Date(endIso).toLocaleDateString(undefined, opts)}`;
 }
 
-export default function ChallengeDetailModal({ challenge, visible, onClose, joined, progressFloors, onJoin, isDark = false }: Props) {
+interface LbRow { user_id: string; floors: number; }
+
+export default function ChallengeDetailModal({ challenge, visible, onClose, joined, progressFloors, onJoin, isDark = false, displayTitleOverride, displayDescriptionOverride }: Props) {
+  const { user } = useAuth();
+  const [leaderboard, setLeaderboard] = useState<LbRow[]>([]);
+  const [profilesMap, setProfilesMap] = useState<Record<string, Profile>>({});
+  const [lbLoading, setLbLoading] = useState(true);
+
+  const loadLeaderboard = useCallback(async () => {
+    if (!challenge) return;
+    setLbLoading(true);
+    const { data: participants } = await supabase.from('challenge_participants').select('user_id').eq('challenge_id', challenge.challenge_id);
+    const userIds = [...new Set((participants ?? []).map((p: any) => p.user_id))];
+    if (userIds.length === 0) { setLeaderboard([]); setLbLoading(false); return; }
+
+    let climbsQuery = supabase.from('climbs').select('user_id, floors_climbed, created_at').in('user_id', userIds);
+    if (challenge.starts_at && challenge.ends_at) {
+      climbsQuery = climbsQuery.gte('created_at', challenge.starts_at).lte('created_at', challenge.ends_at);
+    } else {
+      const days = challenge.period === 'monthly' ? 30 : 7;
+      climbsQuery = climbsQuery.gte('created_at', new Date(Date.now() - days * 86400000).toISOString());
+    }
+
+    const [{ data: climbs }, { data: profiles }] = await Promise.all([
+      climbsQuery,
+      supabase.from('profiles').select('*').in('user_id', userIds),
+    ]);
+
+    const totals: Record<string, number> = {};
+    for (const c of (climbs ?? []) as any[]) totals[c.user_id] = (totals[c.user_id] ?? 0) + c.floors_climbed;
+    for (const id of userIds) if (!(id in totals)) totals[id] = 0;
+
+    if (profiles) {
+      const map: Record<string, Profile> = {};
+      for (const p of profiles as Profile[]) map[p.user_id] = p;
+      setProfilesMap(map);
+    }
+    setLeaderboard(
+      Object.entries(totals)
+        .map(([user_id, floors]) => ({ user_id, floors }))
+        .sort((a, b) => b.floors - a.floors)
+        .slice(0, 10),
+    );
+    setLbLoading(false);
+  }, [challenge]);
+
+  useEffect(() => { if (visible && challenge) loadLeaderboard(); }, [visible, challenge?.challenge_id, loadLeaderboard]);
+
   if (!challenge) return null;
 
   const color = challengeColor(challenge.challenge_id);
   const pct = Math.min(100, Math.round((progressFloors / challenge.target_floors) * 100));
   const completed = joined && pct >= 100;
   const isLimitedTime = !!(challenge.starts_at && challenge.ends_at);
+  const title = displayTitleOverride ?? challenge.title;
+  const description = displayDescriptionOverride ?? challenge.description;
+  const imageHeight = Math.round(Dimensions.get('window').height / 3);
 
   const handleShare = () => {
     Share.share({
-      message: `I'm taking on "${challenge.title}" on Vertical — ${challenge.description} Join me!`,
-      title: challenge.title,
+      message: `I'm taking on "${title}" on Vertical — ${description} Join me!`,
+      title,
     });
   };
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <View style={[st.container, isDark && { backgroundColor: '#111827' }]}>
-        <ScrollView showsVerticalScrollIndicator={false}>
-          {/* Hero */}
-          <View style={[st.hero, { backgroundColor: color }]}>
-            <TouchableOpacity style={st.closeBtn} onPress={onClose}>
-              <Ionicons name="close" size={24} color="#FFFFFF" />
-            </TouchableOpacity>
-            <View style={st.heroBadge}>
-              <Ionicons name={challenge.reward_icon as any} size={48} color="#FFFFFF" />
+        <SceneryBanner variant="mountains" height={imageHeight} borderRadius={0}>
+          <TouchableOpacity style={st.closeBtn} onPress={onClose}>
+            <Ionicons name="close" size={24} color="#FFFFFF" />
+          </TouchableOpacity>
+          <View style={st.heroMedalWrap}>
+            <View style={{ position: 'relative' }}>
+              <MedalBadge color={color} emblem={medalEmblemFor(challenge.reward_icon, challenge.badge_key, challenge.generic_name)} size={84} />
               {completed && (
                 <View style={st.heroBadgeCheck}>
-                  <Ionicons name="checkmark-circle" size={22} color="#10B981" />
+                  <Ionicons name="checkmark-circle" size={20} color="#10B981" />
                 </View>
               )}
             </View>
-            <Text style={st.heroRewardLabel}>{challenge.reward_label}</Text>
           </View>
+        </SceneryBanner>
 
-          <View style={st.body}>
-            <Text style={[st.title, isDark && { color: '#F9FAFB' }]}>{challenge.title}</Text>
+        {/* Pull-up sheet: rounded top corners overlapping the image, drag handle for affordance */}
+        <View style={[st.sheet, isDark && { backgroundColor: '#111827' }]}>
+          <View style={[st.sheetHandle, isDark && { backgroundColor: '#4B5563' }]} />
+          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={st.body}>
+            <Text style={[st.title, isDark && { color: '#F9FAFB' }]}>{title}</Text>
 
             <View style={st.orgRow}>
               <Ionicons name="flag-outline" size={14} color="#9CA3AF" />
@@ -88,13 +153,14 @@ export default function ChallengeDetailModal({ challenge, visible, onClose, join
             </View>
 
             <Text style={[st.sectionLabel, isDark && { color: '#9CA3AF' }]}>Challenge Details</Text>
-            <Text style={[st.description, isDark && { color: '#D1D5DB' }]}>{challenge.description}</Text>
+            <Text style={[st.description, isDark && { color: '#D1D5DB' }]}>{description}</Text>
 
             {challenge.badge_key && (
               <View style={[st.rewardNote, isDark && { backgroundColor: '#1F2937' }]}>
                 <Ionicons name="ribbon-outline" size={16} color="#F59E0B" />
                 <Text style={[st.rewardNoteText, isDark && { color: '#D1D5DB' }]}>
                   Completing this awards the <Text style={{ fontWeight: '800' }}>{challenge.reward_label}</Text> — a real badge on your profile.
+                  {challenge.generic_name ? ' Resets monthly — complete it again to keep it active.' : ''}
                 </Text>
               </View>
             )}
@@ -111,17 +177,37 @@ export default function ChallengeDetailModal({ challenge, visible, onClose, join
             )}
 
             {!joined && (
-              <TouchableOpacity style={[st.joinBtn, { backgroundColor: color }]} onPress={onJoin}>
+              <TouchableOpacity style={st.joinBtn} onPress={onJoin}>
                 <Text style={st.joinBtnText}>Join Challenge</Text>
               </TouchableOpacity>
+            )}
+
+            <Text style={[st.sectionLabel, isDark && { color: '#9CA3AF' }, { marginTop: 8 }]}>Leaderboard</Text>
+            {lbLoading ? (
+              <ActivityIndicator size="small" color={PRIMARY_BLUE} style={{ marginVertical: 16 }} />
+            ) : leaderboard.length === 0 ? (
+              <Text style={[st.lbEmpty, isDark && { color: '#6B7280' }]}>No one has joined yet — be the first.</Text>
+            ) : (
+              <View style={[st.lbCard, isDark && { backgroundColor: '#1F2937' }]}>
+                {leaderboard.map((row, i) => (
+                  <View key={row.user_id} style={[st.lbRow, i > 0 && st.lbRowBorder, i > 0 && isDark && { borderTopColor: '#374151' }]}>
+                    <Text style={[st.lbRank, i < 3 && st.lbRankTop]}>{i + 1}</Text>
+                    <MascotAvatar skinIdx={profilesMap[row.user_id]?.avatar_idx ?? 0} photoUri={avatarUriFor(profilesMap[row.user_id])} size={28} />
+                    <Text style={[st.lbName, isDark && { color: '#F9FAFB' }]} numberOfLines={1}>
+                      {row.user_id === user?.id ? 'You' : (profilesMap[row.user_id]?.display_name ?? `Climber${row.user_id.slice(0, 4)}`)}
+                    </Text>
+                    <Text style={st.lbFloors}>{row.floors} fl</Text>
+                  </View>
+                ))}
+              </View>
             )}
 
             <TouchableOpacity style={[st.shareBtn, isDark && { backgroundColor: '#1F2937' }]} onPress={handleShare}>
               <Ionicons name="share-social-outline" size={18} color={isDark ? '#D1D5DB' : '#374151'} />
               <Text style={[st.shareBtnText, isDark && { color: '#D1D5DB' }]}>Share Challenge</Text>
             </TouchableOpacity>
-          </View>
-        </ScrollView>
+          </ScrollView>
+        </View>
       </View>
     </Modal>
   );
@@ -129,17 +215,8 @@ export default function ChallengeDetailModal({ challenge, visible, onClose, join
 
 const st = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F9FAFB' },
-  hero: { paddingTop: 56, paddingBottom: 28, alignItems: 'center' },
   closeBtn: { position: 'absolute', top: 52, right: 16, padding: 6, zIndex: 1 },
-  heroBadge: {
-    width: 92,
-    height: 92,
-    borderRadius: 46,
-    backgroundColor: 'rgba(255,255,255,0.22)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 16,
-  },
+  heroMedalWrap: { position: 'absolute', bottom: -34, left: 20 },
   heroBadgeCheck: {
     position: 'absolute',
     bottom: -2,
@@ -147,8 +224,15 @@ const st = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderRadius: 12,
   },
-  heroRewardLabel: { fontSize: 14, fontWeight: '700', color: '#FFFFFF', marginTop: 12, opacity: 0.95 },
-  body: { padding: 20, paddingBottom: 48 },
+  sheet: {
+    flex: 1,
+    backgroundColor: '#F9FAFB',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    marginTop: -20,
+  },
+  sheetHandle: { width: 36, height: 4, borderRadius: 2, backgroundColor: '#D1D5DB', alignSelf: 'center', marginTop: 10 },
+  body: { padding: 20, paddingTop: 30, paddingBottom: 48 },
   title: { fontSize: 22, fontWeight: '800', color: '#111827', marginBottom: 8 },
   orgRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 16 },
   orgText: { fontSize: 13, color: '#9CA3AF', fontWeight: '500' },
@@ -177,8 +261,16 @@ const st = StyleSheet.create({
   progressTrack: { height: 10, borderRadius: 5, backgroundColor: '#F3F4F6', overflow: 'hidden' },
   progressFill: { height: '100%', borderRadius: 5 },
   progressText: { fontSize: 13, fontWeight: '600', color: '#6B7280', marginTop: 8 },
-  joinBtn: { borderRadius: 12, paddingVertical: 15, alignItems: 'center', marginBottom: 12 },
+  joinBtn: { backgroundColor: PRIMARY_BLUE, borderRadius: 12, paddingVertical: 15, alignItems: 'center', marginBottom: 12 },
   joinBtnText: { color: '#FFFFFF', fontWeight: '700', fontSize: 15 },
+  lbEmpty: { fontSize: 12.5, color: '#9CA3AF', marginBottom: 20 },
+  lbCard: { backgroundColor: '#FFFFFF', borderRadius: 14, padding: 4, marginBottom: 24 },
+  lbRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 9, paddingHorizontal: 10 },
+  lbRowBorder: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#F3F4F6' },
+  lbRank: { width: 18, fontSize: 13, fontWeight: '700', color: '#9CA3AF', textAlign: 'center' },
+  lbRankTop: { color: '#F59E0B' },
+  lbName: { flex: 1, fontSize: 13.5, fontWeight: '600', color: '#111827' },
+  lbFloors: { fontSize: 12.5, fontWeight: '700', color: '#10B981' },
   shareBtn: {
     flexDirection: 'row',
     alignItems: 'center',

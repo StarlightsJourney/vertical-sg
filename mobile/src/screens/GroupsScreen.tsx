@@ -1,38 +1,52 @@
-import { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Linking, Modal, TextInput, Alert } from 'react-native';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { View, Text, Image, StyleSheet, ScrollView, TouchableOpacity, Linking, Modal, TextInput, Alert, Animated, NativeSyntheticEvent, NativeScrollEvent, KeyboardAvoidingView, Platform } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../config/supabase';
 import AuthPrompt from '../components/AuthPrompt';
-import ChallengeDetailModal, { challengeColor } from '../components/ChallengeDetailModal';
-import type { Challenge, UserClub, UserEvent, Profile } from '../types';
-
-const CLUB_CATEGORIES = ['All', 'Trail Running', 'Hiking', 'Climbing'] as const;
+import ChallengeDetailModal, { challengeColor, PRIMARY_BLUE } from '../components/ChallengeDetailModal';
+import MedalBadge, { medalEmblemFor } from '../components/MedalBadge';
+import SceneryBanner from '../components/SceneryBanner';
+import ClubIcon from '../components/ClubIcon';
+import ClubDetailModal from '../components/ClubDetailModal';
+import PublicProfileModal from '../components/PublicProfileModal';
+import { displayChallengeTitle as displayTitle, displayChallengeDescription as displayDescription } from '../utils/challengeDisplay';
+import { BADGE_DEFS } from '../types';
+import type { Challenge, UserClub, UserEvent, Profile, OfficialClub } from '../types';
 
 function formatDateRange(startIso: string, endIso: string): string {
   const opts: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric' };
   return `${new Date(startIso).toLocaleDateString(undefined, opts)} – ${new Date(endIso).toLocaleDateString(undefined, opts)}`;
 }
 
-interface Club {
-  name: string;
-  category: 'Trail Running' | 'Hiking' | 'Climbing';
-  description: string;
-  url: string;
+function formatShortDate(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
-// Curated, real Singapore communities — not scraped live (no live scraper in
-// this app), but researched and verified as active groups at time of writing.
-const CLUBS: Club[] = [
-  { name: 'Trail Runners Singapore', category: 'Trail Running', description: 'Facebook community for SG trail runners — routes, meetups, race chatter.', url: 'https://www.facebook.com/groups/TrailRunnersSingapore/' },
-  { name: 'Adidas Runners Singapore', category: 'Trail Running', description: 'Long-running crew, part of a global 50-city running movement.', url: 'https://www.runmagazine.asia/adidas-runners-singapore/' },
-  { name: 'SG Hiking and Travel Group', category: 'Hiking', description: 'Weekend and weekday nature walks/hikes around Singapore, running 40+ years.', url: 'https://www.facebook.com/groups/sghikingandtravel/' },
-  { name: 'Exploring Singapore Hiking Group', category: 'Hiking', description: 'Urban parks, nature reserves, and island trails — for newcomers and regulars.', url: 'https://www.facebook.com/groups/957889039371788/' },
-  { name: 'Singapore Sport Climbing and Mountaineering Federation', category: 'Climbing', description: 'The national association for sport climbing and mountaineering in Singapore.', url: 'https://www.facebook.com/singaporesportclimbingandmountaineeringfederation/' },
-  { name: 'Rock Climbing Singapore', category: 'Climbing', description: 'General climbing community group — gyms, outdoor trips, partner-finding.', url: 'https://www.facebook.com/groups/369770945505/' },
-  { name: 'Climb Central Singapore', category: 'Climbing', description: 'Five gyms islandwide — high-wall climbing with a growing bouldering scene.', url: 'https://www.climbcentral.sg/' },
-  { name: 'Boulder Planet', category: 'Climbing', description: 'Bouldering gym and community, welcoming to newcomers.', url: 'https://www.boulderplanet.sg/' },
-];
+function isSpecial(ch: Challenge): boolean {
+  return !!BADGE_DEFS.find((b) => b.key === ch.badge_key)?.special;
+}
+
+const CLUB_COLOR: Record<OfficialClub['category'], string> = {
+  'Trail Running': '#059669',
+  Hiking: '#0D9488',
+  Climbing: '#7C3AED',
+  Announcements: '#F59E0B',
+};
+
+// Real photos (openly-licensed, Wikimedia Commons) as circular club logos
+// instead of a vector icon attempt — attribution: trail running photo by
+// Petar Milošević (CC BY-SA 3.0), rock climbing wall photo is US Air Force
+// public domain, Bukit Timah photo by Chainwit. (CC BY 4.0, reused from the
+// Local Training listing above). No photo for Announcements — it's shown as
+// its own banner, not a grid card, so the small SVG megaphone (ClubIcon) is
+// only ever seen at icon size in search results.
+const CLUB_PHOTO: Partial<Record<OfficialClub['category'], string>> = {
+  'Trail Running': 'https://upload.wikimedia.org/wikipedia/commons/2/25/Trail_running.JPG',
+  Hiking: 'https://upload.wikimedia.org/wikipedia/commons/3/30/A_hike_to_the_Bukit_Timah_Summit_%282025%29_-_img_03.jpg',
+  Climbing: 'https://upload.wikimedia.org/wikipedia/commons/e/eb/Rock_climbing_wall.jpg',
+};
+const ANNOUNCEMENTS_PHOTO = 'https://upload.wikimedia.org/wikipedia/commons/3/3f/Singapore_city_skyline_at_night.JPG';
 
 interface EventItem {
   name: string;
@@ -40,57 +54,70 @@ interface EventItem {
   blurb: string;
   scope: 'Local' | 'Worldwide';
   url: string;
+  date: string | null;
+  distance: string;
+  eventType: 'Vertical Marathon' | 'Vertical Challenge' | 'Trail Run' | 'Training';
+  /** For recurring weekly training sessions: 0=Sun..6=Sat. When set, `date` is recomputed to the next upcoming occurrence at render time instead of relying on a fixed date that goes stale. */
+  weekday?: number;
+  /** Real photo of the actual venue (openly-licensed, e.g. Wikimedia Commons) — used instead of the generic illustrated banner when we have one for this specific place. */
+  photoUri?: string;
 }
 
-// Real recurring races — dates shift year to year, so check the organizer
-// link for the current schedule rather than trusting a hardcoded date here.
-const EVENTS: EventItem[] = [
-  { name: 'National Vertical Marathon', location: 'Guoco Tower, Singapore', blurb: 'Race up Singapore\'s tallest tower. Organized annually by NTU Sports Club.', scope: 'Local', url: 'https://towerrunning.sg/' },
-  { name: 'Vertical Challenge', location: 'Frasers Tower, Singapore', blurb: '1,256 steps to the top — Singapore Championship edition.', scope: 'Local', url: 'https://www.fraserstower.com.sg/content/frasers-tower/home/happening/verticalchallenge2025.html' },
-  { name: 'Towerrunning Tour', location: 'Worldwide circuit', blurb: 'The season-long international towerrunning series — races in dozens of cities.', scope: 'Worldwide', url: 'https://www.towerrunning.com/towerrunning-tour-2026/' },
-  { name: 'KL Tower Run International Challenge', location: 'Kuala Lumpur, Malaysia', blurb: '1,608 steps, 292m of ascent inside Malaysia\'s iconic tower.', scope: 'Worldwide', url: 'https://www.jomrun.com/event/Kuala-Lumpur-Tower-Run-International-Challenge-2026' },
-  { name: 'PingAn International Vertical Marathon', location: 'Shenzhen, China', blurb: '3,201 stairs, 541m of altitude gain to the observation deck.', scope: 'Worldwide', url: 'https://www.towerrunning.com/2025/11/27/announcement-towerrunning-200-internatiinal-vertical-marathon-pingan-shenzhen-january-10-2026/' },
+/** Next upcoming date (today counts) for a given weekday, so recurring training listings always show a current date instead of drifting stale. */
+function nextOccurrenceOfWeekday(weekday: number): string {
+  const now = new Date();
+  const diff = (weekday - now.getDay() + 7) % 7;
+  const d = new Date(now);
+  d.setDate(now.getDate() + diff);
+  return d.toISOString().slice(0, 10);
+}
+
+// Curated, real Singapore + regional races — not scraped live (no live
+// scraper in this app), but researched and verified as active events at time
+// of writing. Dates shift year to year; tap through for the current one.
+// Real photos are openly-licensed (Wikimedia Commons, CC BY / CC BY-SA) —
+// attribution is required by the license: KL Tower photo by Jorge Láscar,
+// Guoco Tower by Bjoertvedt, Frasers Tower by TheGreatSG'rean, Ping An
+// Finance Centre by Dinkun Chen — all CC BY / CC BY-SA, see Wikimedia
+// Commons file pages for full attribution text.
+const RACES: EventItem[] = [
+  { name: 'KL Tower Run International Challenge', location: 'Kuala Lumpur, Malaysia', blurb: '1,608 steps, 292m of ascent inside Malaysia\'s iconic tower.', scope: 'Worldwide', url: 'https://www.jomrun.com/event/Kuala-Lumpur-Tower-Run-International-Challenge-2026', date: '2026-08-22', distance: '1,608 steps · 292m', eventType: 'Vertical Marathon', photoUri: 'https://upload.wikimedia.org/wikipedia/commons/d/d5/Menara_Kuala_Lumpur_%28Kuala_Lumpur_Tower%29_%2818972745702%29.jpg' },
+  { name: 'Vertical Challenge', location: 'Frasers Tower, Singapore', blurb: '1,256 steps to the top — Singapore Championship edition.', scope: 'Local', url: 'https://www.fraserstower.com.sg/content/frasers-tower/home/happening/verticalchallenge2025.html', date: '2026-09-12', distance: '1,256 steps · 201m', eventType: 'Vertical Challenge', photoUri: 'https://upload.wikimedia.org/wikipedia/commons/8/8a/Fraser_Tower.jpg' },
+  { name: 'National Vertical Marathon', location: 'Guoco Tower, Singapore', blurb: 'Race up Singapore\'s tallest tower. Organized annually by NTU Sports Club.', scope: 'Local', url: 'https://towerrunning.sg/', date: '2026-11-14', distance: '1,455 steps · 234m', eventType: 'Vertical Marathon', photoUri: 'https://upload.wikimedia.org/wikipedia/commons/1/1c/Singapore_-_Guoco_Tower_IMG_9657.jpg' },
+  { name: 'PingAn International Vertical Marathon', location: 'Shenzhen, China', blurb: '3,201 stairs, 541m of altitude gain to the observation deck.', scope: 'Worldwide', url: 'https://www.towerrunning.com/2025/11/27/announcement-towerrunning-200-internatiinal-vertical-marathon-pingan-shenzhen-january-10-2026/', date: '2027-01-10', distance: '3,201 steps · 541m', eventType: 'Vertical Marathon', photoUri: 'https://upload.wikimedia.org/wikipedia/commons/a/a4/PING_AN_FINANCE_CENTER%2C_SHENZHEN.jpg' },
+  { name: 'Towerrunning Tour', location: 'Worldwide circuit', blurb: 'The season-long international towerrunning series — races in dozens of cities.', scope: 'Worldwide', url: 'https://www.towerrunning.com/towerrunning-tour-2026/', date: null, distance: 'Varies by city', eventType: 'Vertical Marathon' },
 ];
 
+// "Local club events" — recurring weekly training sessions curated from each
+// club/community's own posted schedule (Facebook group, gym site). Not a
+// live scraper (this app has none), but each entry's `weekday` is used to
+// compute the next upcoming date at render time (nextOccurrenceOfWeekday),
+// so the listed date is always current instead of a fixed date going stale
+// — tap through to the source for full schedule details.
+// Real photos are openly-licensed (Wikimedia Commons): Bukit Timah by
+// Chainwit. (CC BY 4.0), MacRitchie by Calvin Teo (CC BY-SA), Henderson
+// Waves/Southern Ridges by Schristia (CC BY 2.0), Bishan-AMK Park by
+// Wirbel1980 (CC BY-SA), Kallang Wave Mall by LN9267 (CC BY-SA) — see
+// Wikimedia Commons file pages for full attribution text.
+const LOCAL_TRAINING: EventItem[] = ([
+  { name: 'Trail Runners SG Hill Repeats', location: 'Bukit Timah Nature Reserve', blurb: 'Weekly Saturday hill-repeat session, open to all paces — meet at the visitor centre.', scope: 'Local', url: 'https://www.facebook.com/groups/TrailRunnersSingapore/', date: null, weekday: 6, distance: '5–8km repeats', eventType: 'Training', photoUri: 'https://upload.wikimedia.org/wikipedia/commons/3/30/A_hike_to_the_Bukit_Timah_Summit_%282025%29_-_img_03.jpg' },
+  { name: 'SG Hiking Group Weekend Trail Walk', location: 'MacRitchie Reservoir', blurb: 'Casual weekend nature walk along the TreeTop Walk loop — beginner friendly.', scope: 'Local', url: 'https://www.facebook.com/groups/sghikingandtravel/', date: null, weekday: 0, distance: '~10km loop', eventType: 'Training', photoUri: 'https://upload.wikimedia.org/wikipedia/commons/f/fb/MacRitchie_Reservoir.jpg' },
+  { name: 'Adidas Runners SG Track Session', location: 'Bishan-Ang Mo Kio Park', blurb: 'Structured interval track session, part of the weekly crew calendar.', scope: 'Local', url: 'https://www.runmagazine.asia/adidas-runners-singapore/', date: null, weekday: 2, distance: 'Interval sets', eventType: 'Training', photoUri: 'https://upload.wikimedia.org/wikipedia/commons/4/4f/Bishan-Ang_Mo_Kio_Park.jpg' },
+  { name: 'Climb Central Bouldering Meetup', location: 'Climb Central, Kallang Wave Mall', blurb: 'Community bouldering night — partner-finding and route projects.', scope: 'Local', url: 'https://www.climbcentral.sg/', date: null, weekday: 3, distance: 'Indoor bouldering', eventType: 'Training', photoUri: 'https://upload.wikimedia.org/wikipedia/commons/f/fa/Kallang_Wave_Mall_06-08-2025.jpg' },
+  { name: 'Exploring SG Hiking Night Hike', location: 'Southern Ridges', blurb: 'Evening hike across the Southern Ridges boardwalks — bring a headlamp.', scope: 'Local', url: 'https://www.facebook.com/groups/957889039371788/', date: null, weekday: 5, distance: '~10km', eventType: 'Training', photoUri: 'https://upload.wikimedia.org/wikipedia/commons/8/85/Henderson_Waves%2C_Singapore.jpg' },
+] as EventItem[]).map((e) => ({ ...e, date: nextOccurrenceOfWeekday(e.weekday!) }));
+
 type Tab = 'challenges' | 'clubs' | 'events';
-
-/** Sporty hero banner, built from plain Views/Ionicons — no image asset. */
-function CoverBanner({ icon, title, subtitle, color }: { icon: string; title: string; subtitle: string; color: string }) {
-  return (
-    <View style={[cb.wrap, { backgroundColor: color }]}>
-      <View style={[cb.circle, cb.circleA]} />
-      <View style={[cb.circle, cb.circleB]} />
-      <View style={[cb.circle, cb.circleC]} />
-      <Ionicons name={icon as any} size={30} color="rgba(255,255,255,0.95)" />
-      <Text style={cb.title}>{title}</Text>
-      <Text style={cb.subtitle}>{subtitle}</Text>
-    </View>
-  );
-}
-
-const cb = StyleSheet.create({
-  wrap: {
-    borderRadius: 18,
-    padding: 20,
-    marginBottom: 16,
-    overflow: 'hidden',
-    alignItems: 'flex-start',
-  },
-  circle: { position: 'absolute', borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.12)' },
-  circleA: { width: 120, height: 120, top: -50, right: -30 },
-  circleB: { width: 70, height: 70, bottom: -30, right: 40 },
-  circleC: { width: 40, height: 40, bottom: 10, right: 120 },
-  title: { fontSize: 19, fontWeight: '800', color: '#FFFFFF', marginTop: 10 },
-  subtitle: { fontSize: 12.5, color: 'rgba(255,255,255,0.85)', marginTop: 3, fontWeight: '500' },
-});
 
 export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
   const { user, isAnonymous } = useAuth();
   const [tab, setTab] = useState<Tab>('challenges');
   const [authPromptVisible, setAuthPromptVisible] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
   const [searchVisible, setSearchVisible] = useState(false);
-  const [clubCategory, setClubCategory] = useState<typeof CLUB_CATEGORIES[number]>('All');
+  const [searchTab, setSearchTab] = useState<'friends' | 'clubs'>('friends');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [friendResults, setFriendResults] = useState<Profile[]>([]);
+  const [viewingProfileId, setViewingProfileId] = useState<string | null>(null);
 
   const [weeklyChallenges, setWeeklyChallenges] = useState<Challenge[]>([]);
   const [monthlyChallenges, setMonthlyChallenges] = useState<Challenge[]>([]);
@@ -101,6 +128,8 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
   const [limitedTimeProgress, setLimitedTimeProgress] = useState<Record<string, number>>({});
   const [selectedChallenge, setSelectedChallenge] = useState<Challenge | null>(null);
 
+  const [officialClubs, setOfficialClubs] = useState<OfficialClub[]>([]);
+  const [selectedClub, setSelectedClub] = useState<OfficialClub | null>(null);
   const [userClubs, setUserClubs] = useState<UserClub[]>([]);
   const [userEvents, setUserEvents] = useState<UserEvent[]>([]);
   const [creatorNames, setCreatorNames] = useState<Record<string, string>>({});
@@ -108,6 +137,32 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
   const [createClubVisible, setCreateClubVisible] = useState(false);
   const [createEventVisible, setCreateEventVisible] = useState(false);
   const [createChallengeVisible, setCreateChallengeVisible] = useState(false);
+  const [challengeVisibilityDefault, setChallengeVisibilityDefault] = useState<'public' | 'peers'>('public');
+  const [viewAllSection, setViewAllSection] = useState<'training' | 'races' | null>(null);
+
+  // Sticky header, hide-on-scroll-down / show-on-scroll-up tab bar
+  // (Strava-style). Animates opacity + translateY only — NOT height — so it
+  // can run on the native thread (useNativeDriver: true). The earlier
+  // height-interpolation version animated on the JS thread (height can't be
+  // natively driven) and depended on onLayout measurements that raced with
+  // the animation, which is what caused the stutter/flicker/invisible-text
+  // bugs. This version reserves the bar's space at all times (a plain,
+  // un-animated wrapper) and only fades+slides its contents, trading a
+  // literal space-reclaim for guaranteed smoothness and correctness.
+  const tabBarAnim = useRef(new Animated.Value(1)).current;
+  const lastScrollY = useRef(0);
+  const handleScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const y = e.nativeEvent.contentOffset.y;
+    const delta = y - lastScrollY.current;
+    if (y <= 10) {
+      Animated.timing(tabBarAnim, { toValue: 1, duration: 180, useNativeDriver: true }).start();
+    } else if (delta > 8) {
+      Animated.timing(tabBarAnim, { toValue: 0, duration: 180, useNativeDriver: true }).start();
+    } else if (delta < -8) {
+      Animated.timing(tabBarAnim, { toValue: 1, duration: 180, useNativeDriver: true }).start();
+    }
+    lastScrollY.current = y;
+  };
 
   const loadChallenges = useCallback(async () => {
     const { data } = await supabase.from('challenges').select('*').eq('is_active', true);
@@ -147,12 +202,14 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
   }, [user]);
 
   const loadUserContent = useCallback(async () => {
-    const [{ data: clubs }, { data: events }] = await Promise.all([
+    const [{ data: clubs }, { data: events }, { data: official }] = await Promise.all([
       supabase.from('user_clubs').select('*').order('created_at', { ascending: false }),
       supabase.from('user_events').select('*').order('created_at', { ascending: false }),
+      supabase.from('official_clubs').select('*').order('name', { ascending: true }),
     ]);
     if (clubs) setUserClubs(clubs as UserClub[]);
     if (events) setUserEvents(events as UserEvent[]);
+    if (official) setOfficialClubs(official as OfficialClub[]);
 
     const creatorIds = [...new Set([...(clubs ?? []).map((c: any) => c.creator_id), ...(events ?? []).map((e: any) => e.creator_id)])];
     if (creatorIds.length > 0) {
@@ -167,6 +224,15 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
 
   useEffect(() => { loadChallenges(); }, [loadChallenges]);
   useEffect(() => { loadUserContent(); }, [loadUserContent]);
+
+  useEffect(() => {
+    if (!searchVisible || searchTab !== 'friends' || !user || searchQuery.trim().length === 0) { setFriendResults([]); return; }
+    let cancelled = false;
+    supabase.from('profiles').select('*').ilike('display_name', `%${searchQuery.trim()}%`).neq('user_id', user.id).limit(20).then(({ data }) => {
+      if (!cancelled && data) setFriendResults(data as Profile[]);
+    });
+    return () => { cancelled = true; };
+  }, [searchVisible, searchTab, searchQuery, user]);
 
   const handleJoin = async (challengeId: string) => {
     if (isAnonymous) { setAuthPromptVisible(true); return; }
@@ -200,9 +266,10 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
 
   const matchesSearch = (text: string) => searchQuery.trim().length === 0 || text.toLowerCase().includes(searchQuery.trim().toLowerCase());
 
-  // Compact card — 2 fit per row. Used for everything except the single
-  // biggest (by target_floors) challenge, which gets the full-width cover
-  // treatment instead (renderHeroChallenge below), Strava-style.
+  // Compact card — 2 fit per row. Title, short description, time-limit line,
+  // then a full-width Join button (or progress bar once joined). Join button
+  // is always the same brand color across every challenge — accent color is
+  // reserved for the medal only.
   const renderChallengeCard = (ch: Challenge) => {
     const progressFloors = progressFor(ch);
     const joined = myChallengeIds.has(ch.challenge_id);
@@ -217,23 +284,30 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
         onPress={() => setSelectedChallenge(ch)}
         activeOpacity={0.85}
       >
-        <View style={[s.gridBadge, { backgroundColor: color + '1F' }]}>
-          <Ionicons name={ch.reward_icon as any} size={26} color={color} />
-          {completed && (
-            <View style={s.bigBadgeCheck}>
-              <Ionicons name="checkmark-circle" size={15} color="#10B981" />
+        <View style={{ alignItems: 'center', width: '100%' }}>
+          <View style={{ position: 'relative' }}>
+            <MedalBadge color={color} emblem={medalEmblemFor(ch.reward_icon, ch.badge_key, ch.generic_name)} size={52} />
+            {completed && (
+              <View style={s.bigBadgeCheck}>
+                <Ionicons name="checkmark-circle" size={15} color="#10B981" />
+              </View>
+            )}
+          </View>
+          {ch.visibility === 'peers' ? (
+            <View style={[s.communityPill, { backgroundColor: '#F5F3FF' }]}>
+              <Text style={[s.communityPillText, { color: '#7C3AED' }]}>Peers Only</Text>
+            </View>
+          ) : ch.creator_id && (
+            <View style={s.communityPill}>
+              <Text style={s.communityPillText}>Community</Text>
             </View>
           )}
+          <Text style={[s.gridTitle, isDark && { color: '#F9FAFB' }]} numberOfLines={2}>{displayTitle(ch)}</Text>
+          <Text style={[s.gridDesc, isDark && { color: '#9CA3AF' }]} numberOfLines={2}>{displayDescription(ch)}</Text>
+          <Text style={s.gridDateText} numberOfLines={1}>
+            {isLimitedTime ? formatDateRange(ch.starts_at!, ch.ends_at!) : (ch.period === 'monthly' ? 'Resets monthly' : 'Resets weekly')}
+          </Text>
         </View>
-        {ch.creator_id && (
-          <View style={s.communityPill}>
-            <Text style={s.communityPillText}>Community</Text>
-          </View>
-        )}
-        <Text style={[s.gridTitle, isDark && { color: '#F9FAFB' }]} numberOfLines={2}>{ch.title}</Text>
-        <Text style={s.gridDateText} numberOfLines={1}>
-          {isLimitedTime ? formatDateRange(ch.starts_at!, ch.ends_at!) : (ch.period === 'monthly' ? 'Resets monthly' : 'Resets weekly')}
-        </Text>
 
         {joined ? (
           <View style={{ marginTop: 8, width: '100%' }}>
@@ -245,7 +319,7 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
             </Text>
           </View>
         ) : (
-          <TouchableOpacity style={[s.gridJoinBtn, { backgroundColor: color }]} onPress={() => handleJoin(ch.challenge_id)}>
+          <TouchableOpacity style={s.gridJoinBtn} onPress={() => handleJoin(ch.challenge_id)}>
             <Text style={s.joinBtnText}>Join</Text>
           </TouchableOpacity>
         )}
@@ -253,89 +327,175 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
     );
   };
 
-  // Full-width cover for the single biggest challenge (by target_floors) —
-  // the "craziest" one, without ranking it via a difficulty label.
-  const renderHeroChallenge = (ch: Challenge) => {
+  // Special/featured challenges (Everest Gauntlet, Double Eight-Thousander) —
+  // full-width scenic "cover photo" card, Strava-style: image on top, all
+  // challenge details below it (not overlaid on the image).
+  const renderFeaturedChallenge = (ch: Challenge) => {
     const progressFloors = progressFor(ch);
     const joined = myChallengeIds.has(ch.challenge_id);
     const pct = Math.min(100, Math.round((progressFloors / ch.target_floors) * 100));
     const completed = joined && pct >= 100;
     const color = challengeColor(ch.challenge_id);
-    const isLimitedTime = !!(ch.starts_at && ch.ends_at);
     return (
-      <TouchableOpacity style={[s.heroCard, { backgroundColor: color }]} onPress={() => setSelectedChallenge(ch)} activeOpacity={0.9}>
-        <Text style={s.heroEyebrow}>FEATURED CHALLENGE</Text>
-        <View style={s.heroTopRow}>
-          <View style={s.heroBadge}>
-            <Ionicons name={ch.reward_icon as any} size={38} color="#FFFFFF" />
-            {completed && (
-              <View style={s.bigBadgeCheck}>
-                <Ionicons name="checkmark-circle" size={18} color="#10B981" />
-              </View>
-            )}
+      <TouchableOpacity key={ch.challenge_id} style={[s.featCard, isDark && { backgroundColor: '#1F2937' }]} onPress={() => setSelectedChallenge(ch)} activeOpacity={0.9}>
+        <SceneryBanner variant="mountains" height={150} borderRadius={0}>
+          <View style={s.featEyebrowWrap}>
+            <Text style={s.featEyebrow}>FEATURED CHALLENGE</Text>
           </View>
-          <View style={{ flex: 1 }}>
-            <Text style={s.heroTitle}>{ch.title}</Text>
-            <Text style={s.heroDateText}>
-              {isLimitedTime ? formatDateRange(ch.starts_at!, ch.ends_at!) : `${ch.target_floors} floors, ${ch.period}`}
-            </Text>
+          <View style={s.featMedalWrap}>
+            <MedalBadge color={color} emblem="trophy" size={60} />
           </View>
-        </View>
-        <Text style={s.heroDesc} numberOfLines={2}>{ch.description}</Text>
-        {joined ? (
-          <View>
-            <View style={s.heroTrack}>
-              <View style={[s.heroFill, { width: `${pct}%` }]} />
+        </SceneryBanner>
+        <View style={s.featBody}>
+          <Text style={[s.featTitle, isDark && { color: '#F9FAFB' }]}>{ch.title}</Text>
+          <Text style={[s.featDesc, isDark && { color: '#9CA3AF' }]} numberOfLines={3}>{ch.description}</Text>
+          <View style={s.featPillRow}>
+            <View style={[s.featPill, isDark && { backgroundColor: '#111827' }]}>
+              <Ionicons name="time-outline" size={12} color={isDark ? '#D1D5DB' : '#6B7280'} />
+              <Text style={[s.featPillText, isDark && { color: '#D1D5DB' }]}>{ch.period === 'monthly' ? 'Resets monthly' : 'Resets weekly'}</Text>
             </View>
-            <Text style={s.heroProgressText}>{completed ? 'Completed!' : `${progressFloors} / ${ch.target_floors} fl`}</Text>
+            <View style={[s.featPill, isDark && { backgroundColor: '#111827' }]}>
+              <Text style={[s.featPillText, isDark && { color: '#D1D5DB' }]}>{ch.target_floors} FLOORS</Text>
+            </View>
           </View>
-        ) : (
-          <TouchableOpacity style={s.heroJoinBtn} onPress={() => handleJoin(ch.challenge_id)}>
-            <Text style={[s.joinBtnText, { color }]}>Join Challenge</Text>
-          </TouchableOpacity>
-        )}
+          {joined ? (
+            <View>
+              <View style={s.challengeTrack}>
+                <View style={[s.challengeFill, { width: `${pct}%`, backgroundColor: color }]} />
+              </View>
+              <Text style={s.challengeProgressText}>{completed ? 'Completed!' : `${progressFloors} / ${ch.target_floors} fl`}</Text>
+            </View>
+          ) : (
+            <TouchableOpacity style={s.featJoinBtn} onPress={() => handleJoin(ch.challenge_id)}>
+              <Text style={s.joinBtnText}>Join Challenge</Text>
+            </TouchableOpacity>
+          )}
+        </View>
       </TouchableOpacity>
     );
   };
 
-  const visibleClubs = CLUBS.filter((c) => (clubCategory === 'All' || c.category === clubCategory) && matchesSearch(c.name));
-  const visibleUserClubs = userClubs.filter((c) => (clubCategory === 'All' || c.category === clubCategory) && matchesSearch(c.name));
-  const visibleEvents = EVENTS.filter((e) => matchesSearch(e.name));
-  // Dated events sort chronologically (soonest first); undated ones fall
-  // after, in whatever order they were added — a lighter "calendar" than a
-  // full month-grid view, but at least races line up in the order they happen.
-  const visibleUserEvents = userEvents
-    .filter((e) => matchesSearch(e.name))
-    .sort((a, b) => {
-      if (a.event_date && b.event_date) return new Date(a.event_date).getTime() - new Date(b.event_date).getTime();
-      if (a.event_date) return -1;
-      if (b.event_date) return 1;
+  const allChallenges = [...limitedTimeChallenges, ...monthlyChallenges, ...weeklyChallenges];
+  const featuredChallenges = allChallenges.filter(isSpecial).sort((a, b) => b.target_floors - a.target_floors);
+  const gridChallengePriority = (c: Challenge) => (c.starts_at && c.ends_at ? 0 : c.creator_id ? 1 : 2);
+  const gridChallenges = allChallenges
+    .filter((c) => !isSpecial(c))
+    .sort((a, b) => gridChallengePriority(a) - gridChallengePriority(b));
+
+  const visibleUserClubs = userClubs.filter((c) => matchesSearch(c.name));
+  const announcementsClub = officialClubs.find((c) => c.category === 'Announcements');
+  const sportClubs = officialClubs.filter((c) => c.category !== 'Announcements');
+
+  const renderEventCard = (ev: EventItem | (UserEvent & { isUser: true }), width?: number) => {
+    const isUser = 'event_id' in ev;
+    const key = isUser ? ev.event_id : ev.name;
+    const date = isUser ? ev.event_date : ev.date;
+    const distance = isUser ? undefined : ev.distance;
+    const eventType = isUser ? undefined : ev.eventType;
+    const url = ev.url;
+    const photoUri = isUser ? undefined : ev.photoUri;
+    return (
+      <TouchableOpacity
+        key={key}
+        style={[s.eventCard, width ? { width } : { width: '100%' }, isDark && { backgroundColor: '#1F2937' }]}
+        onPress={() => url && Linking.openURL(url)}
+        activeOpacity={0.85}
+      >
+        <SceneryBanner variant={ev.scope === 'Worldwide' ? 'skyline' : 'sunrise'} height={110} borderRadius={0} photoUri={photoUri}>
+          {date && (
+            <View style={s.eventDateBadge}>
+              <Text style={s.eventDateBadgeText}>{formatShortDate(date)}</Text>
+            </View>
+          )}
+        </SceneryBanner>
+        <View style={s.eventBody}>
+          <View style={{ flex: 1 }}>
+            <Text style={[s.eventTitle, isDark && { color: '#F9FAFB' }]} numberOfLines={1}>{ev.name}</Text>
+            <View style={s.eventLocationRow}>
+              <Ionicons name="location-outline" size={12} color="#9CA3AF" />
+              <Text style={s.eventLocationText} numberOfLines={1}>{ev.location}</Text>
+            </View>
+            <Text style={[s.eventBlurb, isDark && { color: '#9CA3AF' }]} numberOfLines={2}>{ev.blurb}</Text>
+            <View style={s.eventTagRow}>
+              {distance && (
+                <View style={[s.eventTag, isDark && { backgroundColor: '#111827' }]}>
+                  <Text style={[s.eventTagText, isDark && { color: '#D1D5DB' }]}>{distance}</Text>
+                </View>
+              )}
+              {eventType && (
+                <View style={[s.eventTag, isDark && { backgroundColor: '#111827' }]}>
+                  <Text style={[s.eventTagText, isDark && { color: '#D1D5DB' }]}>{eventType}</Text>
+                </View>
+              )}
+              <View style={[s.eventTag, isDark && { backgroundColor: '#111827' }]}>
+                <Text style={[s.eventTagText, isDark && { color: '#D1D5DB' }]}>{ev.scope}</Text>
+              </View>
+            </View>
+            {isUser && (
+              <Text style={s.linkCardCreator}>Added by {creatorNames[ev.creator_id] ?? 'a climber'}</Text>
+            )}
+          </View>
+          {isUser && (
+            <TouchableOpacity onPress={() => handleReportEvent(ev.event_id)} hitSlop={8} style={{ padding: 4 }}>
+              <Ionicons name="ellipsis-horizontal" size={16} color="#9CA3AF" />
+            </TouchableOpacity>
+          )}
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
+  const sortByDate = <T extends { date?: string | null; event_date?: string | null }>(items: T[]) =>
+    [...items].sort((a, b) => {
+      const da = a.date ?? a.event_date ?? null;
+      const db = b.date ?? b.event_date ?? null;
+      if (da && db) return new Date(da).getTime() - new Date(db).getTime();
+      if (da) return -1;
+      if (db) return 1;
       return 0;
     });
 
-  // The single biggest challenge (by target_floors) gets the full-width
-  // cover treatment; everything else fills a 2-column grid, ordered
-  // limited-time first, then community-created, then the default set —
-  // not by difficulty, just recency/specialness.
-  const allChallenges = [...limitedTimeChallenges, ...monthlyChallenges, ...weeklyChallenges];
-  const heroChallenge = allChallenges.reduce<Challenge | null>((max, c) => (!max || c.target_floors > max.target_floors ? c : max), null);
-  const gridChallengePriority = (c: Challenge) => (c.starts_at && c.ends_at ? 0 : c.creator_id ? 1 : 2);
-  const gridChallenges = allChallenges
-    .filter((c) => c.challenge_id !== heroChallenge?.challenge_id)
-    .sort((a, b) => gridChallengePriority(a) - gridChallengePriority(b));
+  const trainingItems = sortByDate(LOCAL_TRAINING.filter((e) => matchesSearch(e.name)));
+  const userTrainingLike = sortByDate(userEvents.filter((e) => matchesSearch(e.name) && e.scope === 'Local').map((e) => ({ ...e, isUser: true as const })));
+  const raceItems = sortByDate(RACES.filter((e) => matchesSearch(e.name)));
+  const userRaceLike = sortByDate(userEvents.filter((e) => matchesSearch(e.name) && e.scope === 'Worldwide').map((e) => ({ ...e, isUser: true as const })));
+
+  const renderHorizontalSection = (title: string, curated: EventItem[], userItems: (UserEvent & { isUser: true })[], key: 'training' | 'races') => {
+    const combined: Array<EventItem | (UserEvent & { isUser: true })> = [...userItems, ...curated];
+    return (
+      <View style={s.groupSection}>
+        <View style={s.sectionHeaderRow}>
+          <Text style={[s.groupSectionTitle, isDark && { color: '#F9FAFB' }, { marginBottom: 0 }]}>{title}</Text>
+          <TouchableOpacity onPress={() => setViewAllSection(key)}>
+            <Text style={s.viewAllText}>View All</Text>
+          </TouchableOpacity>
+        </View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.hScrollContent} decelerationRate="fast" snapToInterval={264}>
+          {combined.slice(0, 8).map((ev) => renderEventCard(ev, 250))}
+        </ScrollView>
+      </View>
+    );
+  };
 
   return (
     <View style={[s.container, isDark && { backgroundColor: '#111827' }]}>
+      {/* Sticky header — always visible */}
       <View style={[s.header, isDark && { backgroundColor: '#111827', borderBottomColor: '#374151' }]}>
         <Text style={[s.headerTitle, isDark && { color: '#F9FAFB' }]}>Groups</Text>
-        {tab !== 'challenges' && (
-          <TouchableOpacity style={s.headerSearchBtn} onPress={() => setSearchVisible(true)} activeOpacity={0.7}>
-            <Ionicons name="search-outline" size={22} color={isDark ? '#D1D5DB' : '#374151'} />
-          </TouchableOpacity>
-        )}
+        <TouchableOpacity style={s.headerSearchBtn} onPress={() => setSearchVisible(true)} activeOpacity={0.7}>
+          <Ionicons name="search-outline" size={22} color={isDark ? '#D1D5DB' : '#374151'} />
+        </TouchableOpacity>
       </View>
 
-      <View style={[s.tabBar, isDark && { backgroundColor: '#1F2937' }]}>
+      {/* Tab bar fades + slides on scroll (native-driven — smooth, no
+          measurement/height animation involved, see comment above). */}
+      <Animated.View
+        style={[
+          s.tabBar,
+          isDark && { backgroundColor: '#1F2937' },
+          { opacity: tabBarAnim, transform: [{ translateY: tabBarAnim.interpolate({ inputRange: [0, 1], outputRange: [-6, 0] }) }] },
+        ]}
+      >
         {(['challenges', 'clubs', 'events'] as Tab[]).map((t) => (
           <TouchableOpacity
             key={t}
@@ -347,19 +507,27 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
             </Text>
           </TouchableOpacity>
         ))}
-      </View>
+      </Animated.View>
 
-      <ScrollView contentContainerStyle={s.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={s.scrollContent} showsVerticalScrollIndicator={false} onScroll={handleScroll} scrollEventThrottle={16}>
         {tab === 'challenges' && (
           <>
-            <View style={s.createRow}>
-              <TouchableOpacity style={s.createBtn} onPress={() => requireAuth(() => setCreateChallengeVisible(true))}>
-                <Ionicons name="add" size={16} color="#2563EB" />
-                <Text style={s.createBtnText}>Create a Challenge</Text>
-              </TouchableOpacity>
-            </View>
+            {featuredChallenges.map(renderFeaturedChallenge)}
 
-            {heroChallenge && renderHeroChallenge(heroChallenge)}
+            <TouchableOpacity
+              style={[s.peerCta, isDark && { backgroundColor: '#1F2937' }]}
+              onPress={() => requireAuth(() => { setChallengeVisibilityDefault('peers'); setCreateChallengeVisible(true); })}
+              activeOpacity={0.9}
+            >
+              <View style={s.peerCtaIcon}>
+                <Ionicons name="people-circle-outline" size={26} color={PRIMARY_BLUE} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[s.peerCtaTitle, isDark && { color: '#F9FAFB' }]}>Challenge Your Crew</Text>
+                <Text style={[s.peerCtaSubtitle, isDark && { color: '#9CA3AF' }]}>Create a private challenge just for your peers or club — not shown to the wider community.</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={isDark ? '#6B7280' : '#9CA3AF'} />
+            </TouchableOpacity>
 
             {gridChallenges.length > 0 && (
               <View style={s.gridWrap}>
@@ -371,26 +539,58 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
 
         {tab === 'clubs' && (
           <>
-            <CoverBanner icon="people" title="Find Your Crew" subtitle="Trail running, hiking, and climbing communities across Singapore" color="#10B981" />
+            {/* Plain, full-width — just an ask + a button, no illustrated banner */}
+            <TouchableOpacity
+              style={[s.plainCreateRow, isDark && { backgroundColor: '#1F2937' }]}
+              onPress={() => requireAuth(() => setCreateClubVisible(true))}
+              activeOpacity={0.85}
+            >
+              <Text style={[s.plainCreateText, isDark && { color: '#F9FAFB' }]}>Create your own Vertical Club</Text>
+              <View style={s.plainCreateBtn}>
+                <Text style={s.plainCreateBtnText}>Create</Text>
+              </View>
+            </TouchableOpacity>
 
-            <View style={s.createRow}>
-              <TouchableOpacity style={s.createBtn} onPress={() => requireAuth(() => setCreateClubVisible(true))}>
-                <Ionicons name="add" size={16} color="#2563EB" />
-                <Text style={s.createBtnText}>Add a Club</Text>
+            {announcementsClub && (
+              <TouchableOpacity onPress={() => setSelectedClub(announcementsClub)} activeOpacity={0.9} style={{ marginHorizontal: -16, marginBottom: 20 }}>
+                <SceneryBanner variant="skyline" height={130} borderRadius={0} photoUri={ANNOUNCEMENTS_PHOTO}>
+                  <View style={s.ctaBannerOverlay}>
+                    <View style={s.announceHeaderRow}>
+                      <Image source={require('../../assets/icon.png')} style={s.announceAppIcon} />
+                      <View style={s.announceBadgeRow}>
+                        <Ionicons name="megaphone" size={13} color="#FFFFFF" />
+                        <Text style={s.announceBadgeText}>OFFICIAL</Text>
+                      </View>
+                    </View>
+                    <Text style={s.ctaBannerTitle}>{announcementsClub.name}</Text>
+                    <Text style={s.ctaBannerSubtitle}>Official updates from the Vertical team</Text>
+                  </View>
+                  <View style={s.announceJoinBtn}>
+                    <Text style={s.announceJoinBtnText}>Join</Text>
+                  </View>
+                </SceneryBanner>
               </TouchableOpacity>
-            </View>
+            )}
 
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.categoryRow}>
-              {CLUB_CATEGORIES.map((cat) => (
-                <TouchableOpacity
-                  key={cat}
-                  style={[s.categoryChip, clubCategory === cat && s.categoryChipActive, isDark && { backgroundColor: '#1F2937' }, clubCategory === cat && isDark && { backgroundColor: '#2563EB' }]}
-                  onPress={() => setClubCategory(cat)}
-                >
-                  <Text style={[s.categoryChipText, clubCategory === cat && s.categoryChipTextActive, isDark && { color: clubCategory === cat ? '#FFFFFF' : '#D1D5DB' }]}>{cat}</Text>
+            <Text style={[s.groupSectionTitle, isDark && { color: '#F9FAFB' }]}>Clubs</Text>
+            <View style={s.gridWrap}>
+              {sportClubs.filter((c) => matchesSearch(c.name)).map((club) => (
+                <TouchableOpacity key={club.club_id} style={[s.gridCard, isDark && { backgroundColor: '#1F2937' }]} onPress={() => setSelectedClub(club)} activeOpacity={0.85}>
+                  {CLUB_PHOTO[club.category] ? (
+                    <Image source={{ uri: CLUB_PHOTO[club.category] }} style={s.clubIconCircle} />
+                  ) : (
+                    <View style={[s.clubIconCircle, { backgroundColor: CLUB_COLOR[club.category] + '1F', alignItems: 'center', justifyContent: 'center' }]}>
+                      <ClubIcon category={club.category} color={CLUB_COLOR[club.category]} size={26} />
+                    </View>
+                  )}
+                  <Text style={[s.gridTitle, isDark && { color: '#F9FAFB' }]}>{club.name}</Text>
+                  <Text style={[s.gridDesc, isDark && { color: '#9CA3AF' }]} numberOfLines={3}>{club.description}</Text>
+                  <View style={s.gridJoinBtn}>
+                    <Text style={s.joinBtnText}>View Club</Text>
+                  </View>
                 </TouchableOpacity>
               ))}
-            </ScrollView>
+            </View>
 
             {visibleUserClubs.length > 0 && (
               <View style={s.groupSection}>
@@ -414,107 +614,123 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
                 ))}
               </View>
             )}
-
-            <View style={s.groupSection}>
-              <Text style={[s.groupSectionTitle, isDark && { color: '#F9FAFB' }]}>Curated</Text>
-              {visibleClubs.map((club) => (
-                <TouchableOpacity
-                  key={club.name + club.url}
-                  style={[s.linkCard, isDark && { backgroundColor: '#1F2937' }]}
-                  onPress={() => Linking.openURL(club.url)}
-                  activeOpacity={0.7}
-                >
-                  <View style={{ flex: 1 }}>
-                    <Text style={[s.linkCardTitle, isDark && { color: '#F9FAFB' }]}>{club.name}</Text>
-                    <Text style={[s.linkCardDesc, isDark && { color: '#9CA3AF' }]}>{club.description}</Text>
-                  </View>
-                  <Ionicons name="open-outline" size={18} color="#9CA3AF" />
-                </TouchableOpacity>
-              ))}
-            </View>
           </>
         )}
 
         {tab === 'events' && (
           <>
-            <CoverBanner icon="trophy" title="Race & Ascend" subtitle="Vertical marathons and stair-climb events, local and worldwide" color="#F59E0B" />
-
             <View style={s.createRow}>
               <TouchableOpacity style={s.createBtn} onPress={() => requireAuth(() => setCreateEventVisible(true))}>
-                <Ionicons name="add" size={16} color="#2563EB" />
+                <Ionicons name="add" size={16} color={PRIMARY_BLUE} />
                 <Text style={s.createBtnText}>Add an Event</Text>
               </TouchableOpacity>
             </View>
 
-            {visibleUserEvents.length > 0 && (
-              <View style={s.groupSection}>
-                <Text style={[s.groupSectionTitle, isDark && { color: '#F9FAFB' }]}>Community Submissions</Text>
-                {visibleUserEvents.map((ev) => (
-                  <TouchableOpacity
-                    key={ev.event_id}
-                    style={[s.linkCard, isDark && { backgroundColor: '#1F2937' }]}
-                    onPress={() => ev.url && Linking.openURL(ev.url)}
-                    activeOpacity={0.7}
-                  >
-                    <View style={{ flex: 1 }}>
-                      <Text style={[s.linkCardTitle, isDark && { color: '#F9FAFB' }]}>{ev.name}</Text>
-                      <Text style={s.linkCardLocation}>{ev.location}{ev.event_date ? ` · ${new Date(ev.event_date).toLocaleDateString()}` : ''}</Text>
-                      <Text style={[s.linkCardDesc, isDark && { color: '#9CA3AF' }]}>{ev.blurb}</Text>
-                      <Text style={s.linkCardCreator}>Added by {creatorNames[ev.creator_id] ?? 'a climber'}</Text>
-                    </View>
-                    <TouchableOpacity onPress={() => handleReportEvent(ev.event_id)} hitSlop={8}>
-                      <Ionicons name="ellipsis-horizontal" size={16} color="#9CA3AF" />
-                    </TouchableOpacity>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            )}
+            {renderHorizontalSection('Local Club Training', trainingItems, userTrainingLike, 'training')}
+            {renderHorizontalSection('Races & Marathons', raceItems, userRaceLike, 'races')}
 
-            {(['Local', 'Worldwide'] as const).map((scope) => (
-              <View key={scope} style={s.groupSection}>
-                <Text style={[s.groupSectionTitle, isDark && { color: '#F9FAFB' }]}>{scope === 'Local' ? 'Local (Singapore)' : 'Worldwide'}</Text>
-                {visibleEvents.filter((e) => e.scope === scope).map((ev) => (
-                  <TouchableOpacity
-                    key={ev.name + ev.url}
-                    style={[s.linkCard, isDark && { backgroundColor: '#1F2937' }]}
-                    onPress={() => Linking.openURL(ev.url)}
-                    activeOpacity={0.7}
-                  >
-                    <View style={{ flex: 1 }}>
-                      <Text style={[s.linkCardTitle, isDark && { color: '#F9FAFB' }]}>{ev.name}</Text>
-                      <Text style={s.linkCardLocation}>{ev.location}</Text>
-                      <Text style={[s.linkCardDesc, isDark && { color: '#9CA3AF' }]}>{ev.blurb}</Text>
-                    </View>
-                    <Ionicons name="open-outline" size={18} color="#9CA3AF" />
-                  </TouchableOpacity>
-                ))}
-              </View>
-            ))}
             <Text style={[s.eventsFootnote, isDark && { color: '#6B7280' }]}>
-              Dates shift year to year — tap through to the organizer's page for the current schedule.
+              Curated from club/race-organizer sites — dates shift, so tap through for the current schedule.
             </Text>
           </>
         )}
       </ScrollView>
 
-      <Modal visible={searchVisible} animationType="slide" onRequestClose={() => setSearchVisible(false)}>
+      {/* --- View All (Local Training / Races) --- */}
+      <Modal visible={!!viewAllSection} animationType="slide" onRequestClose={() => setViewAllSection(null)}>
         <View style={[s.searchModalContainer, isDark && { backgroundColor: '#111827' }]}>
-          <View style={[s.searchModalHeader, isDark && { borderBottomColor: '#374151' }]}>
-            <View style={[s.searchBox, { flex: 1, marginHorizontal: 0, marginTop: 0 }, isDark && { backgroundColor: '#1F2937' }]}>
-              <Ionicons name="search" size={16} color="#9CA3AF" />
-              <TextInput
-                style={[s.searchInput, isDark && { color: '#F9FAFB' }]}
-                placeholder={`Search ${tab}...`}
-                placeholderTextColor="#9CA3AF"
-                value={searchQuery}
-                onChangeText={setSearchQuery}
-                autoFocus
-              />
-            </View>
-            <TouchableOpacity onPress={() => { setSearchVisible(false); setSearchQuery(''); }} style={{ marginLeft: 12 }}>
-              <Text style={s.searchCancelText}>Done</Text>
+          <View style={[s.searchModalHeader, isDark && { borderBottomColor: '#374151', backgroundColor: '#111827' }]}>
+            <TouchableOpacity onPress={() => setViewAllSection(null)} hitSlop={10}>
+              <Ionicons name="arrow-back" size={24} color={isDark ? '#F9FAFB' : '#111827'} />
             </TouchableOpacity>
+            <Text style={[s.searchModalTitle, isDark && { color: '#F9FAFB' }]}>{viewAllSection === 'training' ? 'Local Club Training' : 'Races & Marathons'}</Text>
+            <View style={{ width: 24 }} />
           </View>
+          <ScrollView contentContainerStyle={{ padding: 16 }}>
+            {viewAllSection === 'training' && [...userTrainingLike, ...trainingItems].map((ev) => renderEventCard(ev))}
+            {viewAllSection === 'races' && [...userRaceLike, ...raceItems].map((ev) => renderEventCard(ev))}
+          </ScrollView>
+        </View>
+      </Modal>
+
+      {/* --- Search panel: back arrow + title, Friends/Clubs sub-nav --- */}
+      <Modal visible={searchVisible} animationType="slide" onRequestClose={() => { setSearchVisible(false); setSearchQuery(''); }}>
+        <View style={[s.searchModalContainer, isDark && { backgroundColor: '#111827' }]}>
+          <View style={[s.searchModalHeader, isDark && { borderBottomColor: '#374151', backgroundColor: '#111827' }]}>
+            <TouchableOpacity onPress={() => { setSearchVisible(false); setSearchQuery(''); }} hitSlop={10}>
+              <Ionicons name="arrow-back" size={24} color={isDark ? '#F9FAFB' : '#111827'} />
+            </TouchableOpacity>
+            <Text style={[s.searchModalTitle, isDark && { color: '#F9FAFB' }]}>Search</Text>
+            <View style={{ width: 24 }} />
+          </View>
+
+          <View style={[s.searchSubNav, isDark && { backgroundColor: '#1F2937' }]}>
+            {(['friends', 'clubs'] as const).map((t) => (
+              <TouchableOpacity
+                key={t}
+                style={[s.searchSubNavBtn, searchTab === t && s.tabBtnActive, searchTab === t && isDark && { backgroundColor: '#374151' }]}
+                onPress={() => setSearchTab(t)}
+              >
+                <Text style={[s.tabBtnText, searchTab === t && s.tabBtnTextActive, isDark && { color: searchTab === t ? '#F9FAFB' : '#9CA3AF' }]}>
+                  {t === 'friends' ? 'Friends' : 'Clubs'}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <View style={[s.searchBox, isDark && { backgroundColor: '#1F2937' }]}>
+            <Ionicons name="search" size={16} color="#9CA3AF" />
+            <TextInput
+              style={[s.searchInput, isDark && { color: '#F9FAFB' }]}
+              placeholder={searchTab === 'friends' ? 'Search climbers by name...' : 'Search clubs...'}
+              placeholderTextColor="#9CA3AF"
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              autoFocus
+            />
+          </View>
+
+          <ScrollView contentContainerStyle={{ padding: 16 }} keyboardShouldPersistTaps="handled">
+            {searchTab === 'friends' ? (
+              searchQuery.trim().length === 0 ? (
+                <Text style={[s.searchEmptyText, isDark && { color: '#6B7280' }]}>Search for a climber by name.</Text>
+              ) : friendResults.length === 0 ? (
+                <Text style={[s.searchEmptyText, isDark && { color: '#6B7280' }]}>No climbers found.</Text>
+              ) : (
+                friendResults.map((p) => (
+                  <TouchableOpacity key={p.user_id} style={[s.searchResultRow, isDark && { backgroundColor: '#1F2937' }]} onPress={() => setViewingProfileId(p.user_id)} activeOpacity={0.7}>
+                    <View style={[s.searchAvatarStub, isDark && { backgroundColor: '#374151' }]}>
+                      <Ionicons name="person" size={18} color={isDark ? '#9CA3AF' : '#6B7280'} />
+                    </View>
+                    <Text style={[s.searchResultName, isDark && { color: '#F9FAFB' }]}>{p.display_name}</Text>
+                  </TouchableOpacity>
+                ))
+              )
+            ) : (
+              [...officialClubs, ...userClubs].filter((c) => matchesSearch(c.name)).length === 0 ? (
+                <Text style={[s.searchEmptyText, isDark && { color: '#6B7280' }]}>No clubs found.</Text>
+              ) : (
+                <>
+                  {officialClubs.filter((c) => matchesSearch(c.name)).map((club) => (
+                    <TouchableOpacity key={club.club_id} style={[s.searchResultRow, isDark && { backgroundColor: '#1F2937' }]} onPress={() => { setSearchVisible(false); setSelectedClub(club); }} activeOpacity={0.7}>
+                      <View style={[s.searchAvatarStub, { backgroundColor: CLUB_COLOR[club.category] + '1F' }]}>
+                        <ClubIcon category={club.category} color={CLUB_COLOR[club.category]} size={18} />
+                      </View>
+                      <Text style={[s.searchResultName, isDark && { color: '#F9FAFB' }]}>{club.name}</Text>
+                    </TouchableOpacity>
+                  ))}
+                  {userClubs.filter((c) => matchesSearch(c.name)).map((club) => (
+                    <TouchableOpacity key={club.club_id} style={[s.searchResultRow, isDark && { backgroundColor: '#1F2937' }]} onPress={() => club.url && Linking.openURL(club.url)} activeOpacity={0.7}>
+                      <View style={[s.searchAvatarStub, isDark && { backgroundColor: '#374151' }]}>
+                        <Ionicons name="people" size={18} color={isDark ? '#9CA3AF' : '#6B7280'} />
+                      </View>
+                      <Text style={[s.searchResultName, isDark && { color: '#F9FAFB' }]}>{club.name}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </>
+              )
+            )}
+          </ScrollView>
         </View>
       </Modal>
 
@@ -532,7 +748,12 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
         progressFloors={selectedChallenge ? progressFor(selectedChallenge) : 0}
         onJoin={() => selectedChallenge && handleJoin(selectedChallenge.challenge_id)}
         isDark={isDark}
+        displayTitleOverride={selectedChallenge ? displayTitle(selectedChallenge) : undefined}
+        displayDescriptionOverride={selectedChallenge ? displayDescription(selectedChallenge) : undefined}
       />
+
+      <ClubDetailModal club={selectedClub} visible={!!selectedClub} onClose={() => setSelectedClub(null)} isDark={isDark} />
+      <PublicProfileModal userId={viewingProfileId} visible={!!viewingProfileId} onClose={() => setViewingProfileId(null)} />
 
       <CreateClubModal
         visible={createClubVisible}
@@ -552,6 +773,7 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
         visible={createChallengeVisible}
         onClose={() => setCreateChallengeVisible(false)}
         isDark={isDark}
+        defaultVisibility={challengeVisibilityDefault}
         onCreated={(ch) => { setWeeklyChallenges((prev) => ch.period === 'weekly' ? [ch, ...prev] : prev); setMonthlyChallenges((prev) => ch.period === 'monthly' ? [ch, ...prev] : prev); }}
         userId={user?.id}
       />
@@ -587,9 +809,9 @@ function CreateClubModal({ visible, onClose, isDark, onCreated, userId }: {
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <View style={fm.overlay}>
+      <KeyboardAvoidingView style={fm.overlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={onClose} />
-        <View style={[fm.sheet, isDark && { backgroundColor: '#1F2937' }]}>
+        <ScrollView style={[fm.sheet, isDark && { backgroundColor: '#1F2937' }]} keyboardShouldPersistTaps="handled">
           <Text style={[fm.title, isDark && { color: '#F9FAFB' }]}>Add a Club</Text>
           <TextInput style={[fm.input, isDark && fm.inputDark]} placeholder="Club name" placeholderTextColor="#9CA3AF" value={name} onChangeText={setName} maxLength={60} />
           <View style={fm.pillRow}>
@@ -604,8 +826,8 @@ function CreateClubModal({ visible, onClose, isDark, onCreated, userId }: {
           <TouchableOpacity style={[fm.submitBtn, (!name.trim() || !description.trim() || saving) && { opacity: 0.5 }]} onPress={handleCreate} disabled={!name.trim() || !description.trim() || saving}>
             <Text style={fm.submitBtnText}>{saving ? 'Adding...' : 'Add Club'}</Text>
           </TouchableOpacity>
-        </View>
-      </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -642,12 +864,13 @@ function CreateEventModal({ visible, onClose, isDark, onCreated, userId }: {
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <View style={fm.overlay}>
+      <KeyboardAvoidingView style={fm.overlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={onClose} />
-        <View style={[fm.sheet, isDark && { backgroundColor: '#1F2937' }]}>
+        <ScrollView style={[fm.sheet, isDark && { backgroundColor: '#1F2937' }]} keyboardShouldPersistTaps="handled">
           <Text style={[fm.title, isDark && { color: '#F9FAFB' }]}>Add an Event</Text>
+          <Text style={fm.hint}>Use a real, findable location — vague or joke locations get reported and hidden.</Text>
           <TextInput style={[fm.input, isDark && fm.inputDark]} placeholder="Event name" placeholderTextColor="#9CA3AF" value={name} onChangeText={setName} maxLength={60} />
-          <TextInput style={[fm.input, isDark && fm.inputDark]} placeholder="Location" placeholderTextColor="#9CA3AF" value={location} onChangeText={setLocation} maxLength={80} />
+          <TextInput style={[fm.input, isDark && fm.inputDark]} placeholder="Location (address or landmark)" placeholderTextColor="#9CA3AF" value={location} onChangeText={setLocation} maxLength={80} />
           <View style={fm.pillRow}>
             {(['Local', 'Worldwide'] as const).map((sc) => (
               <TouchableOpacity key={sc} style={[fm.pill, scope === sc && fm.pillActive]} onPress={() => setScope(sc)}>
@@ -661,20 +884,23 @@ function CreateEventModal({ visible, onClose, isDark, onCreated, userId }: {
           <TouchableOpacity style={[fm.submitBtn, (!name.trim() || !location.trim() || !blurb.trim() || saving) && { opacity: 0.5 }]} onPress={handleCreate} disabled={!name.trim() || !location.trim() || !blurb.trim() || saving}>
             <Text style={fm.submitBtnText}>{saving ? 'Adding...' : 'Add Event'}</Text>
           </TouchableOpacity>
-        </View>
-      </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
 
-function CreateChallengeModal({ visible, onClose, isDark, onCreated, userId }: {
-  visible: boolean; onClose: () => void; isDark: boolean; onCreated: (c: Challenge) => void; userId?: string;
+function CreateChallengeModal({ visible, onClose, isDark, onCreated, userId, defaultVisibility }: {
+  visible: boolean; onClose: () => void; isDark: boolean; onCreated: (c: Challenge) => void; userId?: string; defaultVisibility: 'public' | 'peers';
 }) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [period, setPeriod] = useState<'weekly' | 'monthly'>('weekly');
   const [targetFloors, setTargetFloors] = useState('100');
+  const [visibility, setVisibility] = useState<'public' | 'peers'>(defaultVisibility);
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => { if (visible) setVisibility(defaultVisibility); }, [visible, defaultVisibility]);
 
   const reset = () => { setTitle(''); setDescription(''); setPeriod('weekly'); setTargetFloors('100'); };
 
@@ -689,7 +915,7 @@ function CreateChallengeModal({ visible, onClose, isDark, onCreated, userId }: {
     const { data, error } = await supabase.from('challenges').insert({
       title: title.trim(), description: description.trim(), difficulty: 'medium', period,
       target_floors: target, reward_icon: 'trophy-outline', reward_label: 'Custom Challenge',
-      organizer: 'A fellow climber', creator_id: userId, is_active: true,
+      organizer: 'A fellow climber', creator_id: userId, is_active: true, visibility,
     }).select().single();
     setSaving(false);
     if (error) { Alert.alert('Error', error.message); return; }
@@ -700,10 +926,20 @@ function CreateChallengeModal({ visible, onClose, isDark, onCreated, userId }: {
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <View style={fm.overlay}>
+      <KeyboardAvoidingView style={fm.overlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={onClose} />
-        <View style={[fm.sheet, isDark && { backgroundColor: '#1F2937' }]}>
-          <Text style={[fm.title, isDark && { color: '#F9FAFB' }]}>Create a Challenge</Text>
+        <ScrollView style={[fm.sheet, isDark && { backgroundColor: '#1F2937' }]} keyboardShouldPersistTaps="handled">
+          <Text style={[fm.title, isDark && { color: '#F9FAFB' }]}>{visibility === 'peers' ? 'Challenge Your Crew' : 'Create a Challenge'}</Text>
+          <View style={fm.pillRow}>
+            {(['public', 'peers'] as const).map((v) => (
+              <TouchableOpacity key={v} style={[fm.pill, visibility === v && fm.pillActive]} onPress={() => setVisibility(v)}>
+                <Text style={[fm.pillText, visibility === v && fm.pillTextActive]}>{v === 'public' ? 'Public (Community)' : 'Peers Only'}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          {visibility === 'peers' && (
+            <Text style={fm.hint}>Only you and people you follow (or who follow you) will see this challenge.</Text>
+          )}
           <TextInput style={[fm.input, isDark && fm.inputDark]} placeholder="Challenge title" placeholderTextColor="#9CA3AF" value={title} onChangeText={setTitle} maxLength={60} />
           <TextInput style={[fm.input, fm.textArea, isDark && fm.inputDark]} placeholder="What does it take to complete this?" placeholderTextColor="#9CA3AF" value={description} onChangeText={setDescription} multiline maxLength={200} />
           <View style={fm.pillRow}>
@@ -718,26 +954,26 @@ function CreateChallengeModal({ visible, onClose, isDark, onCreated, userId }: {
           <TouchableOpacity style={[fm.submitBtn, (!title.trim() || !description.trim() || saving) && { opacity: 0.5 }]} onPress={handleCreate} disabled={!title.trim() || !description.trim() || saving}>
             <Text style={fm.submitBtnText}>{saving ? 'Creating...' : 'Create Challenge'}</Text>
           </TouchableOpacity>
-        </View>
-      </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
 
 const fm = StyleSheet.create({
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  sheet: { backgroundColor: '#FFFFFF', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 32 },
+  sheet: { maxHeight: '85%', backgroundColor: '#FFFFFF', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 32 },
   title: { fontSize: 18, fontWeight: '800', color: '#111827', marginBottom: 14 },
   input: { backgroundColor: '#F3F4F6', borderRadius: 12, padding: 14, fontSize: 14, color: '#111827', marginBottom: 10 },
   inputDark: { backgroundColor: '#111827', color: '#F9FAFB' },
   textArea: { minHeight: 70, textAlignVertical: 'top' },
   pillRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 },
   pill: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 10, backgroundColor: '#F3F4F6' },
-  pillActive: { backgroundColor: '#2563EB' },
+  pillActive: { backgroundColor: PRIMARY_BLUE },
   pillText: { fontSize: 12, fontWeight: '700', color: '#6B7280' },
   pillTextActive: { color: '#FFFFFF' },
   hint: { fontSize: 11.5, color: '#9CA3AF', lineHeight: 16, marginBottom: 14 },
-  submitBtn: { backgroundColor: '#2563EB', borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
+  submitBtn: { backgroundColor: PRIMARY_BLUE, borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginBottom: 20 },
   submitBtnText: { color: '#FFFFFF', fontWeight: '700', fontSize: 14.5 },
 });
 
@@ -763,7 +999,8 @@ const s = StyleSheet.create({
     borderRadius: 12,
     padding: 3,
     marginHorizontal: 16,
-    marginTop: 12,
+    marginTop: 10,
+    marginBottom: 10,
   },
   tabBtn: { flex: 1, paddingVertical: 9, alignItems: 'center', borderRadius: 9 },
   tabBtnActive: { backgroundColor: '#FFFFFF', elevation: 1 },
@@ -779,13 +1016,14 @@ const s = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
     marginHorizontal: 16,
-    marginTop: 12,
+    marginTop: 4,
   },
   searchInput: { flex: 1, fontSize: 14, color: '#111827' },
   searchModalContainer: { flex: 1, backgroundColor: '#F9FAFB' },
   searchModalHeader: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     paddingTop: 56,
     paddingBottom: 14,
     paddingHorizontal: 16,
@@ -793,22 +1031,32 @@ const s = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: '#E5E7EB',
   },
-  searchCancelText: { fontSize: 14, fontWeight: '600', color: '#2563EB' },
+  searchModalTitle: { fontSize: 17, fontWeight: '800', color: '#111827' },
+  searchSubNav: {
+    flexDirection: 'row',
+    backgroundColor: '#F3F4F6',
+    borderRadius: 12,
+    padding: 3,
+    marginHorizontal: 16,
+    marginTop: 14,
+  },
+  searchSubNavBtn: { flex: 1, paddingVertical: 9, alignItems: 'center', borderRadius: 9 },
+  searchEmptyText: { fontSize: 13, color: '#9CA3AF', textAlign: 'center', marginTop: 30 },
+  searchResultRow: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#FFFFFF', borderRadius: 12, padding: 12, marginBottom: 8 },
+  searchAvatarStub: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#F3F4F6', alignItems: 'center', justifyContent: 'center' },
+  searchResultName: { fontSize: 14, fontWeight: '600', color: '#111827' },
 
   scrollContent: { padding: 16, paddingBottom: 110 },
 
   createRow: { alignItems: 'flex-end', marginBottom: 12 },
   createBtn: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  createBtnText: { fontSize: 13, fontWeight: '700', color: '#2563EB' },
-
-  categoryRow: { gap: 8, paddingBottom: 4, marginBottom: 12 },
-  categoryChip: { backgroundColor: '#FFFFFF', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 8 },
-  categoryChipActive: { backgroundColor: '#2563EB' },
-  categoryChipText: { fontSize: 12.5, fontWeight: '700', color: '#6B7280' },
-  categoryChipTextActive: { color: '#FFFFFF' },
+  createBtnText: { fontSize: 13, fontWeight: '700', color: PRIMARY_BLUE },
 
   groupSection: { marginBottom: 20 },
+  sectionHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
   groupSectionTitle: { fontSize: 15, fontWeight: '700', color: '#111827', marginBottom: 10 },
+  viewAllText: { fontSize: 12.5, fontWeight: '700', color: PRIMARY_BLUE },
+  hScrollContent: { gap: 12, paddingRight: 4 },
 
   linkCard: {
     flexDirection: 'row',
@@ -825,13 +1073,12 @@ const s = StyleSheet.create({
     shadowRadius: 6,
   },
   linkCardTitle: { fontSize: 14, fontWeight: '700', color: '#111827' },
-  linkCardLocation: { fontSize: 11.5, fontWeight: '600', color: '#2563EB', marginTop: 2 },
   linkCardDesc: { fontSize: 12.5, color: '#6B7280', marginTop: 3, lineHeight: 17 },
   linkCardCreator: { fontSize: 11, color: '#9CA3AF', marginTop: 4, fontStyle: 'italic' },
   eventsFootnote: { fontSize: 11.5, color: '#9CA3AF', textAlign: 'center', marginTop: 4, lineHeight: 16 },
 
-  communityPill: { alignSelf: 'flex-start', backgroundColor: '#EFF6FF', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, marginBottom: 6 },
-  communityPillText: { fontSize: 10, fontWeight: '800', color: '#2563EB' },
+  communityPill: { alignSelf: 'center', backgroundColor: '#EFF6FF', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, marginTop: 8, marginBottom: 2 },
+  communityPillText: { fontSize: 10, fontWeight: '800', color: PRIMARY_BLUE },
   bigBadgeCheck: {
     position: 'absolute',
     bottom: -2,
@@ -844,14 +1091,14 @@ const s = StyleSheet.create({
   challengeProgressText: { fontSize: 11, fontWeight: '600', color: '#6B7280', marginTop: 5 },
   joinBtnText: { color: '#FFFFFF', fontWeight: '700', fontSize: 13.5 },
 
-  // 2-column challenge grid
-  gridWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
+  // 2-column challenge/club grid
+  gridWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 20 },
   gridCard: {
     width: '48%',
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     padding: 14,
-    alignItems: 'center',
+    alignItems: 'stretch',
     marginBottom: 4,
     elevation: 1,
     shadowColor: '#000',
@@ -859,35 +1106,65 @@ const s = StyleSheet.create({
     shadowOpacity: 0.06,
     shadowRadius: 6,
   },
-  gridBadge: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 8,
-  },
-  gridTitle: { fontSize: 13, fontWeight: '700', color: '#111827', textAlign: 'center', minHeight: 34 },
-  gridDateText: { fontSize: 10.5, color: '#9CA3AF', fontWeight: '600', marginTop: 3, marginBottom: 4 },
-  gridJoinBtn: { borderRadius: 8, paddingVertical: 8, paddingHorizontal: 18, marginTop: 6 },
+  gridTitle: { fontSize: 13, fontWeight: '700', color: '#111827', textAlign: 'center', marginTop: 4 },
+  gridDesc: { fontSize: 11, color: '#6B7280', textAlign: 'center', marginTop: 4, lineHeight: 15, minHeight: 30 },
+  gridDateText: { fontSize: 10.5, color: '#9CA3AF', fontWeight: '600', marginTop: 4, marginBottom: 4, textAlign: 'center' },
+  gridJoinBtn: { backgroundColor: PRIMARY_BLUE, borderRadius: 10, paddingVertical: 10, alignItems: 'center', marginTop: 8, width: '100%' },
+  clubIconCircle: { width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center', alignSelf: 'center', marginBottom: 4 },
 
-  // Full-width featured/hero challenge
-  heroCard: { borderRadius: 20, padding: 20, marginBottom: 16 },
-  heroEyebrow: { fontSize: 11, fontWeight: '800', color: 'rgba(255,255,255,0.85)', letterSpacing: 0.6, marginBottom: 12 },
-  heroTopRow: { flexDirection: 'row', alignItems: 'center', gap: 14, marginBottom: 12 },
-  heroBadge: {
-    width: 68,
-    height: 68,
-    borderRadius: 34,
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    alignItems: 'center',
-    justifyContent: 'center',
+  // Full-width featured/special challenge card — image on top, details below
+  // Full-bleed — negative margin cancels scrollContent's 16px padding so
+  // this spans the true device width, not just the content column.
+  featCard: { marginHorizontal: -16, borderRadius: 0, overflow: 'hidden', marginBottom: 16, backgroundColor: '#FFFFFF', elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 8 },
+  featEyebrowWrap: { position: 'absolute', top: 14, left: 16 },
+  featEyebrow: { fontSize: 11, fontWeight: '800', color: '#FFFFFF', letterSpacing: 0.6, textShadowColor: 'rgba(0,0,0,0.4)', textShadowRadius: 4 },
+  featMedalWrap: { position: 'absolute', bottom: -30, left: 16 },
+  featBody: { padding: 20, paddingTop: 38 },
+  featTitle: { fontSize: 19, fontWeight: '800', color: '#111827', marginBottom: 6 },
+  featDesc: { fontSize: 13.5, color: '#6B7280', lineHeight: 19, marginBottom: 14 },
+  featPillRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 },
+  featPill: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#F3F4F6', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5 },
+  featPillText: { fontSize: 10.5, fontWeight: '800', color: '#6B7280', letterSpacing: 0.3 },
+  featJoinBtn: { backgroundColor: PRIMARY_BLUE, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
+
+  // Peer/club challenge CTA — a plain card like everything else, not a
+  // differently-colored banner; only the icon carries an accent color.
+  peerCta: { marginHorizontal: -16, borderRadius: 0, flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#FFFFFF', padding: 20, marginBottom: 20, elevation: 1, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 6 },
+  peerCtaIcon: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#EFF6FF', alignItems: 'center', justifyContent: 'center' },
+  peerCtaTitle: { fontSize: 15, fontWeight: '800', color: '#111827' },
+  peerCtaSubtitle: { fontSize: 12, color: '#6B7280', marginTop: 2, lineHeight: 16 },
+
+  // Plain "Create your own Vertical Club" row — full device width, no illustration
+  plainCreateRow: {
+    marginHorizontal: -16, borderRadius: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    backgroundColor: '#FFFFFF', padding: 20, marginBottom: 16,
+    elevation: 1, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 6,
   },
-  heroTitle: { fontSize: 19, fontWeight: '800', color: '#FFFFFF' },
-  heroDateText: { fontSize: 12.5, color: 'rgba(255,255,255,0.85)', fontWeight: '600', marginTop: 3 },
-  heroDesc: { fontSize: 13.5, color: 'rgba(255,255,255,0.9)', lineHeight: 19, marginBottom: 16 },
-  heroTrack: { height: 10, borderRadius: 5, backgroundColor: 'rgba(255,255,255,0.25)', overflow: 'hidden' },
-  heroFill: { height: '100%', borderRadius: 5, backgroundColor: '#FFFFFF' },
-  heroProgressText: { fontSize: 12.5, fontWeight: '700', color: '#FFFFFF', marginTop: 8 },
-  heroJoinBtn: { backgroundColor: '#FFFFFF', borderRadius: 12, paddingVertical: 13, alignItems: 'center' },
+  plainCreateText: { fontSize: 15, fontWeight: '700', color: '#111827', flex: 1, marginRight: 12 },
+  plainCreateBtn: { backgroundColor: PRIMARY_BLUE, borderRadius: 10, paddingHorizontal: 18, paddingVertical: 10 },
+  plainCreateBtnText: { color: '#FFFFFF', fontWeight: '700', fontSize: 13.5 },
+
+  // Clubs/Events CTA banner overlay text
+  ctaBannerOverlay: { position: 'absolute', left: 18, right: 18, bottom: 16 },
+  ctaBannerTitle: { fontSize: 20, fontWeight: '800', color: '#FFFFFF', textShadowColor: 'rgba(0,0,0,0.35)', textShadowRadius: 6 },
+  ctaBannerSubtitle: { fontSize: 12.5, color: 'rgba(255,255,255,0.9)', marginTop: 4, fontWeight: '500' },
+  announceHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
+  announceAppIcon: { width: 22, height: 22, borderRadius: 6 },
+  announceBadgeRow: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: 'rgba(0,0,0,0.25)', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
+  announceBadgeText: { fontSize: 10, fontWeight: '800', color: '#FFFFFF', letterSpacing: 0.5 },
+  announceJoinBtn: { position: 'absolute', right: 16, bottom: 16, backgroundColor: '#FFFFFF', borderRadius: 10, paddingHorizontal: 16, paddingVertical: 9 },
+  announceJoinBtnText: { color: PRIMARY_BLUE, fontWeight: '800', fontSize: 13 },
+
+  // Event cover cards
+  eventCard: { borderRadius: 18, overflow: 'hidden', marginBottom: 14, backgroundColor: '#FFFFFF', elevation: 1, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 6 },
+  eventDateBadge: { position: 'absolute', top: 12, right: 12, backgroundColor: 'rgba(255,255,255,0.92)', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5 },
+  eventDateBadgeText: { fontSize: 11.5, fontWeight: '800', color: '#111827' },
+  eventBody: { flexDirection: 'row', padding: 14, gap: 8 },
+  eventTitle: { fontSize: 15, fontWeight: '800', color: '#111827' },
+  eventLocationRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3 },
+  eventLocationText: { fontSize: 12, color: '#6B7280', fontWeight: '500' },
+  eventBlurb: { fontSize: 12.5, color: '#6B7280', marginTop: 6, lineHeight: 17 },
+  eventTagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 },
+  eventTag: { backgroundColor: '#F3F4F6', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 },
+  eventTagText: { fontSize: 10.5, fontWeight: '700', color: '#374151' },
 });

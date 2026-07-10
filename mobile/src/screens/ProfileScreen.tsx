@@ -11,6 +11,7 @@ import {
   Animated,
 } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../config/supabase';
 import storage from '../utils/storage';
@@ -18,10 +19,21 @@ import MascotAvatar from '../components/MascotAvatar';
 import { avatarUriFor } from '../utils/avatarUri';
 import BadgeDetailModal from '../components/BadgeDetailModal';
 import SettingsModal from '../components/SettingsModal';
+import StatCard from '../components/StatCard';
+import { StatCell, GridDivider } from '../components/StatGrid';
+import RadialProgress from '../components/RadialProgress';
+import TrendSparkline from '../components/TrendSparkline';
+import MedalBadge, { medalEmblemFor } from '../components/MedalBadge';
 import { computeXP, computeLevelProgress } from '../utils/leveling';
 import type { ClimbLog, UserBadge, Profile, BadgeDef } from '../types';
 import { BADGE_DEFS } from '../types';
 import AuthPrompt from '../components/AuthPrompt';
+
+// This screen commits to exactly one accent color, used purposefully (progress
+// fills, the trend line, active-state chrome, the level chip) instead of a
+// different tint per card. It's the app's existing primary blue, reused here
+// for consistency with the rest of the app rather than inventing a new hue.
+const ACCENT = '#2563EB';
 
 const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
@@ -94,6 +106,25 @@ function getTierColor(storeys: number): string {
   return '#7C3AED';
 }
 
+// The four "resets: monthly" HDB Elevation badges are deliberately meant to
+// read as tiers of one family (same medal emblem, via medalEmblemFor's
+// `generic` flag) rather than unique achievements — only the shade shifts,
+// lightest target to toughest, like Overwatch season-tier rings.
+const MONTHLY_BADGE_TIER_COLORS: Record<string, string> = {
+  century_sprint_challenge: '#93C5FD',
+  elevation_chaser_challenge: '#60A5FA',
+  iron_legs_challenge: '#3B82F6',
+  long_haul_challenge: '#1D4ED8',
+};
+
+/** Medal color for a challenge-category badge — special (legendary) badges get gold,
+ * monthly-resetting badges get their tier shade, everything else a plain blue. */
+function medalColorFor(def: BadgeDef): string {
+  if (def.special) return '#F59E0B';
+  if (def.resets === 'monthly') return MONTHLY_BADGE_TIER_COLORS[def.key] ?? '#3B82F6';
+  return '#2563EB';
+}
+
 /** Floors climbed per week for the last N weeks (oldest first, this week last). */
 function computeWeeklyBuckets(climbs: { climbedAt: string; floors: number }[], weeks: number): number[] {
   const buckets: number[] = new Array(weeks).fill(0);
@@ -104,6 +135,63 @@ function computeWeeklyBuckets(climbs: { climbedAt: string; floors: number }[], w
     if (weekIdx >= 0 && weekIdx < weeks) buckets[weeks - 1 - weekIdx] += c.floors;
   }
   return buckets;
+}
+
+/** Longest run of *consecutive* Mon–Sun weeks with at least one climb, anywhere
+ * in the history — unlike computeWeeklyStreak this isn't anchored to "now", so
+ * a streak from three months ago still counts as a personal record. */
+function computeLongestWeeklyStreak(isoDates: string[]): number {
+  if (isoDates.length === 0) return 0;
+  const weekKeys = Array.from(new Set(isoDates.map((d) => mondayOfWeek(new Date(d)).getTime()))).sort((a, b) => a - b);
+  let longest = 1;
+  let current = 1;
+  for (let i = 1; i < weekKeys.length; i++) {
+    const weeksApart = Math.round((weekKeys[i] - weekKeys[i - 1]) / (7 * 86400000));
+    current = weeksApart === 1 ? current + 1 : 1;
+    longest = Math.max(longest, current);
+  }
+  return longest;
+}
+
+/** Most floors ever climbed in a single calendar day, for the "best day" record. */
+function computeBestDayFloors(climbs: { climbedAt: string; floors: number }[]): { floors: number; dateLabel: string } | null {
+  if (climbs.length === 0) return null;
+  const totals = new Map<string, number>();
+  for (const c of climbs) {
+    const d = new Date(c.climbedAt);
+    const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+    totals.set(key, (totals.get(key) ?? 0) + c.floors);
+  }
+  let bestKey = '';
+  let bestFloors = -1;
+  for (const [key, floors] of totals) {
+    if (floors > bestFloors) { bestFloors = floors; bestKey = key; }
+  }
+  const [y, m, day] = bestKey.split('-').map(Number);
+  const dateLabel = new Date(y, m, day).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return { floors: bestFloors, dateLabel };
+}
+
+/** The most-climbed building (mode of blk_no+street), for the "favorite building" record. */
+function computeFavoriteBuilding(climbs: { blk_no: string; street: string }[]): { label: string; count: number } | null {
+  const counts = new Map<string, { label: string; count: number }>();
+  for (const c of climbs) {
+    if (!c.blk_no) continue;
+    const key = `${c.blk_no}|${c.street}`;
+    const existing = counts.get(key);
+    if (existing) existing.count++;
+    else counts.set(key, { label: `Blk ${c.blk_no} ${c.street}`, count: 1 });
+  }
+  let best: { label: string; count: number } | null = null;
+  for (const entry of counts.values()) {
+    if (!best || entry.count > best.count) best = entry;
+  }
+  return best;
+}
+
+/** Calendar-month bucket key (not a rolling 30-day window) — used to compare "this month" vs "last month" like-for-like. */
+function calendarMonthKey(d: Date): number {
+  return d.getFullYear() * 12 + d.getMonth();
 }
 
 function formatDuration(totalSeconds: number): string {
@@ -134,7 +222,10 @@ function useCyclingColor(colors: string[], stepMs: number, active: boolean) {
   return progress.interpolate({ inputRange: colors.map((_, i) => i), outputRange: colors });
 }
 
-/** MacroFactor-style minimal bar chart — plain Views, no chart library. Used for both the weekly (day-by-day) and monthly (week-by-week) views. */
+/** Minimal flat-bar chart — plain Views, no chart library, no gradient. The
+ *  current period's bar is solid accent color; every other bar is plain
+ *  neutral gray, so the one thing that stands out is exactly the one thing
+ *  that should. Used for both the weekly (day-by-day) and monthly (week-by-week) views. */
 function BarChart({ values, labels, highlightIndex, isDark }: { values: number[]; labels: string[]; highlightIndex: number; isDark: boolean }) {
   const max = Math.max(1, ...values);
 
@@ -147,12 +238,17 @@ function BarChart({ values, labels, highlightIndex, isDark }: { values: number[]
           <View key={i} style={c.barCol}>
             <Text style={[c.barValue, isDark && { color: '#9CA3AF' }, val === 0 && { opacity: 0 }]}>{val}</Text>
             <View style={c.barTrack}>
-              <View style={[
-                c.bar,
-                { height: `${heightPct * 100}%`, backgroundColor: isHighlight ? '#2563EB' : (isDark ? '#374151' : '#DBEAFE') },
-              ]} />
+              <View
+                style={[
+                  c.bar,
+                  { height: `${heightPct * 100}%` },
+                  isHighlight
+                    ? { backgroundColor: ACCENT }
+                    : { backgroundColor: isDark ? '#374151' : '#E5E7EB' },
+                ]}
+              />
             </View>
-            <Text style={[c.barLabel, isHighlight && { color: '#2563EB', fontWeight: '700' }, isDark && !isHighlight && { color: '#6B7280' }]}>
+            <Text style={[c.barLabel, isHighlight && { color: ACCENT, fontWeight: '700' }, isDark && !isHighlight && { color: '#6B7280' }]}>
               {labels[i]}
             </Text>
           </View>
@@ -357,6 +453,29 @@ export default function ProfileScreen({ isDark = false, themeMode = 'auto', onSe
   const weekdayLabels = Array.from({ length: 7 }, (_, i) => DAY_LABELS[(new Date().getDay() - 6 + i + 7) % 7]);
   const monthlyBuckets = computeWeeklyBuckets(climbHistory.map((c) => ({ climbedAt: c.climbedAt, floors: c.floors })), 4);
 
+  // --- Personal records + trend analytics — all derived client-side from the
+  // climb history already fetched above, no extra queries. ---
+  const hasClimbs = climbHistory.length > 0;
+  const bestClimbFloors = hasClimbs ? Math.max(...climbHistory.map((c) => c.floors)) : 0;
+  const longestWeeklyStreak = computeLongestWeeklyStreak(climbHistory.map((c) => c.climbedAt));
+  const bestDay = computeBestDayFloors(climbHistory.map((c) => ({ climbedAt: c.climbedAt, floors: c.floors })));
+  const favoriteBuilding = computeFavoriteBuilding(climbHistory);
+
+  const trendWeeks = computeWeeklyBuckets(climbHistory.map((c) => ({ climbedAt: c.climbedAt, floors: c.floors })), 8);
+  const hasTrendData = trendWeeks.some((v) => v > 0);
+
+  const thisMonthKey = calendarMonthKey(new Date());
+  const thisMonthFloors = climbHistory
+    .filter((c) => calendarMonthKey(new Date(c.climbedAt)) === thisMonthKey)
+    .reduce((s, c) => s + c.floors, 0);
+  const lastMonthFloors = climbHistory
+    .filter((c) => calendarMonthKey(new Date(c.climbedAt)) === thisMonthKey - 1)
+    .reduce((s, c) => s + c.floors, 0);
+  const monthDelta = thisMonthFloors - lastMonthFloors;
+  const monthDeltaPct = lastMonthFloors > 0
+    ? Math.round((monthDelta / lastMonthFloors) * 100)
+    : (thisMonthFloors > 0 ? 100 : 0);
+
   const xp = computeXP(climbStats.floors, badges.length, verifiedCount);
   const levelInfo = computeLevelProgress(xp);
   const featuredBadgeDef = profile?.featured_badge ? BADGE_DEFS.find((d) => d.key === profile.featured_badge) : null;
@@ -382,14 +501,29 @@ export default function ProfileScreen({ isDark = false, themeMode = 'auto', onSe
         contentContainerStyle={s.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* LinkedIn-style banner with avatar overlapping the bottom edge —
-            a legendary featured badge (e.g. Everest Gauntlet) replaces the
-            plain color with an animated cycling one, Discord-Nitro-style. */}
-        <Animated.View style={[s.banner, isDark && { backgroundColor: '#1E3A8A' }, isLegendary && { backgroundColor: legendaryColor }]}>
-          <TouchableOpacity style={s.bannerSettingsBtn} onPress={() => setSettingsVisible(true)} activeOpacity={0.7} hitSlop={8}>
-            <Ionicons name="settings-outline" size={22} color="#FFFFFF" />
-          </TouchableOpacity>
-        </Animated.View>
+        {/* Header band with avatar overlapping the bottom edge — a flat, single
+            near-black neutral rather than a purple/blue gradient, so the one
+            accent color is left free to do real work further down the screen.
+            A legendary featured badge (e.g. Everest Gauntlet) is the one
+            deliberate exception: it earns an animated cycling color,
+            Discord-Nitro-style, as a reward moment rather than a default look. */}
+        {isLegendary ? (
+          <Animated.View style={[s.banner, { backgroundColor: legendaryColor }]}>
+            <LinearGradient
+              colors={['rgba(255,255,255,0.22)', 'rgba(0,0,0,0.28)']}
+              style={StyleSheet.absoluteFill}
+            />
+            <TouchableOpacity style={s.bannerSettingsBtn} onPress={() => setSettingsVisible(true)} activeOpacity={0.7} hitSlop={8}>
+              <Ionicons name="settings-outline" size={22} color="#FFFFFF" />
+            </TouchableOpacity>
+          </Animated.View>
+        ) : (
+          <View style={[s.banner, isDark && { backgroundColor: '#1F2937' }]}>
+            <TouchableOpacity style={s.bannerSettingsBtn} onPress={() => setSettingsVisible(true)} activeOpacity={0.7} hitSlop={8}>
+              <Ionicons name="settings-outline" size={22} color="#FFFFFF" />
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* Profile header */}
         <View style={s.header}>
@@ -398,7 +532,7 @@ export default function ProfileScreen({ isDark = false, themeMode = 'auto', onSe
             onPress={() => setSettingsVisible(true)}
             activeOpacity={0.7}
           >
-            <Animated.View style={[s.avatarFrame, isLegendary && { borderColor: legendaryColor }]}>
+            <Animated.View style={[s.avatarFrame, { borderColor: isDark ? '#111827' : '#F9FAFB' }, isLegendary && { borderColor: legendaryColor }]}>
               <MascotAvatar skinIdx={profile?.avatar_idx ?? 0} photoUri={avatarUriFor(profile)} size={72} />
             </Animated.View>
             <View style={s.avatarEditBadge}>
@@ -432,7 +566,7 @@ export default function ProfileScreen({ isDark = false, themeMode = 'auto', onSe
               disabled={isAnonymous}
             >
               {featuredBadgeDef && (
-                <Ionicons name={featuredBadgeDef.icon as any} size={17} color="#F59E0B" style={{ marginRight: 6 }} />
+                <Ionicons name={featuredBadgeDef.icon as any} size={17} color="#D97706" style={{ marginRight: 6 }} />
               )}
               <Text style={[s.displayName, isDark && { color: '#F9FAFB' }]}>
                 {isAnonymous ? 'Guest Climber' : (profile?.display_name ?? 'Climber')}
@@ -466,7 +600,7 @@ export default function ProfileScreen({ isDark = false, themeMode = 'auto', onSe
             an account, this is just for syncing across devices + badges/verification */}
         {isAnonymous && (
           <TouchableOpacity
-            style={[s.signInBanner, isDark && { backgroundColor: '#1F2937' }]}
+            style={[s.signInBanner, isDark && { backgroundColor: '#1F2937', borderColor: 'rgba(37,99,235,0.35)' }]}
             onPress={() => setAuthPromptVisible(true)}
             activeOpacity={0.8}
           >
@@ -495,55 +629,9 @@ export default function ProfileScreen({ isDark = false, themeMode = 'auto', onSe
 
         {profileTab === 'overview' && (
           <>
-            {/* Stats card */}
-            <View style={[s.statsCard, isDark && { backgroundColor: '#1F2937' }]}>
-              <View style={s.statItem}>
-                <Text style={[s.statNumber, isDark && { color: '#F9FAFB' }]}>{climbStats.climbs}</Text>
-                <Text style={s.statLabel}>Climbs</Text>
-              </View>
-              <View style={[s.statDivider, isDark && { backgroundColor: '#374151' }]} />
-              <View style={s.statItem}>
-                <Text style={[s.statNumber, isDark && { color: '#F9FAFB' }]}>{climbStats.floors}</Text>
-                <Text style={s.statLabel}>Floors</Text>
-              </View>
-              <View style={[s.statDivider, isDark && { backgroundColor: '#374151' }]} />
-              <View style={s.statItem}>
-                <Text style={[s.statNumber, isDark && { color: '#F9FAFB' }]}>
-                  {climbStats.tallest > 0 ? climbStats.tallest : '—'}
-                </Text>
-                <Text style={s.statLabel}>Tallest</Text>
-              </View>
-            </View>
-
-            <View style={[s.statsCard, { marginTop: 10 }, isDark && { backgroundColor: '#1F2937' }]}>
-              <View style={s.statItem}>
-                <Text style={[s.statNumber, isDark && { color: '#F9FAFB' }]}>{Math.round(climbStats.floors * 2.8)}m</Text>
-                <Text style={s.statLabel}>Elevation</Text>
-              </View>
-              <View style={[s.statDivider, isDark && { backgroundColor: '#374151' }]} />
-              <View style={s.statItem}>
-                <Text style={[s.statNumber, isDark && { color: '#F9FAFB' }]}>
-                  {climbStats.durationSeconds > 0 ? formatDuration(climbStats.durationSeconds) : '—'}
-                </Text>
-                <Text style={s.statLabel}>Time Spent</Text>
-              </View>
-            </View>
-
-            {/* Weekly / monthly streak chips */}
-            <View style={s.streakChipsRow}>
-              <View style={[s.streakChip, isDark && { backgroundColor: '#1F2937' }]}>
-                {weeklyStreak > 0 && <Ionicons name="flame" size={18} color="#F59E0B" />}
-                <Text style={[s.streakChipNumber, isDark && { color: '#F9FAFB' }, weeklyStreak > 0 && { color: '#F59E0B' }]}>{weeklyStreak}</Text>
-                <Text style={s.streakChipLabel}>week streak</Text>
-              </View>
-              <View style={[s.streakChip, isDark && { backgroundColor: '#1F2937' }]}>
-                {monthlyStreak > 0 && <Ionicons name="flame" size={18} color="#7C3AED" />}
-                <Text style={[s.streakChipNumber, isDark && { color: '#F9FAFB' }, monthlyStreak > 0 && { color: '#7C3AED' }]}>{monthlyStreak}</Text>
-                <Text style={s.streakChipLabel}>month streak</Text>
-              </View>
-            </View>
-
-            {/* Your Week / Your Month — MacroFactor-style trend chart */}
+            {/* Hero numbers, up top — the single most useful figure (floors this
+                period) rendered huge, with the day/week bar chart and weekly-goal
+                ring right underneath. Everything here uses the one accent color. */}
             <View style={s.section}>
               <View style={s.sectionHeaderRow}>
                 <Text style={[s.sectionTitle, { marginBottom: 0 }, isDark && { color: '#D1D5DB' }]}>
@@ -563,16 +651,14 @@ export default function ProfileScreen({ isDark = false, themeMode = 'auto', onSe
                   ))}
                 </View>
               </View>
-              <View style={[s.card, isDark && { backgroundColor: '#1F2937' }]}>
+              <View style={[s.card, isDark && s.cardDark]}>
                 <View style={s.weekStatsRow}>
-                  <View>
-                    <Text style={[s.weekBigNumber, isDark && { color: '#F9FAFB' }]}>
-                      {viewPeriod === 'week' ? weeklyFloors : monthlyFloors}
-                    </Text>
-                    <Text style={s.weekBigLabel}>
-                      floors this {viewPeriod} · {viewPeriod === 'week' ? weeklyClimbTotal : monthlyClimbTotal} climbs
-                    </Text>
-                  </View>
+                  <Text style={[s.heroNumber, isDark && { color: '#F9FAFB' }]}>
+                    {viewPeriod === 'week' ? weeklyFloors : monthlyFloors}
+                  </Text>
+                  <Text style={[s.heroLabel, isDark && { color: '#9CA3AF' }]}>
+                    floors this {viewPeriod} · {viewPeriod === 'week' ? weeklyClimbTotal : monthlyClimbTotal} climbs
+                  </Text>
                 </View>
                 {viewPeriod === 'week' ? (
                   <BarChart values={dailyFloors} labels={weekdayLabels} highlightIndex={6} isDark={isDark} />
@@ -582,51 +668,203 @@ export default function ProfileScreen({ isDark = false, themeMode = 'auto', onSe
 
                 {viewPeriod === 'week' && weeklyGoal != null && (
                   <View style={s.goalBlock}>
-                    <View style={s.goalRow}>
-                      <Text style={[s.goalLabel, isDark && { color: '#9CA3AF' }]}>Weekly goal</Text>
-                      <Text style={[s.goalValue, isDark && { color: '#F9FAFB' }]}>{weeklyFloors} / {weeklyGoal} fl</Text>
-                    </View>
-                    <View style={[s.goalTrack, isDark && { backgroundColor: '#374151' }]}>
-                      <View style={[s.goalFill, { width: `${Math.min(100, Math.round((weeklyFloors / weeklyGoal) * 100))}%` }]} />
+                    <View style={s.goalRingRow}>
+                      <RadialProgress
+                        progress={weeklyFloors / weeklyGoal}
+                        size={64}
+                        strokeWidth={7}
+                        color={ACCENT}
+                        trackColor={isDark ? '#374151' : '#E5E7EB'}
+                      >
+                        <Text style={[s.goalRingPct, isDark && { color: '#F9FAFB' }]}>
+                          {Math.min(100, Math.round((weeklyFloors / weeklyGoal) * 100))}%
+                        </Text>
+                      </RadialProgress>
+                      <View style={s.goalRingText}>
+                        <Text style={[s.goalLabel, isDark && { color: '#9CA3AF' }]}>Weekly goal</Text>
+                        <Text style={[s.goalValue, isDark && { color: '#F9FAFB' }]}>{weeklyFloors} / {weeklyGoal} floors</Text>
+                      </View>
                     </View>
                   </View>
                 )}
               </View>
             </View>
 
-            {/* Badges section */}
+            {/* 8-week trend — a real line chart (gridlines, one accent line, faint
+                area fill), not a decorative sparkline blob, plus a this-month-vs-
+                last-month delta chip. Both derived client-side from the same climb
+                history already loaded above (no extra queries). */}
+            <View style={s.section}>
+              <View style={s.sectionHeaderRow}>
+                <Text style={[s.sectionTitle, { marginBottom: 0 }, isDark && { color: '#D1D5DB' }]}>8-Week Trend</Text>
+                {hasTrendData && (thisMonthFloors > 0 || lastMonthFloors > 0) && (
+                  <View style={[
+                    s.deltaPill,
+                    monthDelta > 0 && { backgroundColor: 'rgba(16,185,129,0.12)' },
+                    monthDelta < 0 && { backgroundColor: 'rgba(239,68,68,0.12)' },
+                    monthDelta === 0 && { backgroundColor: isDark ? '#374151' : '#F3F4F6' },
+                  ]}>
+                    <Ionicons
+                      name={monthDelta > 0 ? 'arrow-up' : monthDelta < 0 ? 'arrow-down' : 'remove'}
+                      size={12}
+                      color={monthDelta > 0 ? '#10B981' : monthDelta < 0 ? '#EF4444' : (isDark ? '#9CA3AF' : '#6B7280')}
+                    />
+                    <Text style={[
+                      s.deltaPillText,
+                      { color: monthDelta > 0 ? '#10B981' : monthDelta < 0 ? '#EF4444' : (isDark ? '#9CA3AF' : '#6B7280') },
+                    ]}>
+                      {monthDelta === 0 ? 'flat vs last mo.' : `${Math.abs(monthDeltaPct)}% vs last mo.`}
+                    </Text>
+                  </View>
+                )}
+              </View>
+              <View style={[s.card, isDark && s.cardDark]}>
+                {hasTrendData ? (
+                  <>
+                    <TrendSparkline values={trendWeeks} color={ACCENT} isDark={isDark} height={120} />
+                    <View style={s.trendAxisRow}>
+                      <Text style={[s.trendAxisLabel, isDark && { color: '#4B5563' }]}>8 wks ago</Text>
+                      <Text style={[s.trendAxisLabel, isDark && { color: '#4B5563' }]}>This week</Text>
+                    </View>
+                  </>
+                ) : (
+                  <View style={s.emptyState}>
+                    <Ionicons name="analytics-outline" size={32} color={isDark ? '#4B5563' : '#D1D5DB'} />
+                    <Text style={[s.emptyText, isDark && { color: '#9CA3AF' }]}>
+                      Log climbs across a few weeks to see your trend.
+                    </Text>
+                  </View>
+                )}
+              </View>
+            </View>
+
+            {/* Totals — one dense grid instead of five separately-tinted tiles.
+                A hero triplet (climbs/floors/tallest) up top, secondary metrics
+                below, both separated by hairlines rather than color. */}
+            <View style={s.section}>
+              <Text style={[s.sectionTitle, isDark && { color: '#D1D5DB' }]}>Totals</Text>
+              <View style={[s.card, isDark && s.cardDark]}>
+                <View style={s.heroStatsRow}>
+                  <StatCell value={climbStats.climbs} label="Climbs" isDark={isDark} size="lg" />
+                  <GridDivider isDark={isDark} />
+                  <StatCell value={climbStats.floors} label="Floors" isDark={isDark} size="lg" />
+                  <GridDivider isDark={isDark} />
+                  <StatCell value={climbStats.tallest > 0 ? climbStats.tallest : '—'} label="Tallest" isDark={isDark} size="lg" />
+                </View>
+                <GridDivider isDark={isDark} horizontal />
+                <View style={s.secondaryStatsRow}>
+                  <StatCell value={`${Math.round(climbStats.floors * 2.8)}m`} label="Elevation" isDark={isDark} />
+                  <GridDivider isDark={isDark} />
+                  <StatCell value={climbStats.durationSeconds > 0 ? formatDuration(climbStats.durationSeconds) : '—'} label="Time" isDark={isDark} />
+                </View>
+                <GridDivider isDark={isDark} horizontal />
+                <View style={s.secondaryStatsRow}>
+                  <StatCell value={weeklyStreak} label="Week streak" isDark={isDark} />
+                  <GridDivider isDark={isDark} />
+                  <StatCell value={monthlyStreak} label="Month streak" isDark={isDark} />
+                </View>
+              </View>
+            </View>
+
+            {/* Personal records — a Strava-"Records"-style flat list, not four
+                more colorful tiles: best/longest/most, all derived from climb history. */}
+            <View style={s.section}>
+              <Text style={[s.sectionTitle, isDark && { color: '#D1D5DB' }]}>Personal Records</Text>
+              {hasClimbs ? (
+                <View style={[s.card, s.recordsCard, isDark && s.cardDark]}>
+                  <StatCard icon="trophy-outline" value={`${bestClimbFloors} fl`} label="Best single climb" isDark={isDark} />
+                  <StatCard icon="ribbon-outline" value={`${longestWeeklyStreak} wk`} label="Longest streak" isDark={isDark} />
+                  <StatCard icon="flash-outline" value={bestDay ? `${bestDay.floors} fl` : '—'} label="Best day" caption={bestDay?.dateLabel} isDark={isDark} />
+                  <StatCard icon="business-outline" value={favoriteBuilding ? `${favoriteBuilding.count}×` : '—'} label="Favorite building" caption={favoriteBuilding?.label} isDark={isDark} isLast />
+                </View>
+              ) : (
+                <View style={s.emptyState}>
+                  <Ionicons name="trophy-outline" size={32} color={isDark ? '#4B5563' : '#D1D5DB'} />
+                  <Text style={[s.emptyText, isDark && { color: '#9CA3AF' }]}>
+                    Log your first climb to unlock personal records.
+                  </Text>
+                </View>
+              )}
+            </View>
+
+            {/* Badges section — same earn/renewal/mystery logic as before; the
+                chrome around it is now flat neutral cards with a hairline border
+                instead of a colored gradient wash, so the medal/tier colors (which
+                carry real meaning) are what actually stands out. */}
             <View style={s.section}>
               <View style={s.sectionHeaderRow}>
                 <Text style={[s.sectionTitle, { marginBottom: 0 }, isDark && { color: '#D1D5DB' }]}>Badges</Text>
-                <Text style={s.badgeCount}>{badges.length} of {BADGE_DEFS.length} earned</Text>
+                <Text style={[s.badgeCount, isDark && { color: '#6B7280' }]}>{badges.length} of {BADGE_DEFS.length} earned</Text>
+              </View>
+              <View style={[s.badgeProgressTrack, isDark && { backgroundColor: '#374151' }]}>
+                <View
+                  style={[s.badgeProgressFill, { width: `${BADGE_DEFS.length > 0 ? Math.round((badges.length / BADGE_DEFS.length) * 100) : 0}%`, backgroundColor: ACCENT }]}
+                />
               </View>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.badgesRow}>
                 {BADGE_DEFS.map((def) => {
-                  const earned = earnedBadges.has(def.key);
+                  const earnedAt = earnedBadges.get(def.key);
+                  const earned = earnedAt !== undefined;
                   // Hidden badges stay a mystery until earned — discovered, not chased.
                   const isMystery = def.hidden && !earned;
+                  const isMonthly = def.resets === 'monthly';
+                  // Overwatch-style seasonal badge: only "active" while earned_at falls
+                  // within the current calendar month. Earned-but-expired badges still
+                  // show up (they've genuinely earned it before) but read as dimmed
+                  // until the challenge is re-completed this month.
+                  const isActiveThisSeason = earned && (!isMonthly || calendarMonthKey(new Date(earnedAt!)) === thisMonthKey);
+                  const isRenewalPending = earned && isMonthly && !isActiveThisSeason;
+                  const isChallengeMedal = def.category === 'challenge';
+                  const medalColor = isRenewalPending ? (isDark ? '#4B5563' : '#B0B7C3') : medalColorFor(def);
+                  const emblem = medalEmblemFor(def.icon, def.key, isMonthly);
+
                   return (
-                    <TouchableOpacity
-                      key={def.key}
-                      style={[s.badgeItem, !earned && s.badgeLocked, isDark && { backgroundColor: '#1F2937' }]}
-                      onPress={() => setSelectedBadge(def)}
-                      activeOpacity={0.7}
-                    >
-                      <Ionicons
-                        name={isMystery ? 'help-outline' : (def.icon as any)}
-                        size={28}
-                        color={earned ? '#60A5FA' : (isDark ? '#4B5563' : '#D1D5DB')}
-                      />
-                      <Text
-                        style={[
-                          s.badgeName,
-                          earned && isDark && { color: '#F9FAFB' },
-                          !earned && (isDark ? { color: '#6B7280' } : s.badgeNameLocked),
-                        ]}
-                        numberOfLines={1}
-                      >
-                        {isMystery ? '???' : def.name}
-                      </Text>
+                    <TouchableOpacity key={def.key} onPress={() => setSelectedBadge(def)} activeOpacity={0.7}>
+                      {isActiveThisSeason ? (
+                        <View
+                          style={[
+                            s.badgeItem,
+                            s.badgeItemEarned,
+                            isDark && s.badgeItemEarnedDark,
+                            isMonthly && s.badgeItemGlow,
+                            isMonthly && { borderColor: medalColor },
+                          ]}
+                        >
+                          {isChallengeMedal ? (
+                            <MedalBadge color={medalColor} emblem={emblem} size={34} />
+                          ) : (
+                            <Ionicons name={def.icon as any} size={28} color={ACCENT} />
+                          )}
+                          <Text style={[s.badgeName, isDark && { color: '#F9FAFB' }]} numberOfLines={1}>
+                            {def.name}
+                          </Text>
+                        </View>
+                      ) : isRenewalPending ? (
+                        <View style={[s.badgeItem, s.badgeRenewal, isDark && { backgroundColor: '#1F2937', borderColor: '#374151' }]}>
+                          {isChallengeMedal ? (
+                            <MedalBadge color={medalColor} emblem={emblem} size={34} />
+                          ) : (
+                            <Ionicons name={def.icon as any} size={28} color={isDark ? '#4B5563' : '#D1D5DB'} />
+                          )}
+                          <Text style={[s.badgeName, isDark ? { color: '#9CA3AF' } : s.badgeNameLocked]} numberOfLines={1}>
+                            {def.name}
+                          </Text>
+                          <Text style={[s.badgeRenewalCaption, isDark && { color: '#6B7280' }]} numberOfLines={2}>
+                            Renews monthly — complete it again
+                          </Text>
+                        </View>
+                      ) : (
+                        <View style={[s.badgeItem, s.badgeLocked, isDark && { backgroundColor: '#1F2937' }]}>
+                          <Ionicons
+                            name={isMystery ? 'help-outline' : (def.icon as any)}
+                            size={28}
+                            color={isDark ? '#4B5563' : '#D1D5DB'}
+                          />
+                          <Text style={[s.badgeName, isDark ? { color: '#6B7280' } : s.badgeNameLocked]} numberOfLines={1}>
+                            {isMystery ? '???' : def.name}
+                          </Text>
+                        </View>
+                      )}
                     </TouchableOpacity>
                   );
                 })}
@@ -641,8 +879,8 @@ export default function ProfileScreen({ isDark = false, themeMode = 'auto', onSe
               climbHistory.map((climb, i) => {
                 const tierColor = getTierColor(climb.storeys);
                 return (
-                  <View key={climb.climb_id ?? i} style={[s.climbRow, isDark && { backgroundColor: '#1F2937' }]}>
-                    <View style={[s.tierDot, { backgroundColor: tierColor }]} />
+                  <View key={climb.climb_id ?? i} style={[s.climbRow, isDark && s.climbRowDark]}>
+                    <View style={[s.tierBar, { backgroundColor: tierColor }]} />
                     <View style={s.climbContent}>
                       <Text style={[s.climbAddr, isDark && { color: '#F9FAFB' }]} numberOfLines={1}>
                         {climb.blk_no ? `Blk ${climb.blk_no} ${climb.street}` : 'Unknown building'}
@@ -716,7 +954,9 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    backgroundColor: '#EFF6FF',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: 'rgba(37,99,235,0.22)',
     marginHorizontal: 16,
     marginBottom: 16,
     padding: 14,
@@ -736,8 +976,7 @@ const s = StyleSheet.create({
     paddingBottom: 110,
   },
   banner: {
-    height: 96,
-    backgroundColor: '#2563EB',
+    height: 128,
   },
   bannerSettingsBtn: {
     position: 'absolute',
@@ -777,7 +1016,7 @@ const s = StyleSheet.create({
     position: 'absolute',
     top: -4,
     left: -6,
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#2563EB',
     borderRadius: 10,
     paddingVertical: 2,
     paddingHorizontal: 8,
@@ -803,7 +1042,7 @@ const s = StyleSheet.create({
   xpFill: {
     height: '100%',
     borderRadius: 3,
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#2563EB',
   },
   xpLabel: {
     fontSize: 10.5,
@@ -855,54 +1094,6 @@ const s = StyleSheet.create({
     color: '#10B981',
     marginLeft: 4,
   },
-  statsCard: {
-    flexDirection: 'row',
-    backgroundColor: '#FFFFFF',
-    marginHorizontal: 16,
-    borderRadius: 16,
-    paddingVertical: 20,
-    paddingHorizontal: 12,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-  },
-  statItem: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  streakChipsRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginHorizontal: 16,
-    marginTop: 10,
-  },
-  streakChip: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    paddingVertical: 12,
-    elevation: 1,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.06,
-    shadowRadius: 4,
-  },
-  streakChipNumber: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: '#111827',
-  },
-  streakChipLabel: {
-    fontSize: 11.5,
-    fontWeight: '600',
-    color: '#9CA3AF',
-  },
   tabBar: {
     flexDirection: 'row',
     backgroundColor: '#F3F4F6',
@@ -915,22 +1106,6 @@ const s = StyleSheet.create({
   tabBtnActive: { backgroundColor: '#FFFFFF', elevation: 1 },
   tabBtnText: { fontSize: 13, fontWeight: '700', color: '#9CA3AF' },
   tabBtnTextActive: { color: '#111827' },
-  statNumber: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: '#111827',
-  },
-  statLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#6B7280',
-    marginTop: 4,
-  },
-  statDivider: {
-    width: 1,
-    backgroundColor: '#E5E7EB',
-    marginVertical: 4,
-  },
   section: {
     marginTop: 24,
     paddingHorizontal: 16,
@@ -939,21 +1114,54 @@ const s = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     padding: 18,
-    elevation: 2,
+    borderWidth: 1,
+    borderColor: 'rgba(17,24,39,0.06)',
+    elevation: 1,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+  },
+  cardDark: {
+    backgroundColor: '#1F2937',
+    borderColor: 'rgba(255,255,255,0.06)',
+  },
+  recordsCard: {
+    paddingVertical: 4,
   },
   weekStatsRow: { marginBottom: 4 },
-  weekBigNumber: { fontSize: 30, fontWeight: '800', color: '#111827' },
-  weekBigLabel: { fontSize: 12.5, color: '#6B7280', fontWeight: '500', marginTop: 2 },
+  heroNumber: { fontSize: 36, fontWeight: '800', color: '#111827', letterSpacing: -0.5 },
+  heroLabel: { fontSize: 13, color: '#6B7280', fontWeight: '500', marginTop: 3 },
+  heroStatsRow: { flexDirection: 'row', alignItems: 'center' },
+  secondaryStatsRow: { flexDirection: 'row', alignItems: 'center' },
   goalBlock: { marginTop: 18 },
-  goalRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
+  goalRingRow: { flexDirection: 'row', alignItems: 'center', gap: 16 },
+  goalRingPct: { fontSize: 14, fontWeight: '800', color: '#111827' },
+  goalRingText: { flex: 1 },
   goalLabel: { fontSize: 12.5, color: '#6B7280', fontWeight: '600' },
-  goalValue: { fontSize: 12.5, color: '#111827', fontWeight: '700' },
-  goalTrack: { height: 8, borderRadius: 4, backgroundColor: '#E5E7EB', overflow: 'hidden' },
-  goalFill: { height: '100%', backgroundColor: '#F59E0B', borderRadius: 4 },
+  goalValue: { fontSize: 16, color: '#111827', fontWeight: '800', marginTop: 3 },
+  deltaPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: 20,
+  },
+  deltaPillText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+  },
+  trendAxisRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 6,
+  },
+  trendAxisLabel: {
+    fontSize: 10.5,
+    fontWeight: '600',
+    color: '#9CA3AF',
+  },
   sectionTitle: {
     fontSize: 13,
     fontWeight: '700',
@@ -972,6 +1180,17 @@ const s = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: '#9CA3AF',
+  },
+  badgeProgressTrack: {
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: '#E5E7EB',
+    overflow: 'hidden',
+    marginBottom: 14,
+  },
+  badgeProgressFill: {
+    height: '100%',
+    borderRadius: 3,
   },
   periodToggle: {
     flexDirection: 'row',
@@ -994,15 +1213,49 @@ const s = StyleSheet.create({
     marginRight: 12,
     backgroundColor: '#FFFFFF',
     borderRadius: 12,
-    elevation: 1,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(17,24,39,0.06)',
   },
   badgeLocked: {
     backgroundColor: '#F3F4F6',
     opacity: 0.5,
+  },
+  // Flat neutral card by default — the medal/tier color (applied inline per
+  // badge) is what's meant to stand out here, not a colored card background.
+  badgeItemEarned: {
+    borderWidth: 1,
+    borderColor: 'rgba(37,99,235,0.25)',
+  },
+  badgeItemEarnedDark: {
+    backgroundColor: '#1F2937',
+    borderColor: 'rgba(37,99,235,0.35)',
+  },
+  // Overwatch-season-style ring for an active (this-month) seasonal badge —
+  // borderColor is supplied inline per-badge tier color; the shadow stays a
+  // plain neutral lift rather than a colored glow.
+  badgeItemGlow: {
+    borderWidth: 1.5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.12,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  // Previously-earned-but-expired seasonal badge — still shown (not locked/mystery)
+  // but desaturated, with a caption explaining it needs re-completing this month.
+  badgeRenewal: {
+    backgroundColor: '#F3F4F6',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    opacity: 0.85,
+  },
+  badgeRenewalCaption: {
+    fontSize: 8,
+    fontWeight: '600',
+    color: '#9CA3AF',
+    textAlign: 'center',
+    marginTop: 3,
+    lineHeight: 10,
   },
   badgeName: {
     fontSize: 10,
@@ -1021,12 +1274,18 @@ const s = StyleSheet.create({
     paddingHorizontal: 14,
     backgroundColor: '#FFFFFF',
     borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(17,24,39,0.06)',
     marginBottom: 6,
   },
-  tierDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+  climbRowDark: {
+    backgroundColor: '#1F2937',
+    borderColor: 'rgba(255,255,255,0.06)',
+  },
+  tierBar: {
+    width: 6,
+    height: 32,
+    borderRadius: 3,
     marginRight: 12,
   },
   climbContent: {

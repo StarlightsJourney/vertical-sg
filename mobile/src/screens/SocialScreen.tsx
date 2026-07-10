@@ -111,7 +111,11 @@ const MOCK_FEED_ITEMS: FeedItem[] = [
     street: 'Toa Payoh Lorong 8',
     kudosCount: 4,
     kudosByMe: false,
-    commentCount: 2,
+    // Was 2, but the preview thread has no actual comments to show — a
+    // nonzero count with an empty list is what tricked a tester into
+    // thinking they could reply. Keep this at 0 unless MOCK_FEED_ITEMS
+    // ever grows real hardcoded comments to match.
+    commentCount: 0,
     trackingMethod: 'barometer',
   },
   {
@@ -953,19 +957,27 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
                     ) : (
                       <Text style={s.emptyFeedText}>No comments yet.</Text>
                     )}
+                    {isMock && (
+                      <Text style={s.mockPreviewLabel}>Sample post — preview only, comments aren't saved</Text>
+                    )}
                     <View style={s.commentInputRow}>
                       <TextInput
-                        style={[s.commentInput, isDark && { backgroundColor: '#111827', color: '#F9FAFB' }]}
-                        placeholder="Write a comment..."
+                        style={[
+                          s.commentInput,
+                          isDark && { backgroundColor: '#111827', color: '#F9FAFB' },
+                          isMock && s.commentInputDisabled,
+                        ]}
+                        placeholder={isMock ? 'Preview only — comments disabled' : 'Write a comment...'}
                         placeholderTextColor="#9CA3AF"
                         value={newCommentText}
                         onChangeText={setNewCommentText}
                         maxLength={280}
+                        editable={!isMock}
                       />
                       <TouchableOpacity
-                        style={[s.commentSendBtn, (!newCommentText.trim() || commentSubmitting) && { opacity: 0.5 }]}
+                        style={[s.commentSendBtn, (!newCommentText.trim() || commentSubmitting || isMock) && { opacity: 0.5 }]}
                         onPress={handleSubmitComment}
-                        disabled={!newCommentText.trim() || commentSubmitting}
+                        disabled={!newCommentText.trim() || commentSubmitting || isMock}
                       >
                         {commentSubmitting ? <ActivityIndicator size="small" color="#FFF" /> : <Ionicons name="send" size={14} color="#FFF" />}
                       </TouchableOpacity>
@@ -1098,6 +1110,11 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
         visible={notifVisible}
         onClose={() => setNotifVisible(false)}
         isDark={isDark}
+        // The modal marks notifications read/dismissed on its own timeline
+        // (tap, swipe, clear all) — mirror its live unread count here
+        // instead of waiting for the next loadHeader() refetch/refocus,
+        // so the bell badge clears the instant the user acts.
+        onUnreadCountChange={setUnreadCount}
       />
 
       <ChallengeDetailModal
@@ -1493,6 +1510,10 @@ const s = StyleSheet.create({
     width: 32, height: 32, borderRadius: 16, backgroundColor: '#2563EB',
     alignItems: 'center', justifyContent: 'center',
   },
+  mockPreviewLabel: {
+    fontSize: 11.5, fontWeight: '600', color: '#9CA3AF', fontStyle: 'italic', marginTop: 2, marginBottom: 6,
+  },
+  commentInputDisabled: { opacity: 0.5 },
   fab: {
     position: 'absolute',
     right: 20,

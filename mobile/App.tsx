@@ -159,7 +159,7 @@ export default function App() {
           )}
           {visitedTabs.has('map') && (
             <View style={[styles.screen, activeTab !== 'map' && styles.hidden]}>
-              <MapScreen isDark={isDark} onNavigateToSocial={() => goToTab('social')} />
+              <MapScreen isDark={isDark} onNavigateToSocial={() => goToTab('social')} isActive={activeTab === 'map'} />
             </View>
           )}
           {visitedTabs.has('groups') && (

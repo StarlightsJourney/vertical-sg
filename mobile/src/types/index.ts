@@ -84,6 +84,41 @@ export interface Challenge {
   ends_at: string | null;
   /** null = official/seeded challenge; otherwise a user-created one (no badge_key — custom challenges don't grant a real badge, there's no BADGE_DEFS entry to award). */
   creator_id: string | null;
+  /** True for plain "climb N floors" challenges with no special mechanic — these get a computed display title (e.g. "July HDB Elevation Challenge — 1120m") instead of a unique brand name, reserved for genuinely special/harder challenges like Everest Gauntlet. */
+  generic_name?: boolean;
+  /** 'peers' = only visible to the creator + people who follow/are followed by them (reuses the `follows` table) — not shown to the wider community. */
+  visibility?: 'public' | 'peers';
+}
+
+export interface OfficialClub {
+  club_id: string;
+  name: string;
+  category: 'Trail Running' | 'Hiking' | 'Climbing' | 'Announcements';
+  description: string;
+  created_at: string;
+}
+
+export interface ClubMembership {
+  club_id: string;
+  user_id: string;
+  role: 'member' | 'admin' | 'organizer';
+  joined_at: string;
+}
+
+export interface ClubPost {
+  post_id: string;
+  club_id: string;
+  author_id: string;
+  body: string;
+  week_start: string;
+  created_at: string;
+}
+
+export interface ClubPostReaction {
+  post_id: string;
+  user_id: string;
+  emoji: string;
+  created_at: string;
 }
 
 export interface UserClub {
@@ -174,6 +209,8 @@ export interface BadgeDef {
   hidden?: boolean;
   /** Legendary tier — featuring this badge gives your profile an animated color-cycling background/avatar frame instead of the plain banner. */
   special?: boolean;
+  /** Overwatch-style seasonal badge — only counts as "active" while user_badges.earned_at falls within the current calendar month; re-complete the challenge to keep it lit. Expired-but-previously-earned badges still show (greyed) rather than disappearing. */
+  resets?: 'monthly';
 }
 
 export const BADGE_DEFS: BadgeDef[] = [
@@ -209,11 +246,12 @@ export const BADGE_DEFS: BadgeDef[] = [
   // Challenge badges — earned only by signing up for and completing a
   // time-boxed challenge (Groups tab), never by just hitting a passive
   // condition the way the badges above do.
-  { key: 'century_sprint_challenge', name: 'Century Champion', description: 'Completed the Century Sprint challenge', category: 'challenge', icon: 'flash-outline' },
-  { key: 'elevation_chaser_challenge', name: 'Elevation Chaser', description: 'Completed the Elevation Chaser challenge', category: 'challenge', icon: 'trending-up-outline' },
-  { key: 'iron_legs_challenge', name: 'Iron Legs', description: 'Completed the Iron Legs challenge', category: 'challenge', icon: 'flame-outline' },
+  { key: 'century_sprint_challenge', name: 'HDB Elevation Badge I', description: 'Climb this month\'s lightest HDB elevation target', category: 'challenge', icon: 'trending-up-outline', resets: 'monthly' },
+  { key: 'elevation_chaser_challenge', name: 'HDB Elevation Badge II', description: 'Climb this month\'s medium HDB elevation target', category: 'challenge', icon: 'trending-up-outline', resets: 'monthly' },
+  { key: 'iron_legs_challenge', name: 'HDB Elevation Badge III', description: 'Climb this month\'s high HDB elevation target', category: 'challenge', icon: 'trending-up-outline', resets: 'monthly' },
   { key: 'everest_gauntlet_challenge', name: 'Everest Gauntlet Survivor', description: 'Climbed the height of Mount Everest in a single week', category: 'challenge', icon: 'trophy', special: true },
-  { key: 'long_haul_challenge', name: 'Long Haul Legend', description: 'Completed the Long Haul monthly challenge', category: 'challenge', icon: 'infinite-outline' },
+  { key: 'long_haul_challenge', name: 'HDB Elevation Badge IV', description: 'Climb this month\'s toughest HDB elevation target', category: 'challenge', icon: 'trending-up-outline', resets: 'monthly' },
   { key: 'sg61_countdown_challenge', name: 'SG61 Climber', description: 'Completed the SG61 Countdown Climb', category: 'challenge', icon: 'flag-outline' },
   { key: 'midyear_momentum_challenge', name: 'Momentum Badge', description: 'Completed the Mid-Year Momentum challenge', category: 'challenge', icon: 'rocket-outline' },
+  { key: 'double_eightthousander_challenge', name: 'Double Eight-Thousander', description: 'Climbed the combined height of Everest and K2 in a single week', category: 'challenge', icon: 'trophy', special: true },
 ];

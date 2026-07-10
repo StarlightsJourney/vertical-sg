@@ -8,7 +8,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 // file over MapScreen.tsx when bundling for the web platform, so the native
 // import never happens there. Same reason climb tracking (barometer/step
 // counter) isn't available here either — those are native sensors too.
-export default function MapScreen({ isDark }: { isDark?: boolean; onNavigateToSocial?: () => void }) {
+export default function MapScreen({ isDark }: { isDark?: boolean; onNavigateToSocial?: () => void; isActive?: boolean }) {
   return (
     <View style={[styles.container, isDark && { backgroundColor: '#111827' }]}>
       <Ionicons name="map-outline" size={48} color={isDark ? '#4B5563' : '#D1D5DB'} />

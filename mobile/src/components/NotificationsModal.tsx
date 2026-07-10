@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -7,16 +7,32 @@ import {
   Modal,
   FlatList,
   ActivityIndicator,
+  Animated,
+  PanResponder,
+  LayoutAnimation,
+  type GestureResponderEvent,
+  type PanResponderGestureState,
 } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { supabase } from '../config/supabase';
 import type { AppNotification } from '../types';
 
+// No setLayoutAnimationEnabledExperimental() call — it's a no-op on the New
+// Architecture (which this app runs on) and only logs a warning; Android
+// LayoutAnimation works there without it.
+
 interface Props {
   visible: boolean;
   onClose: () => void;
   isDark?: boolean;
+  /** Fired whenever the locally-held unread count changes (load, mark-read,
+   * mark-all-read, swipe-dismiss, clear-all) so a parent badge (e.g. the
+   * Social tab's bell) can update the instant it happens instead of waiting
+   * on its own separate poll/refetch. */
+  onUnreadCountChange?: (count: number) => void;
 }
+
+const SWIPE_DISMISS_THRESHOLD = 90;
 
 function formatRelativeTime(ts: string): string {
   const now = Date.now();
@@ -41,7 +57,81 @@ function getNotifIcon(type: string) {
   }
 }
 
-export default function NotificationsModal({ visible, onClose, isDark = false }: Props) {
+interface SwipeableNotifRowProps {
+  item: AppNotification;
+  isDark: boolean;
+  onPress: () => void;
+  onDismiss: () => void;
+}
+
+// Swipe-to-dismiss for a single row. react-native-gesture-handler isn't a
+// dependency of this app (checked package.json/node_modules), so this uses
+// a plain PanResponder + Animated, the same primitive App.tsx already uses
+// for its edge-swipe tab gesture.
+function SwipeableNotifRow({ item, isDark, onPress, onDismiss }: SwipeableNotifRowProps) {
+  const translateX = useRef(new Animated.Value(0)).current;
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (_evt: GestureResponderEvent, gestureState: PanResponderGestureState) =>
+        Math.abs(gestureState.dx) > 8 && Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 1.5,
+      onPanResponderMove: (_evt, gestureState) => {
+        translateX.setValue(gestureState.dx);
+      },
+      onPanResponderRelease: (_evt, gestureState) => {
+        if (Math.abs(gestureState.dx) > SWIPE_DISMISS_THRESHOLD) {
+          Animated.timing(translateX, {
+            toValue: gestureState.dx > 0 ? 600 : -600,
+            duration: 200,
+            useNativeDriver: true,
+          }).start(() => onDismiss());
+        } else {
+          Animated.spring(translateX, { toValue: 0, useNativeDriver: true, bounciness: 6 }).start();
+        }
+      },
+      onPanResponderTerminate: () => {
+        Animated.spring(translateX, { toValue: 0, useNativeDriver: true, bounciness: 6 }).start();
+      },
+    })
+  ).current;
+
+  const { icon, color } = getNotifIcon(item.type);
+
+  return (
+    <View style={styles.swipeWrap}>
+      <View style={[styles.dismissBackdrop, isDark && { backgroundColor: '#3B1414' }]}>
+        <Ionicons name="trash-outline" size={18} color="#EF4444" />
+        <Text style={styles.dismissBackdropText}>Swipe to dismiss</Text>
+      </View>
+      <Animated.View style={{ transform: [{ translateX }] }} {...panResponder.panHandlers}>
+        <TouchableOpacity
+          style={[
+            styles.notifRow,
+            isDark && { backgroundColor: '#111827' },
+            !item.read && styles.unread,
+            isDark && !item.read && { backgroundColor: '#1F2937' },
+          ]}
+          onPress={onPress}
+          activeOpacity={0.7}
+        >
+          <View style={[styles.iconCircle, { backgroundColor: color + '1A' }]}>
+            <Ionicons name={icon as any} size={18} color={color} />
+          </View>
+          <View style={styles.notifContent}>
+            <Text style={[styles.notifMsg, isDark && { color: '#F9FAFB' }]} numberOfLines={2}>
+              {item.message}
+            </Text>
+            <Text style={styles.notifTime}>{formatRelativeTime(item.created_at)}</Text>
+          </View>
+          {!item.read && <View style={styles.unreadDot} />}
+        </TouchableOpacity>
+      </Animated.View>
+    </View>
+  );
+}
+
+export default function NotificationsModal({ visible, onClose, isDark = false, onUnreadCountChange }: Props) {
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -65,23 +155,59 @@ export default function NotificationsModal({ visible, onClose, isDark = false }:
     if (visible) loadNotifications();
   }, [visible, loadNotifications]);
 
+  // Report the live unread count up to the parent any time the local list
+  // changes for any reason (initial load, tap-to-read, mark-all, swipe
+  // dismiss, clear-all) — this is what lets a bell badge elsewhere clear
+  // instantly instead of trailing behind its own poll/refetch cycle.
+  useEffect(() => {
+    onUnreadCountChange?.(notifications.filter((n) => !n.read).length);
+  }, [notifications, onUnreadCountChange]);
+
   const handleMarkRead = async (notifId: string) => {
+    // Optimistic — flip it locally right away rather than waiting on the
+    // network round-trip + a full reload before the UI (and the unread
+    // count derived from it) reflects the change.
+    setNotifications((prev) => prev.map((n) => (n.notification_id === notifId ? { ...n, read: true } : n)));
     await supabase
       .from('notifications')
       .update({ read: true })
       .eq('notification_id', notifId);
-    loadNotifications();
   };
 
   const handleMarkAllRead = async () => {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) return;
+    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
     await supabase
       .from('notifications')
       .update({ read: true })
       .eq('user_id', session.user.id)
       .eq('read', false);
-    loadNotifications();
+  };
+
+  // There's no separate "dismissed" column on notifications — swiping a row
+  // away marks it read (so it stops counting toward unread) and drops it
+  // from the currently-visible list. It's a soft dismiss: reopening later
+  // still shows it, just already read.
+  const handleDismiss = async (notifId: string) => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setNotifications((prev) => prev.filter((n) => n.notification_id !== notifId));
+    await supabase
+      .from('notifications')
+      .update({ read: true })
+      .eq('notification_id', notifId);
+  };
+
+  const handleClearAll = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return;
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setNotifications([]);
+    await supabase
+      .from('notifications')
+      .update({ read: true })
+      .eq('user_id', session.user.id)
+      .eq('read', false);
   };
 
   return (
@@ -93,9 +219,16 @@ export default function NotificationsModal({ visible, onClose, isDark = false }:
 
           <View style={styles.header}>
             <Text style={[styles.title, isDark && { color: '#F9FAFB' }]}>Notifications</Text>
-            <TouchableOpacity onPress={handleMarkAllRead}>
-              <Text style={styles.markAll}>Mark all read</Text>
-            </TouchableOpacity>
+            <View style={styles.headerActions}>
+              <TouchableOpacity onPress={handleMarkAllRead} hitSlop={6}>
+                <Text style={styles.markAll}>Mark all read</Text>
+              </TouchableOpacity>
+              {notifications.length > 0 && (
+                <TouchableOpacity onPress={handleClearAll} hitSlop={6}>
+                  <Text style={styles.clearAll}>Clear all</Text>
+                </TouchableOpacity>
+              )}
+            </View>
           </View>
 
           {loading ? (
@@ -106,27 +239,14 @@ export default function NotificationsModal({ visible, onClose, isDark = false }:
             <FlatList
               data={notifications}
               keyExtractor={(item) => item.notification_id}
-              renderItem={({ item }) => {
-                const { icon, color } = getNotifIcon(item.type);
-                return (
-                  <TouchableOpacity
-                    style={[styles.notifRow, !item.read && styles.unread, isDark && !item.read && { backgroundColor: '#1F2937' }]}
-                    onPress={() => handleMarkRead(item.notification_id)}
-                    activeOpacity={0.7}
-                  >
-                    <View style={[styles.iconCircle, { backgroundColor: color + '1A' }]}>
-                      <Ionicons name={icon as any} size={18} color={color} />
-                    </View>
-                    <View style={styles.notifContent}>
-                      <Text style={[styles.notifMsg, isDark && { color: '#F9FAFB' }]} numberOfLines={2}>
-                        {item.message}
-                      </Text>
-                      <Text style={styles.notifTime}>{formatRelativeTime(item.created_at)}</Text>
-                    </View>
-                    {!item.read && <View style={styles.unreadDot} />}
-                  </TouchableOpacity>
-                );
-              }}
+              renderItem={({ item }) => (
+                <SwipeableNotifRow
+                  item={item}
+                  isDark={isDark}
+                  onPress={() => handleMarkRead(item.notification_id)}
+                  onDismiss={() => handleDismiss(item.notification_id)}
+                />
+              )}
               contentContainerStyle={styles.listContent}
             />
           ) : (
@@ -167,13 +287,27 @@ const styles = StyleSheet.create({
     borderBottomColor: '#E5E7EB',
   },
   title: { fontSize: 20, fontWeight: '800', color: '#111827' },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 16 },
   markAll: { fontSize: 13, color: '#2563EB', fontWeight: '600' },
+  clearAll: { fontSize: 13, color: '#EF4444', fontWeight: '600' },
   listContent: { paddingBottom: 32 },
+  swipeWrap: { justifyContent: 'center' },
+  dismissBackdrop: {
+    ...StyleSheet.absoluteFill,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    paddingRight: 24,
+    gap: 8,
+    backgroundColor: '#FEE2E2',
+  },
+  dismissBackdropText: { fontSize: 12, fontWeight: '600', color: '#EF4444' },
   notifRow: {
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: 20, paddingVertical: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: '#F3F4F6',
+    backgroundColor: '#FFFFFF',
   },
   unread: { backgroundColor: '#F0F7FF' },
   iconCircle: {
