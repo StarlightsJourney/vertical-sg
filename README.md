@@ -45,21 +45,20 @@ vertical/
 ```
 
 Built features include:
-- **Bottom tab navigation** — 4 custom tabs (Social, My Climbs, Map, Profile) implemented with touchable icons and Animated transitions. No native dependencies or react-navigation required.
-- **Map screen** — MapLibre with local Liberty style JSONs (light + dark). Building pins colored by height tier (blue 1-10, orange 11-20, red 21-30, dark red 31-39, purple 40+) with fixed 5px radius and gold stroke for climbed blocks. Single cycling filter toggle (21+ → 31+ → 40+ → All).
-- **Amenity markers** — Ionicons on MapLibre Marker components: water coolers (`water-outline`, cyan/pink), toilets (`male-female-outline`, purple), shops (`cafe-outline`, amber). Zoom-gated: 25 water + 15 non-water at zoom<13, 80 water + 60 non-water at zoom>=13. Sorted by distance from map center.
-- **Pending amenity markers** — gray Ionicons with dashed border, submitted via placement flow. Tappable to view status and get directions. Only rendered at zoom >= 13.
-- **Interactive amenity placement** — amber `+` button → category picker → crosshair overlay to pan position → confirm → optional description → submit as unverified. Saved to AsyncStorage, appears immediately.
-- **Animated splash screen** — 5 height-tier colored bars rise sequentially on launch, then the "Vertical" logo fades in with subtitle. Uses native driver for 60fps.
-- **Dark mode** — auto day/night via `isDark` state passed from `App.tsx`. Tab bar and map elements adapt. Map style switches between light and dark variants.
-- **Climb logging** — `+`/`-` quantity selector with AsyncStorage persistence. My Climbs tab shows total climbs/floors/meters and last 5 entries.
-- **Search** — debounced address search with filter chips (40+/31+/21+/All), starred blocks, recent blocks (3 with "See more"), and My Climbs history.
-- **Report modal** — 3 amenity categories (Water Cooler, Toilet, Food/Shop) in an icon grid, triggered from the Map tab. Saves to AsyncStorage as pending reports.
-- **Floating glass card** — translucent card positioned near the tapped pin showing storeys, height, distance, address, quantity selector, and directions link.
-- **Performance** — fixed pin sizes (5px), fixed Marker sizes (20px), no zoom-tied state for amenities. Bounds caching with 600ms debounce + 300m movement threshold.
+- **Bottom tab navigation** — 4 custom tabs (Social, Groups, Map, Profile) implemented with touchable icons, edge-swipe gestures, and Animated transitions. No react-navigation required.
+- **Map screen** — MapLibre with local Liberty style JSONs (light + dark). Building pins colored by height tier (blue 1-10, orange 11-20, red 21-30, dark red 31-39, purple 40+). Strava-style top search bar, saved buildings, suggested-climbs banner, right-side icon stack (filter/layers/alert/location), a "My Challenges" banner that refreshes when you switch back to this tab.
+- **Amenities, now real & shared** — water coolers/toilets/shops render from bundled data, plus user-submitted reports backed by Supabase (`amenity_reports`). Anyone can verify a report (auto-verifies at 3 confirmations), leave a comment (only the single most-liked comment is shown, with its like count), remove their own report, and is capped at 5 outstanding unverified reports at a time. The same verify/comment mechanism now also covers the static bundled water-cooler dataset's own unverified entries, not just user reports.
+- **Climb tracking** — barometer/step-counter powered `ClimbTrackerModal` (ready → tracking → paused/resumed → save), with tracking-method transparency (barometer vs. pedometer vs. manual estimate) shown on posts.
+- **Social feed** — photo-required posts, kudos, comments (avatar + timestamp + "view all"), 3-dot post menu (follow/hide/report), mock preview data when your network is sparse.
+- **Groups tab** — Challenges, Clubs, and Events in one place:
+  - **Challenges**: official + user-created (public or peers-only), real start/end dates, a per-challenge in-app leaderboard, custom hand-drawn medal badges (not stock icons), monthly "Overwatch-style" resetting badges that expire if not re-completed, and dedicated full-width cards for the hardest challenges (Everest Gauntlet, Double Eight-Thousander).
+  - **Clubs**: three official app-run clubs (Hiking, Trail Running, Climbing) with a shared weekly member leaderboard and an organizer/admin-only weekly channel (regular members react with emoji, can't post text) that rolls over every Monday, plus an Announcements club and user-submitted clubs.
+  - **Events**: real vertical-marathon/towerrunning races and recurring local training sessions, each with a real photo of the actual venue (openly-licensed), shown chronologically.
+- **Profile** — a Strava/Coros-inspired dashboard: one accent color, flat number-forward stat rows, a real multi-week trend chart, personal records, avatar upload (photo or mascot skin), and an animated "legendary" badge frame for special achievements.
+- **Web preview** — `npx expo start --web` runs Social/Groups/Profile/Settings in a browser (Map and climb tracking need native modules and only run on a phone).
+- **Dark mode** — full light/dark theming (`isDark` state from `App.tsx`) across every screen.
+- **Performance** — fixed pin sizes, zoom-gated amenity density, bounds caching with debounce + movement threshold.
 - **Singapore bounds restriction** — camera locked to Singapore via `maxBounds` and `minZoom`.
-- **My Location button** — re-centers map on user's current GPS position.
-- **Height legend** — colored dots at top-right showing the 5 tier colors.
 
 ---
 
@@ -146,6 +145,8 @@ npx expo run:android   # or npx expo run:ios
 
 See [Expo Development Builds](https://docs.expo.dev/develop/development-builds/introduction/) for more details.
 
+**Browser preview:** `npx expo start --web` runs Social, Groups, Profile, and Settings in a regular browser tab — useful for quickly checking UI changes without a device. Map and climb tracking depend on native modules (MapLibre, barometer/step counter) and show a "not available on web" placeholder there instead.
+
 ---
 
 ## Key decisions
@@ -159,7 +160,9 @@ See [Expo Development Builds](https://docs.expo.dev/develop/development-builds/i
 | Geocoding | OneMap API (free, SG-specific) | Single-pass OneMap Search API — all geocoding goes through OneMap |
 | Auth (MVP) | None | Read-only app, no user accounts needed |
 | Tab navigation | Custom touchable-based tabs (no react-navigation) | Avoids native module linking, works instantly with no Expo dev-build dependency |
-| Amenity reporting | Local AsyncStorage, unverified markers | Reports saved to device, appear as pending gray markers immediately |
+| Amenity reporting | Supabase-backed (`amenity_reports`), community-verified | Shared across users — verify (3-confirmation threshold), comment, delete your own, anti-spam cap. Static bundled amenities use a parallel verification table since they aren't DB rows. |
+| Challenge badges | Client-side `BADGE_DEFS` + `user_badges`/`challenge_participants` tables | Most badges are permanent once earned; a subset (`resets: 'monthly'`) re-lock each calendar month until re-completed, Overwatch-season-style |
+| Auth | Anonymous-first (`signInAnonymously`), upgradeable to a real account | Lets people use the app immediately; RLS is the sole authorization layer everywhere |
 
 ---
 
@@ -169,9 +172,11 @@ See [Expo Development Builds](https://docs.expo.dev/develop/development-builds/i
 |---|---|---|
 | **0** | Data ingestion pipeline | ✅ Built |
 | **1** | MVP app (browse map, filter/search, star blocks, climb logging, water cooler markers) | ✅ Complete |
-| **1.5** | Bottom tab navigation, amenity markers (toilets, shops), interactive placement, animated splash, performance fixes, dark mode, pending/unverified markers | ✅ Built |
-| **2** | Social & community features (auth, social feed, leaderboard, in-app routing, photo submissions, building detail expansion) | Planned, not built |
-| **3** | Gamification & advanced moderation (badges, streaks, amenity verification, trust-weighted scoring) | Unscoped |
+| **1.5** | Bottom tab navigation, amenity markers (toilets, shops), interactive placement, animated splash, performance fixes, dark mode | ✅ Built |
+| **2a** | Auth (anonymous-first), badges, height verification, building photos, notifications | ✅ Built |
+| **2b** | Social feed, leaderboard (public/friends), public profiles, kudos/comments | ✅ Built |
+| **2c** | Groups: challenges (official + user-created), official clubs with weekly channels, events, amenity verification/comments as a shared DB feature, Profile dashboard redesign | ✅ Built |
+| **3** | Avatar-frame challenge rewards, in-club threaded replies, true live event/training scraping | Not built |
 
 ---
 
