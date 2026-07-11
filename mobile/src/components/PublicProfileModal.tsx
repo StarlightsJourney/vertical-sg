@@ -1,11 +1,14 @@
 import { useState, useEffect, useCallback } from 'react';
-import { View, Text, Modal, TouchableOpacity, ScrollView, ActivityIndicator, Image, StyleSheet } from 'react-native';
+import { View, Text, Modal, TouchableOpacity, ScrollView, ActivityIndicator, StyleSheet, Dimensions } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { supabase } from '../config/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import MascotAvatar from './MascotAvatar';
 import { avatarUriFor } from '../utils/avatarUri';
+import PhotoGallery from './PhotoGallery';
 import BadgeDetailModal from './BadgeDetailModal';
+import MedalBadge, { medalEmblemFor } from './MedalBadge';
+import { medalColorFor } from '../utils/medalColor';
 import { computeXP, computeLevelProgress } from '../utils/leveling';
 import { BADGE_DEFS } from '../types';
 import type { Profile, UserBadge, BadgeDef } from '../types';
@@ -14,6 +17,13 @@ interface Props {
   userId: string | null;
   visible: boolean;
   onClose: () => void;
+  /** Preview-only climber shown in the feed/leaderboard when there aren't
+   * enough real users yet (see MOCK_PROFILES/MOCK_LEADERBOARD in
+   * SocialScreen.tsx) — has no real account behind it, so there's nothing
+   * to fetch from Supabase. When set, this is rendered directly instead of
+   * calling load(), with the follow button and posts/badges sections
+   * replaced by a short explanatory note. */
+  mockProfile?: { profile: Profile; stats: { climbs: number; floors: number; tallest: number } };
 }
 
 interface PostItem {
@@ -21,10 +31,14 @@ interface PostItem {
   floors_climbed: number;
   caption: string | null;
   photo_path: string | null;
+  photo_paths: string[] | null;
   created_at: string;
   blk_no: string;
   street: string;
 }
+
+// Sheet content padding (20*2) + post card padding (14*2) — see styles.content/postCard below.
+const POST_WIDTH = Dimensions.get('window').width - 68;
 
 function formatRelativeTime(iso: string): string {
   const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
@@ -39,7 +53,7 @@ function formatRelativeTime(iso: string): string {
 /** Read-only view of someone else's profile — identity, stats, their posts,
  * and a follow button. Reachable by tapping a name in the feed, leaderboard,
  * or search results. */
-export default function PublicProfileModal({ userId, visible, onClose }: Props) {
+export default function PublicProfileModal({ userId, visible, onClose, mockProfile }: Props) {
   const { user } = useAuth();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [badges, setBadges] = useState<UserBadge[]>([]);
@@ -53,6 +67,17 @@ export default function PublicProfileModal({ userId, visible, onClose }: Props) 
 
   const load = useCallback(async () => {
     if (!userId) return;
+    if (mockProfile) {
+      setProfile(mockProfile.profile);
+      setStats(mockProfile.stats);
+      setBadges([]);
+      setVerifiedCount(0);
+      setFollowerCount(0);
+      setIsFollowing(false);
+      setPosts([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
 
     const [
@@ -64,7 +89,7 @@ export default function PublicProfileModal({ userId, visible, onClose }: Props) 
       { data: myFollow },
     ] = await Promise.all([
       supabase.from('profiles').select('*').eq('user_id', userId).maybeSingle(),
-      supabase.from('climbs').select('climb_id, floors_climbed, climb_qty, partial_floors, caption, photo_path, created_at, blocks(blk_no, street)').eq('user_id', userId),
+      supabase.from('climbs').select('climb_id, floors_climbed, climb_qty, partial_floors, caption, photo_path, photo_paths, created_at, blocks(blk_no, street)').eq('user_id', userId),
       supabase.from('user_badges').select('*').eq('user_id', userId),
       supabase.from('height_verifications').select('*', { count: 'exact', head: true }).eq('user_id', userId).eq('status', 'active'),
       supabase.from('follow_counts').select('followers_count').eq('user_id', userId).maybeSingle(),
@@ -95,6 +120,7 @@ export default function PublicProfileModal({ userId, visible, onClose }: Props) 
           floors_climbed: c.floors_climbed,
           caption: c.caption,
           photo_path: c.photo_path,
+          photo_paths: c.photo_paths,
           created_at: c.created_at,
           blk_no: c.blocks?.blk_no ?? '',
           street: c.blocks?.street ?? '',
@@ -102,12 +128,12 @@ export default function PublicProfileModal({ userId, visible, onClose }: Props) 
       setPosts(withContent);
     }
     setLoading(false);
-  }, [userId, user]);
+  }, [userId, user, mockProfile]);
 
   useEffect(() => { if (visible) load(); }, [visible, load]);
 
   const handleToggleFollow = async () => {
-    if (!user || !userId) return;
+    if (!user || !userId || mockProfile) return;
     setIsFollowing((prev) => !prev); // optimistic
     setFollowerCount((prev) => prev + (isFollowing ? -1 : 1));
 
@@ -143,7 +169,7 @@ export default function PublicProfileModal({ userId, visible, onClose }: Props) 
                 <Text style={styles.name}>{profile?.display_name ?? 'Climber'}</Text>
                 <Text style={styles.followerCount}>{followerCount} follower{followerCount !== 1 ? 's' : ''}</Text>
 
-                {!isSelf && user && (
+                {!isSelf && user && !mockProfile && (
                   <TouchableOpacity
                     style={[styles.followBtn, isFollowing && styles.followBtnActive]}
                     onPress={handleToggleFollow}
@@ -172,12 +198,23 @@ export default function PublicProfileModal({ userId, visible, onClose }: Props) 
                 </View>
               </View>
 
+              {mockProfile ? (
+                <Text style={styles.emptyText}>
+                  This is a preview climber shown to fill out the feed and leaderboard early on — badges and posts aren't tracked for it. It'll be replaced by real climbers as more people join.
+                </Text>
+              ) : (
+                <>
               {/* Featured badge only — the full collection is for their own
                   profile; here it's just the one thing they chose to show. */}
               <Text style={styles.sectionTitle}>Badge</Text>
               {featuredBadgeDef ? (
                 <TouchableOpacity style={styles.featuredBadgeRow} onPress={() => setSelectedBadge(featuredBadgeDef)} activeOpacity={0.7}>
-                  <Ionicons name={featuredBadgeDef.icon as any} size={26} color="#F59E0B" />
+                  <MedalBadge
+                    color={medalColorFor(featuredBadgeDef)}
+                    emblem={medalEmblemFor(featuredBadgeDef.icon, featuredBadgeDef.key, featuredBadgeDef.resets === 'monthly')}
+                    iconName={featuredBadgeDef.icon}
+                    size={30}
+                  />
                   <View style={{ flex: 1 }}>
                     <Text style={styles.featuredBadgeName}>{featuredBadgeDef.name}</Text>
                     <Text style={styles.featuredBadgeSub}>{badges.length} badge{badges.length !== 1 ? 's' : ''} earned in total</Text>
@@ -196,17 +233,23 @@ export default function PublicProfileModal({ userId, visible, onClose }: Props) 
                       {post.blk_no ? ` at Blk ${post.blk_no} ${post.street}` : ''}
                     </Text>
                     {post.caption && <Text style={styles.postCaption}>{post.caption}</Text>}
-                    {post.photo_path && (
-                      <Image
-                        source={{ uri: supabase.storage.from('building-photos').getPublicUrl(post.photo_path).data.publicUrl }}
-                        style={styles.postPhoto}
-                      />
+                    {(post.photo_paths?.length ? post.photo_paths : post.photo_path ? [post.photo_path] : []).length > 0 && (
+                      <View style={{ marginTop: 8 }}>
+                        <PhotoGallery
+                          paths={post.photo_paths?.length ? post.photo_paths : [post.photo_path!]}
+                          height={150}
+                          borderRadius={10}
+                          width={POST_WIDTH}
+                        />
+                      </View>
                     )}
                     <Text style={styles.postTime}>{formatRelativeTime(post.created_at)}</Text>
                   </View>
                 ))
               ) : (
                 <Text style={styles.emptyText}>No posts yet — climbs with a photo or note show up here.</Text>
+              )}
+                </>
               )}
             </ScrollView>
           )}
@@ -261,6 +304,5 @@ const styles = StyleSheet.create({
   postBody: { fontSize: 13.5, color: '#374151', marginBottom: 4 },
   postFloors: { fontWeight: '700', color: '#10B981' },
   postCaption: { fontSize: 13.5, color: '#111827', marginTop: 4 },
-  postPhoto: { width: '100%', height: 150, borderRadius: 10, marginTop: 8, backgroundColor: '#E5E7EB' },
   postTime: { fontSize: 11, color: '#9CA3AF', marginTop: 8 },
 });

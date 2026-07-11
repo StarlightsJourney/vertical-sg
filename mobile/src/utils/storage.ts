@@ -73,4 +73,15 @@ export default {
   async setStarredBlocks(ids: string[]): Promise<void> {
     await AsyncStorage.setItem('starred_blocks', JSON.stringify(ids));
   },
+
+  // --- Home tab calendar reminders ('YYYY-MM-DD' strings) — local-only for
+  // now, no push notifications. See HomeScreen.tsx. ---
+  async getClimbReminders(): Promise<string[]> {
+    const val = await AsyncStorage.getItem('climb_reminders');
+    return val ? JSON.parse(val) : [];
+  },
+
+  async setClimbReminders(dates: string[]): Promise<void> {
+    await AsyncStorage.setItem('climb_reminders', JSON.stringify(dates));
+  },
 };

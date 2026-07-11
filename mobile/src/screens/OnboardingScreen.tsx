@@ -12,11 +12,11 @@ import {
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useLocation } from '../hooks/useLocation';
 import { fetchBlocksInBounds } from '../services/blocks';
-import { logClimb } from '../services/climbs';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../config/supabase';
 import storage from '../utils/storage';
 import MascotAvatar from '../components/MascotAvatar';
+import { computeWeeklyGoal, cadenceForPath } from '../utils/goals';
 import type { Block } from '../types';
 
 interface Props {
@@ -51,8 +51,6 @@ const FITNESS_OPTIONS = [
   { label: '16 – 30 floors', desc: 'You do this on purpose already', color: '#FF3B30' },
   { label: '30+ floors', desc: 'Show-off', color: '#7C3AED' },
 ];
-
-const GOAL_BASE_FLOORS = [120, 200, 320];
 
 function Mascot() {
   const bob = useRef(new Animated.Value(0)).current;
@@ -101,7 +99,10 @@ export default function OnboardingScreen({ onComplete }: Props) {
   const [blocksLoading, setBlocksLoading] = useState(false);
   const [selectedBlock, setSelectedBlock] = useState<Block | null>(null);
   const [climbing, setClimbing] = useState(false);
-  const [weeklyGoal, setWeeklyGoal] = useState(200);
+  // Derived, not stateful — so it's correct whether the user picks a block
+  // or hits "Skip for now", and always reflects the path/motivation/fitness
+  // answers actually given rather than a value computed only along one path.
+  const weeklyGoal = computeWeeklyGoal(pathIdx, goalIdx, fitnessIdx);
 
   const goTo = (s: Step) => setStep(s);
 
@@ -133,21 +134,25 @@ export default function OnboardingScreen({ onComplete }: Props) {
     if (step === 'building') loadNearbyBlocks();
   }, [step, loadNearbyBlocks]);
 
-  const handleClimbIt = async () => {
-    if (!selectedBlock || !user) return;
+  const handleSetNextClimb = async () => {
+    if (!selectedBlock) return;
     setClimbing(true);
 
-    await logClimb(user.id, selectedBlock.block_id, selectedBlock.blk_no, selectedBlock.street, selectedBlock.storeys, 1, 0);
-
-    const base = GOAL_BASE_FLOORS[fitnessIdx] ?? 200;
-    const boost = goalIdx === 0 ? 1.3 : goalIdx === 3 ? 1.15 : 1;
-    setWeeklyGoal(Math.round((base * boost) / 10) * 10);
+    // Save it as a target, not a completed climb — the user is picking this
+    // during onboarding and may not be standing at the block right now.
+    // Starring it surfaces it in the Map's "Saved" row so it's easy to find
+    // and log for real later.
+    const starred = await storage.getStarredBlocks();
+    if (!starred.includes(selectedBlock.block_id)) {
+      await storage.setStarredBlocks([...starred, selectedBlock.block_id]);
+    }
 
     setClimbing(false);
     goTo('celebrate');
   };
 
   const finish = async () => {
+    const cadence = cadenceForPath(pathIdx);
     await storage.setItem('onboarding_completed', 'true');
     await storage.setItem('onboarding_profile', JSON.stringify({
       path: PATH_OPTIONS[pathIdx].label,
@@ -155,14 +160,15 @@ export default function OnboardingScreen({ onComplete }: Props) {
       handle,
       avatarIdx,
       weeklyGoal,
+      cadence,
     }));
 
     // Persist to the real profiles table too — anonymous sessions have a
-    // real user id, so their handle/skin is visible to others right away,
-    // not just stored locally.
+    // real user id, so their handle/skin (and now goal/cadence, for Home)
+    // is visible right away, not just stored locally.
     if (user) {
       await supabase.from('profiles').upsert(
-        { user_id: user.id, display_name: handle, avatar_idx: avatarIdx },
+        { user_id: user.id, display_name: handle, avatar_idx: avatarIdx, weekly_goal_floors: weeklyGoal, climb_cadence_per_week: cadence },
         { onConflict: 'user_id' },
       );
     }
@@ -267,8 +273,8 @@ export default function OnboardingScreen({ onComplete }: Props) {
         {step === 'building' && (
           <View style={styles.stepBox}>
             <Text style={styles.eyebrow}>Near you</Text>
-            <Text style={styles.h2}>Pick your first climb.</Text>
-            <Text style={styles.sub}>Real blocks near your location right now — tap one to try it.</Text>
+            <Text style={styles.h2}>Set your first target.</Text>
+            <Text style={styles.sub}>Real blocks near your location — pick one to save as your first climb. You can log it for real whenever you're actually there.</Text>
             {blocksLoading ? (
               <ActivityIndicator size="small" color="#2563EB" style={{ marginVertical: 24 }} />
             ) : nearbyBlocks.length > 0 ? (
@@ -290,10 +296,10 @@ export default function OnboardingScreen({ onComplete }: Props) {
             )}
             <TouchableOpacity
               style={[styles.primaryBtn, (!selectedBlock || climbing) && { opacity: 0.5 }]}
-              onPress={handleClimbIt}
+              onPress={handleSetNextClimb}
               disabled={!selectedBlock || climbing}
             >
-              {climbing ? <ActivityIndicator size="small" color="#FFF" /> : <Text style={styles.primaryBtnText}>Climb it</Text>}
+              {climbing ? <ActivityIndicator size="small" color="#FFF" /> : <Text style={styles.primaryBtnText}>Set as my first climb</Text>}
             </TouchableOpacity>
             {nearbyBlocks.length === 0 && !blocksLoading && (
               <TouchableOpacity style={styles.textLinkBtn} onPress={finish}>
@@ -306,28 +312,30 @@ export default function OnboardingScreen({ onComplete }: Props) {
         {step === 'celebrate' && (
           <View style={styles.stepBox}>
             <View style={styles.celebrateIcon}>
-              <Ionicons name="checkmark-circle" size={64} color="#10B981" />
+              <Ionicons name="flag" size={64} color="#10B981" />
             </View>
-            <Text style={styles.h2Center}>Building Climbed!</Text>
+            <Text style={styles.h2Center}>You're All Set!</Text>
             <View style={styles.xpPill}>
-              <Text style={styles.xpPillText}>+10 XP · {selectedBlock ? `Blk ${selectedBlock.blk_no}` : ''}</Text>
+              <Text style={styles.xpPillText}>
+                {selectedBlock ? `Blk ${selectedBlock.blk_no} saved to your Map` : 'Saved to your Map'}
+              </Text>
             </View>
             <View style={styles.celebrateStatsRow}>
               <View style={styles.cstat}>
-                <Text style={styles.cstatValue}>1</Text>
-                <Text style={styles.cstatLabel}>Day streak</Text>
+                <Text style={styles.cstatValue}>{selectedBlock?.storeys ?? 0}</Text>
+                <Text style={styles.cstatLabel}>Floors in this climb</Text>
               </View>
               <View style={styles.cstat}>
-                <Text style={styles.cstatValue}>{selectedBlock?.storeys ?? 0}</Text>
-                <Text style={styles.cstatLabel}>Floors today</Text>
+                <Text style={styles.cstatValue}>{weeklyGoal}</Text>
+                <Text style={styles.cstatLabel}>Weekly goal, fl</Text>
               </View>
             </View>
             <View style={styles.goalRow}>
               <Text style={styles.goalRowText}>This week</Text>
-              <Text style={styles.goalRowText}>{selectedBlock?.storeys ?? 0} / {weeklyGoal} fl</Text>
+              <Text style={styles.goalRowText}>0 / {weeklyGoal} fl</Text>
             </View>
             <View style={styles.goalTrack}>
-              <View style={[styles.goalFill, { width: `${Math.min(100, Math.round(((selectedBlock?.storeys ?? 0) / weeklyGoal) * 100))}%` }]} />
+              <View style={[styles.goalFill, { width: '0%' }]} />
             </View>
             <TouchableOpacity style={styles.primaryBtn} onPress={finish}>
               <Text style={styles.primaryBtnText}>Start Climbing</Text>

@@ -1,21 +1,31 @@
+import { View, StyleSheet } from 'react-native';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import Svg, { Defs, LinearGradient, Stop, Circle, Path, Polygon, Rect } from 'react-native-svg';
 
 export type MedalEmblem = 'mountain' | 'lightning' | 'flag' | 'infinity' | 'rocket' | 'flame' | 'trophy' | 'star';
 
 interface Props {
   color: string;
-  emblem: MedalEmblem;
+  /** Hand-drawn emblem for the challenge archetypes. When null/undefined, the
+   * medal falls back to rendering `iconName` (the badge's own Ionicon) on the
+   * disc — so achievement badges each get their own meaningful symbol instead
+   * of all sharing one generic emblem. */
+  emblem?: MedalEmblem | null;
+  /** Ionicon name to render on the disc when there's no hand-drawn emblem. */
+  iconName?: string;
   size?: number;
   /** Ribbon tails below the medal disc — turn off when the medal sits inside a small circular slot. */
   ribbon?: boolean;
 }
 
 // Custom-drawn vector medals (react-native-svg) rather than a flat icon glyph
-// — a gradient disc, a raised rim, a ribbon, and a hand-built emblem shape
-// per challenge archetype (mountain = elevation, lightning = sprint pace,
-// flag = dated/limited-time, infinity = endurance/long-haul, rocket =
-// momentum, flame = intensity, trophy = the two "beat Everest" specials).
-export default function MedalBadge({ color, emblem, size = 52, ribbon = false }: Props) {
+// — a gradient disc, a raised rim, a ribbon, and either a hand-built emblem
+// shape per challenge archetype (mountain = elevation, lightning = sprint
+// pace, flag = dated/limited-time, infinity = endurance/long-haul, rocket =
+// momentum, flame = intensity, trophy = the two "beat Everest" specials), or,
+// for any other badge, that badge's own Ionicon rendered in white on the
+// disc — so every badge is a proper medal AND uniquely identifiable.
+export default function MedalBadge({ color, emblem, iconName, size = 52, ribbon = false }: Props) {
   const s = size;
   const c = s / 2;
   const r = s * 0.46;
@@ -85,7 +95,7 @@ export default function MedalBadge({ color, emblem, size = 52, ribbon = false }:
     }
   };
 
-  return (
+  const svg = (
     <Svg width={s} height={s * (ribbon ? 1.32 : 1)} viewBox={`0 0 ${s} ${s * (ribbon ? 1.32 : 1)}`}>
       <Defs>
         <LinearGradient id={gradId} x1="0%" y1="0%" x2="100%" y2="100%">
@@ -108,8 +118,25 @@ export default function MedalBadge({ color, emblem, size = 52, ribbon = false }:
       <Circle cx={c} cy={c} r={r} fill={`url(#${gradId})`} stroke="#FFFFFF" strokeWidth={s * 0.035} />
       <Circle cx={c} cy={c} r={r * 0.86} fill="none" stroke="#FFFFFF" strokeWidth={1} strokeOpacity={0.5} />
       <Circle cx={c} cy={c * 0.9} r={r} fill={`url(#${shineId})`} />
-      {renderEmblem()}
+      {emblem ? renderEmblem() : null}
     </Svg>
+  );
+
+  // No hand-drawn emblem → overlay the badge's own Ionicon (in white) on the
+  // disc, so achievement badges stay unique and meaningful. Ionicons are font
+  // glyphs and can't live inside <Svg>, so they sit as an absolute overlay.
+  if (emblem || !iconName) return svg;
+  const glyph = s * 0.46;
+  return (
+    <View style={{ width: s, height: s * (ribbon ? 1.32 : 1) }}>
+      {svg}
+      <Ionicons
+        name={iconName as any}
+        size={glyph}
+        color="#FFFFFF"
+        style={[StyleSheet.absoluteFill, { top: c - glyph / 2, left: c - glyph / 2 }]}
+      />
+    </View>
   );
 }
 
@@ -123,8 +150,11 @@ function StarShape({ cx, cy, r, fill }: { cx: number; cy: number; r: number; fil
   return <Polygon points={points.join(' ')} fill={fill} />;
 }
 
-/** Maps a challenge's reward_icon (legacy Ionicons name) or badge key to a medal emblem. */
-export function medalEmblemFor(rewardIcon: string, badgeKey?: string | null, generic?: boolean): MedalEmblem {
+/** Maps a challenge's reward_icon (legacy Ionicons name) or badge key to a
+ * hand-drawn medal emblem, or null when there's no dedicated emblem — in
+ * which case MedalBadge renders the badge's own Ionicon instead, so each
+ * badge stays unique and meaningful rather than all sharing a generic star. */
+export function medalEmblemFor(rewardIcon: string, badgeKey?: string | null, generic?: boolean): MedalEmblem | null {
   if (badgeKey === 'everest_gauntlet_challenge' || badgeKey === 'double_eightthousander_challenge') return 'trophy';
   // Generic "just a numbers game" monthly elevation badges deliberately all
   // share one emblem — they're meant to read as tiers of the same badge, not
@@ -136,5 +166,5 @@ export function medalEmblemFor(rewardIcon: string, badgeKey?: string | null, gen
   if (rewardIcon.includes('rocket')) return 'rocket';
   if (rewardIcon.includes('flame')) return 'flame';
   if (rewardIcon.includes('trending')) return 'mountain';
-  return 'star';
+  return null;
 }

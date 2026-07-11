@@ -1,42 +1,27 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { View, Text, Image, StyleSheet, ScrollView, TouchableOpacity, Linking, Modal, TextInput, Alert, LayoutAnimation, NativeSyntheticEvent, NativeScrollEvent, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, Image, StyleSheet, ScrollView, TouchableOpacity, Linking, Modal, TextInput, Alert, Animated, KeyboardAvoidingView, Platform, type NativeSyntheticEvent, type NativeScrollEvent, type ImageSourcePropType } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../config/supabase';
 import AuthPrompt from '../components/AuthPrompt';
-import ChallengeDetailModal, { challengeColor, PRIMARY_BLUE } from '../components/ChallengeDetailModal';
+import ChallengeDetailModal, { PRIMARY_BLUE } from '../components/ChallengeDetailModal';
 import MedalBadge, { medalEmblemFor } from '../components/MedalBadge';
 import SceneryBanner from '../components/SceneryBanner';
 import ClubIcon from '../components/ClubIcon';
-import ClubDetailModal from '../components/ClubDetailModal';
+import ClubDetailModal, { CLUB_PHOTO } from '../components/ClubDetailModal';
 import PublicProfileModal from '../components/PublicProfileModal';
+import MascotAvatar from '../components/MascotAvatar';
+import { avatarUriFor } from '../utils/avatarUri';
 import { displayChallengeTitle as displayTitle, displayChallengeDescription as displayDescription } from '../utils/challengeDisplay';
-import { wikimediaThumb } from '../utils/wikimediaThumb';
-import { medalColorForBadgeKey } from '../utils/medalColor';
-import { BADGE_DEFS } from '../types';
+import { medalColorForChallenge, isSpecialChallenge } from '../utils/medalColor';
 import type { Challenge, UserClub, UserEvent, Profile, OfficialClub } from '../types';
 
-function formatDateRange(startIso: string, endIso: string): string {
-  const opts: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric' };
-  return `${new Date(startIso).toLocaleDateString(undefined, opts)} – ${new Date(endIso).toLocaleDateString(undefined, opts)}`;
-}
 
 function formatShortDate(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
-function isSpecial(ch: Challenge): boolean {
-  return !!BADGE_DEFS.find((b) => b.key === ch.badge_key)?.special;
-}
-
-// Same color source Profile uses for the same badge — official challenges
-// with a real badge_key get the shared tier/special color; user-created
-// challenges (no badge_key, no real badge) fall back to a hash-based
-// palette purely for visual variety between them.
-function medalColorForChallenge(ch: Challenge): string {
-  if (ch.badge_key) return medalColorForBadgeKey(ch.badge_key, isSpecial(ch));
-  return challengeColor(ch.challenge_id);
-}
+const isSpecial = isSpecialChallenge;
 
 interface NormalizedEvent {
   name: string;
@@ -47,7 +32,7 @@ interface NormalizedEvent {
   date: string | null;
   distance?: string;
   eventType?: string;
-  photoUri?: string;
+  photoUri?: ImageSourcePropType;
   isUser: boolean;
   creatorName?: string;
   eventId?: string;
@@ -60,19 +45,16 @@ const CLUB_COLOR: Record<OfficialClub['category'], string> = {
   Announcements: '#F59E0B',
 };
 
-// Real photos (openly-licensed, Wikimedia Commons) as circular club logos
-// instead of a vector icon attempt — attribution: trail running photo by
-// Petar Milošević (CC BY-SA 3.0), rock climbing wall photo is US Air Force
-// public domain, Bukit Timah photo by Chainwit. (CC BY 4.0, reused from the
-// Local Training listing above). No photo for Announcements — it's shown as
-// its own banner, not a grid card, so the small SVG megaphone (ClubIcon) is
-// only ever seen at icon size in search results.
-const CLUB_PHOTO: Partial<Record<OfficialClub['category'], string>> = {
-  'Trail Running': 'https://upload.wikimedia.org/wikipedia/commons/2/25/Trail_running.JPG',
-  Hiking: 'https://upload.wikimedia.org/wikipedia/commons/3/30/A_hike_to_the_Bukit_Timah_Summit_%282025%29_-_img_03.jpg',
-  Climbing: 'https://upload.wikimedia.org/wikipedia/commons/e/eb/Rock_climbing_wall.jpg',
-};
-const ANNOUNCEMENTS_PHOTO = 'https://upload.wikimedia.org/wikipedia/commons/3/3f/Singapore_city_skyline_at_night.JPG';
+// Real photos (openly-licensed, Wikimedia Commons), downloaded once and
+// bundled as local assets under assets/groups/ — attribution: trail running
+// photo by Petar Milošević (CC BY-SA 3.0), rock climbing wall photo is US
+// Air Force public domain, Bukit Timah photo by Chainwit. (CC BY 4.0,
+// reused from the Local Training listing below). Bundled rather than
+// hotlinked live from Wikimedia at runtime: the live CDN rate-limits
+// on-demand thumbnail requests ("429 Too many requests"), which is
+// invisible in a one-off curl/browser check but bites reliably once real
+// traffic hits it — a bundled asset has no such runtime dependency at all.
+const ANNOUNCEMENTS_PHOTO = require('../../assets/groups/announcements.jpg');
 
 interface EventItem {
   name: string;
@@ -85,8 +67,8 @@ interface EventItem {
   eventType: 'Vertical Marathon' | 'Vertical Challenge' | 'Trail Run' | 'Training';
   /** For recurring weekly training sessions: 0=Sun..6=Sat. When set, `date` is recomputed to the next upcoming occurrence at render time instead of relying on a fixed date that goes stale. */
   weekday?: number;
-  /** Real photo of the actual venue (openly-licensed, e.g. Wikimedia Commons) — used instead of the generic illustrated banner when we have one for this specific place. */
-  photoUri?: string;
+  /** Real bundled photo (require(...)) of the actual venue — used instead of the generic illustrated banner when we have one for this specific place. */
+  photoUri?: ImageSourcePropType;
 }
 
 /** Next upcoming date (today counts) for a given weekday, so recurring training listings always show a current date instead of drifting stale. */
@@ -98,20 +80,21 @@ function nextOccurrenceOfWeekday(weekday: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-// Curated, real Singapore + regional races — not scraped live (no live
-// scraper in this app), but researched and verified as active events at time
-// of writing. Dates shift year to year; tap through for the current one.
-// Real photos are openly-licensed (Wikimedia Commons, CC BY / CC BY-SA) —
-// attribution is required by the license: KL Tower photo by Jorge Láscar,
-// Guoco Tower by Bjoertvedt, Frasers Tower by TheGreatSG'rean, Ping An
-// Finance Centre by Dinkun Chen — all CC BY / CC BY-SA, see Wikimedia
-// Commons file pages for full attribution text.
+// Curated, real vertical/tower-running races — not scraped live (this app has
+// no scraper), but well-known, verifiable events. Dates shift year to year;
+// tap through for the current one. Photos are landscape city-skyline shots
+// (openly-licensed, from each city's Wikipedia lead image via the Wikimedia
+// REST API) — these frame far better in a wide banner than a single portrait
+// tower shot, which cropped badly.
 const RACES: EventItem[] = [
-  { name: 'KL Tower Run International Challenge', location: 'Kuala Lumpur, Malaysia', blurb: '1,608 steps, 292m of ascent inside Malaysia\'s iconic tower.', scope: 'Worldwide', url: 'https://www.jomrun.com/event/Kuala-Lumpur-Tower-Run-International-Challenge-2026', date: '2026-08-22', distance: '1,608 steps · 292m', eventType: 'Vertical Marathon', photoUri: 'https://upload.wikimedia.org/wikipedia/commons/d/d5/Menara_Kuala_Lumpur_%28Kuala_Lumpur_Tower%29_%2818972745702%29.jpg' },
-  { name: 'Vertical Challenge', location: 'Frasers Tower, Singapore', blurb: '1,256 steps to the top — Singapore Championship edition.', scope: 'Local', url: 'https://www.fraserstower.com.sg/content/frasers-tower/home/happening/verticalchallenge2025.html', date: '2026-09-12', distance: '1,256 steps · 201m', eventType: 'Vertical Challenge', photoUri: 'https://upload.wikimedia.org/wikipedia/commons/8/8a/Fraser_Tower.jpg' },
-  { name: 'National Vertical Marathon', location: 'Guoco Tower, Singapore', blurb: 'Race up Singapore\'s tallest tower. Organized annually by NTU Sports Club.', scope: 'Local', url: 'https://towerrunning.sg/', date: '2026-11-14', distance: '1,455 steps · 234m', eventType: 'Vertical Marathon', photoUri: 'https://upload.wikimedia.org/wikipedia/commons/1/1c/Singapore_-_Guoco_Tower_IMG_9657.jpg' },
-  { name: 'PingAn International Vertical Marathon', location: 'Shenzhen, China', blurb: '3,201 stairs, 541m of altitude gain to the observation deck.', scope: 'Worldwide', url: 'https://www.towerrunning.com/2025/11/27/announcement-towerrunning-200-internatiinal-vertical-marathon-pingan-shenzhen-january-10-2026/', date: '2027-01-10', distance: '3,201 steps · 541m', eventType: 'Vertical Marathon', photoUri: 'https://upload.wikimedia.org/wikipedia/commons/a/a4/PING_AN_FINANCE_CENTER%2C_SHENZHEN.jpg' },
-  { name: 'Towerrunning Tour', location: 'Worldwide circuit', blurb: 'The season-long international towerrunning series — races in dozens of cities.', scope: 'Worldwide', url: 'https://www.towerrunning.com/towerrunning-tour-2026/', date: null, distance: 'Varies by city', eventType: 'Vertical Marathon' },
+  { name: 'Swissôtel Vertical Marathon', location: 'Swissôtel The Stamford, Singapore', blurb: '1,336 steps up one of the world\'s tallest hotels — SG\'s original tower run since 1987.', scope: 'Local', url: 'https://towerrunning.com/', date: '2026-11-07', distance: '1,336 steps · 226m', eventType: 'Vertical Marathon', photoUri: require('../../assets/groups/race_singapore.jpg') },
+  { name: 'Frasers Tower Vertical Challenge', location: 'Frasers Tower, Singapore', blurb: '1,256 steps to the top — the Singapore Championship edition.', scope: 'Local', url: 'https://towerrunning.sg/', date: '2026-09-12', distance: '1,256 steps · 201m', eventType: 'Vertical Challenge', photoUri: require('../../assets/groups/announcements.jpg') },
+  { name: 'KL Tower International Towerthon', location: 'Menara KL, Kuala Lumpur', blurb: '2,058 steps inside Malaysia\'s iconic broadcast tower.', scope: 'Worldwide', url: 'https://towerrunning.com/', date: '2026-08-22', distance: '2,058 steps · 300m', eventType: 'Vertical Marathon', photoUri: require('../../assets/groups/race_kuala_lumpur.jpg') },
+  { name: 'PingAn Finance Centre Vertical Marathon', location: 'Shenzhen, China', blurb: '3,201 stairs, 541m of altitude gain to the observation deck.', scope: 'Worldwide', url: 'https://towerrunning.com/', date: '2027-01-10', distance: '3,201 steps · 541m', eventType: 'Vertical Marathon', photoUri: require('../../assets/groups/race_shenzhen.jpg') },
+  { name: 'Empire State Building Run-Up', location: 'New York City, USA', blurb: 'The world\'s original tower race — 1,576 steps up 86 floors, run since 1978.', scope: 'Worldwide', url: 'https://www.nyrr.org/', date: '2026-10-08', distance: '1,576 steps · 320m', eventType: 'Vertical Marathon', photoUri: require('../../assets/groups/race_new_york.jpg') },
+  { name: 'Taipei 101 Run Up', location: 'Taipei 101, Taiwan', blurb: '2,046 steps to the 91st-floor observatory of a former world\'s-tallest building.', scope: 'Worldwide', url: 'https://towerrunning.com/', date: '2027-05-09', distance: '2,046 steps · 390m', eventType: 'Vertical Marathon', photoUri: require('../../assets/groups/race_taipei.jpg') },
+  { name: 'La Verticale de la Tour Eiffel', location: 'Eiffel Tower, Paris', blurb: 'An elite invitational sprint up 1,665 steps of the Eiffel Tower.', scope: 'Worldwide', url: 'https://towerrunning.com/', date: '2027-03-20', distance: '1,665 steps · 276m', eventType: 'Vertical Marathon', photoUri: require('../../assets/groups/race_paris.jpg') },
+  { name: 'Sky Tower Stair Challenge', location: 'Sky Tower, Auckland', blurb: '1,267 steps up NZ\'s tallest structure — the annual firefighters\' charity climb.', scope: 'Worldwide', url: 'https://skytowerstairchallenge.co.nz/', date: '2026-11-21', distance: '1,267 steps · 328m', eventType: 'Vertical Marathon', photoUri: require('../../assets/groups/race_auckland.jpg') },
 ];
 
 // "Local club events" — recurring weekly training sessions curated from each
@@ -126,16 +109,24 @@ const RACES: EventItem[] = [
 // Wirbel1980 (CC BY-SA), Kallang Wave Mall by LN9267 (CC BY-SA) — see
 // Wikimedia Commons file pages for full attribution text.
 const LOCAL_TRAINING: EventItem[] = ([
-  { name: 'Trail Runners SG Hill Repeats', location: 'Bukit Timah Nature Reserve', blurb: 'Weekly Saturday hill-repeat session, open to all paces — meet at the visitor centre.', scope: 'Local', url: 'https://www.facebook.com/groups/TrailRunnersSingapore/', date: null, weekday: 6, distance: '5–8km repeats', eventType: 'Training', photoUri: 'https://upload.wikimedia.org/wikipedia/commons/3/30/A_hike_to_the_Bukit_Timah_Summit_%282025%29_-_img_03.jpg' },
-  { name: 'SG Hiking Group Weekend Trail Walk', location: 'MacRitchie Reservoir', blurb: 'Casual weekend nature walk along the TreeTop Walk loop — beginner friendly.', scope: 'Local', url: 'https://www.facebook.com/groups/sghikingandtravel/', date: null, weekday: 0, distance: '~10km loop', eventType: 'Training', photoUri: 'https://upload.wikimedia.org/wikipedia/commons/f/fb/MacRitchie_Reservoir.jpg' },
-  { name: 'Adidas Runners SG Track Session', location: 'Bishan-Ang Mo Kio Park', blurb: 'Structured interval track session, part of the weekly crew calendar.', scope: 'Local', url: 'https://www.runmagazine.asia/adidas-runners-singapore/', date: null, weekday: 2, distance: 'Interval sets', eventType: 'Training', photoUri: 'https://upload.wikimedia.org/wikipedia/commons/4/4f/Bishan-Ang_Mo_Kio_Park.jpg' },
-  { name: 'Climb Central Bouldering Meetup', location: 'Climb Central, Kallang Wave Mall', blurb: 'Community bouldering night — partner-finding and route projects.', scope: 'Local', url: 'https://www.climbcentral.sg/', date: null, weekday: 3, distance: 'Indoor bouldering', eventType: 'Training', photoUri: 'https://upload.wikimedia.org/wikipedia/commons/f/fa/Kallang_Wave_Mall_06-08-2025.jpg' },
-  { name: 'Exploring SG Hiking Night Hike', location: 'Southern Ridges', blurb: 'Evening hike across the Southern Ridges boardwalks — bring a headlamp.', scope: 'Local', url: 'https://www.facebook.com/groups/957889039371788/', date: null, weekday: 5, distance: '~10km', eventType: 'Training', photoUri: 'https://upload.wikimedia.org/wikipedia/commons/8/85/Henderson_Waves%2C_Singapore.jpg' },
+  { name: 'Trail Runners SG Hill Repeats', location: 'Bukit Timah Nature Reserve', blurb: 'Weekly Saturday hill-repeat session, open to all paces — meet at the visitor centre.', scope: 'Local', url: 'https://www.facebook.com/groups/TrailRunnersSingapore/', date: null, weekday: 6, distance: '5–8km repeats', eventType: 'Training', photoUri: require('../../assets/groups/club_hiking.jpg') },
+  { name: 'SG Hiking Group Weekend Trail Walk', location: 'MacRitchie Reservoir', blurb: 'Casual weekend nature walk along the TreeTop Walk loop — beginner friendly.', scope: 'Local', url: 'https://www.facebook.com/groups/sghikingandtravel/', date: null, weekday: 0, distance: '~10km loop', eventType: 'Training', photoUri: require('../../assets/groups/training_macritchie.jpg') },
+  { name: 'parkrun Singapore 5K', location: 'West Coast Park', blurb: 'Free, timed, community 5K every Saturday morning — walk, jog or run, all welcome.', scope: 'Local', url: 'https://www.parkrun.com.sg/', date: null, weekday: 6, distance: 'Timed 5km', eventType: 'Training', photoUri: require('../../assets/groups/club_trail_running.jpg') },
+  { name: 'Adidas Runners SG Track Session', location: 'Bishan-Ang Mo Kio Park', blurb: 'Structured interval track session, part of the weekly crew calendar.', scope: 'Local', url: 'https://www.runmagazine.asia/adidas-runners-singapore/', date: null, weekday: 2, distance: 'Interval sets', eventType: 'Training', photoUri: require('../../assets/groups/training_bishan_park.jpg') },
+  { name: 'Climb Central Bouldering Meetup', location: 'Climb Central, Kallang Wave Mall', blurb: 'Community bouldering night — partner-finding and route projects.', scope: 'Local', url: 'https://www.climbcentral.sg/', date: null, weekday: 3, distance: 'Indoor bouldering', eventType: 'Training', photoUri: require('../../assets/groups/training_climb_central.jpg') },
+  { name: 'Boulder Movement Community Night', location: 'Boulder Movement, Tai Seng', blurb: 'Open bouldering social — meet climbing partners and project routes together.', scope: 'Local', url: 'https://www.bouldermovement.com/', date: null, weekday: 4, distance: 'Indoor bouldering', eventType: 'Training', photoUri: require('../../assets/groups/club_climbing.jpg') },
+  { name: 'Exploring SG Hiking Night Hike', location: 'Southern Ridges', blurb: 'Evening hike across the Southern Ridges boardwalks — bring a headlamp.', scope: 'Local', url: 'https://www.facebook.com/groups/957889039371788/', date: null, weekday: 5, distance: '~10km', eventType: 'Training', photoUri: require('../../assets/groups/training_southern_ridges.jpg') },
+  { name: 'Mount Faber Stair & Trail Crew', location: 'Mount Faber Park', blurb: 'Monday-evening stair repeats and ridge loop — a strong hill-strength session.', scope: 'Local', url: 'https://www.nparks.gov.sg/gardens-parks-and-nature/parks-and-nature-reserves/mount-faber-park', date: null, weekday: 1, distance: 'Stair repeats', eventType: 'Training', photoUri: require('../../assets/groups/training_southern_ridges.jpg') },
 ] as EventItem[]).map((e) => ({ ...e, date: nextOccurrenceOfWeekday(e.weekday!) }));
 
 type Tab = 'challenges' | 'clubs' | 'events';
 
-export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
+// Fixed collapsing-tab-bar block height: tabBtn (38) + tabBar padding (3×2)
+// + tabBarBlock vertical padding (10 + 6). Kept in sync with those styles so
+// the collapse animation never needs to measure the bar at runtime.
+const TAB_BAR_BLOCK_HEIGHT = 60;
+
+export default function GroupsScreen({ isDark = false, onNavigateToProfile }: { isDark?: boolean; onNavigateToProfile?: () => void }) {
   const { user, isAnonymous } = useAuth();
   const [tab, setTab] = useState<Tab>('challenges');
   const [authPromptVisible, setAuthPromptVisible] = useState(false);
@@ -144,6 +135,31 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [friendResults, setFriendResults] = useState<Profile[]>([]);
   const [viewingProfileId, setViewingProfileId] = useState<string | null>(null);
+  const [myProfile, setMyProfile] = useState<Profile | null>(null);
+  // Club circle photos have no illustrated fallback like SceneryBanner does —
+  // a native-only load failure (large/slow image, transient network blip)
+  // used to just render blank. Track failures per club and fall back to the
+  // ClubIcon SVG instead of leaving an empty circle.
+  const [failedClubPhotos, setFailedClubPhotos] = useState<Set<string>>(new Set());
+  // Grid cards keep a uniform height (long titles truncate to 2 lines) so a
+  // row never misaligns — long-press a card to see its full title instead
+  // of it silently getting cut off.
+  const [expandedCardTitles, setExpandedCardTitles] = useState<Set<string>>(new Set());
+  const toggleTitleExpanded = (id: string) => {
+    setExpandedCardTitles((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    if (!user) { setMyProfile(null); return; }
+    supabase.from('profiles').select('*').eq('user_id', user.id).maybeSingle().then(({ data }) => {
+      if (data) setMyProfile(data as Profile);
+    });
+  }, [user]);
 
   const [weeklyChallenges, setWeeklyChallenges] = useState<Challenge[]>([]);
   const [monthlyChallenges, setMonthlyChallenges] = useState<Challenge[]>([]);
@@ -167,33 +183,43 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
   const [viewAllSection, setViewAllSection] = useState<'training' | 'races' | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<NormalizedEvent | null>(null);
 
-  // Sticky header, hide-on-scroll-down / show-on-scroll-up tab bar
-  // (Strava-style). Two earlier attempts both had real bugs: a JS-driven
-  // height interpolation coupled to onLayout measurement (stutter, and the
-  // bar could get stuck near-zero-height), then an opacity/translateY-only
-  // native-driven version (smooth, but left the bar's background box
-  // visible with nothing in it, since only its *contents* were faded, not
-  // its layout footprint). This version uses LayoutAnimation + a plain
-  // boolean instead of Animated at all: the bar is genuinely
-  // mounted/unmounted, and LayoutAnimation smooths the resulting layout
-  // shift on the native side — this is the same mechanism (and precedent)
-  // already used for NotificationsModal's swipe-to-dismiss animation.
-  const [tabBarVisible, setTabBarVisible] = useState(true);
+  // Collapsing tab bar. The bar floats absolutely over the top of the scroll
+  // content (which reserves its height as top padding), and is driven to one
+  // of two resting states — fully shown or fully hidden — by scroll
+  // DIRECTION, so it never sits at a partial position. A plain onScroll
+  // handler (JS, cheap: just reads offset + fires a tween) decides direction;
+  // the actual slide + fade run on a single Animated.Value via the NATIVE
+  // driver, so it stays smooth. Reversals just retarget the in-flight tween.
+  const barAnim = useRef(new Animated.Value(1)).current; // 1 = shown, 0 = hidden
+  const barShown = useRef(true);
   const lastScrollY = useRef(0);
+  const setBarShown = (shown: boolean) => {
+    if (barShown.current === shown) return;
+    barShown.current = shown;
+    Animated.timing(barAnim, { toValue: shown ? 1 : 0, duration: 200, useNativeDriver: true }).start();
+  };
   const handleScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
     const y = e.nativeEvent.contentOffset.y;
-    const delta = y - lastScrollY.current;
-    const showBar = () => {
-      if (!tabBarVisible) { LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); setTabBarVisible(true); }
-    };
-    const hideBar = () => {
-      if (tabBarVisible) { LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); setTabBarVisible(false); }
-    };
-    if (y <= 10) showBar();
-    else if (delta > 8) hideBar();
-    else if (delta < -8) showBar();
+    const dy = y - lastScrollY.current;
     lastScrollY.current = y;
+    if (y <= 8) setBarShown(true);            // always show near the top
+    else if (dy > 6) setBarShown(false);       // scrolling down → hide
+    else if (dy < -6) setBarShown(true);       // scrolling up → show
   };
+  const tabTranslateY = barAnim.interpolate({ inputRange: [0, 1], outputRange: [-TAB_BAR_BLOCK_HEIGHT, 0] });
+  const renderTabButtons = (dark: boolean) => (
+    (['challenges', 'clubs', 'events'] as Tab[]).map((t) => (
+      <TouchableOpacity
+        key={t}
+        style={[s.tabBtn, tab === t && s.tabBtnActive, tab === t && dark && { backgroundColor: '#374151' }]}
+        onPress={() => setTab(t)}
+      >
+        <Text style={[s.tabBtnText, tab === t && s.tabBtnTextActive, dark && { color: tab === t ? '#F9FAFB' : '#9CA3AF' }]}>
+          {t === 'challenges' ? 'Challenges' : t === 'clubs' ? 'Clubs' : 'Events'}
+        </Text>
+      </TouchableOpacity>
+    ))
+  );
 
   const loadChallenges = useCallback(async () => {
     const { data } = await supabase.from('challenges').select('*').eq('is_active', true);
@@ -307,53 +333,61 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
     const pct = Math.min(100, Math.round((progressFloors / ch.target_floors) * 100));
     const completed = joined && pct >= 100;
     const color = medalColorForChallenge(ch);
-    const isLimitedTime = !!(ch.starts_at && ch.ends_at);
+    const cornerBadge: { icon: 'lock-closed' | 'people'; bg: string; fg: string } | null =
+      ch.visibility === 'peers'
+        ? { icon: 'lock-closed', bg: '#F5F3FF', fg: '#7C3AED' }
+        : ch.creator_id
+          ? { icon: 'people', bg: '#EFF6FF', fg: '#2563EB' }
+          : null;
+    const dateText = ch.starts_at && ch.ends_at
+      ? `Ends ${new Date(ch.ends_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
+      : ch.period === 'monthly' ? 'Resets monthly' : 'Resets weekly';
     return (
       <TouchableOpacity
         key={ch.challenge_id}
         style={[s.gridCard, isDark && { backgroundColor: '#1F2937' }]}
         onPress={() => setSelectedChallenge(ch)}
+        onLongPress={() => toggleTitleExpanded(ch.challenge_id)}
         activeOpacity={0.85}
       >
+        {/* Community/Peers marked with a small corner badge (absolute, so it
+            doesn't affect card height) instead of a period/date pill — the
+            reset cadence lives in the detail view, not as card noise. */}
+        {cornerBadge && (
+          <View style={[s.cornerBadge, { backgroundColor: cornerBadge.bg }]}>
+            <Ionicons name={cornerBadge.icon} size={11} color={cornerBadge.fg} />
+          </View>
+        )}
         <View style={{ alignItems: 'center', width: '100%' }}>
           <View style={{ position: 'relative' }}>
-            <MedalBadge color={color} emblem={medalEmblemFor(ch.reward_icon, ch.badge_key, ch.generic_name)} size={52} />
+            <MedalBadge color={color} emblem={medalEmblemFor(ch.reward_icon, ch.badge_key, ch.generic_name)} iconName={ch.reward_icon} size={52} />
             {completed && (
               <View style={s.bigBadgeCheck}>
                 <Ionicons name="checkmark-circle" size={15} color="#10B981" />
               </View>
             )}
           </View>
-          {ch.visibility === 'peers' ? (
-            <View style={[s.communityPill, { backgroundColor: '#F5F3FF' }]}>
-              <Text style={[s.communityPillText, { color: '#7C3AED' }]}>Peers Only</Text>
-            </View>
-          ) : ch.creator_id && (
-            <View style={s.communityPill}>
-              <Text style={s.communityPillText}>Community</Text>
-            </View>
-          )}
-          <Text style={[s.gridTitle, isDark && { color: '#F9FAFB' }]} numberOfLines={2}>{displayTitle(ch)}</Text>
+          <Text style={[s.gridTitle, isDark && { color: '#F9FAFB' }]} numberOfLines={expandedCardTitles.has(ch.challenge_id) ? undefined : 2}>{displayTitle(ch)}</Text>
           <Text style={[s.gridDesc, isDark && { color: '#9CA3AF' }]} numberOfLines={2}>{displayDescription(ch)}</Text>
-          <Text style={s.gridDateText} numberOfLines={1}>
-            {isLimitedTime ? formatDateRange(ch.starts_at!, ch.ends_at!) : (ch.period === 'monthly' ? 'Resets monthly' : 'Resets weekly')}
-          </Text>
+          <Text style={s.gridMeta}>{dateText}</Text>
         </View>
 
-        {joined ? (
-          <View style={{ marginTop: 8, width: '100%' }}>
-            <View style={s.challengeTrack}>
-              <View style={[s.challengeFill, { width: `${pct}%`, backgroundColor: color }]} />
+        <View style={s.gridFooter}>
+          {joined ? (
+            <View style={{ width: '100%' }}>
+              <View style={s.challengeTrack}>
+                <View style={[s.challengeFill, { width: `${pct}%`, backgroundColor: color }]} />
+              </View>
+              <Text style={s.challengeProgressText}>
+                {completed ? 'Completed!' : `${progressFloors} / ${ch.target_floors} fl`}
+              </Text>
             </View>
-            <Text style={s.challengeProgressText}>
-              {completed ? 'Completed!' : `${progressFloors} / ${ch.target_floors} fl`}
-            </Text>
-          </View>
-        ) : (
-          <TouchableOpacity style={s.gridJoinBtn} onPress={() => handleJoin(ch.challenge_id)}>
-            <Text style={s.joinBtnText}>Join</Text>
-          </TouchableOpacity>
-        )}
+          ) : (
+            <TouchableOpacity style={s.gridJoinBtn} onPress={() => handleJoin(ch.challenge_id)}>
+              <Text style={s.joinBtnText}>Join</Text>
+            </TouchableOpacity>
+          )}
+        </View>
       </TouchableOpacity>
     );
   };
@@ -382,10 +416,7 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
           <Text style={[s.featDesc, isDark && { color: '#9CA3AF' }]} numberOfLines={3}>{ch.description}</Text>
           <View style={s.featPillRow}>
             <View style={[s.featPill, isDark && { backgroundColor: '#111827' }]}>
-              <Ionicons name="time-outline" size={12} color={isDark ? '#D1D5DB' : '#6B7280'} />
-              <Text style={[s.featPillText, isDark && { color: '#D1D5DB' }]}>{ch.period === 'monthly' ? 'Resets monthly' : 'Resets weekly'}</Text>
-            </View>
-            <View style={[s.featPill, isDark && { backgroundColor: '#111827' }]}>
+              <Ionicons name="trending-up-outline" size={12} color={isDark ? '#D1D5DB' : '#6B7280'} />
               <Text style={[s.featPillText, isDark && { color: '#D1D5DB' }]}>{ch.target_floors} FLOORS</Text>
             </View>
           </View>
@@ -438,7 +469,7 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
         onPress={openDetail}
         activeOpacity={0.85}
       >
-        <SceneryBanner variant={ev.scope === 'Worldwide' ? 'skyline' : 'sunrise'} height={110} borderRadius={0} photoUri={photoUri}>
+        <SceneryBanner variant={ev.scope === 'Worldwide' ? 'skyline' : 'sunrise'} height={140} borderRadius={0} photoUri={photoUri}>
           {date && (
             <View style={s.eventDateBadge}>
               <Text style={s.eventDateBadgeText}>{formatShortDate(date)}</Text>
@@ -519,31 +550,25 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
       {/* Sticky header — always visible */}
       <View style={[s.header, isDark && { backgroundColor: '#111827', borderBottomColor: '#374151' }]}>
         <Text style={[s.headerTitle, isDark && { color: '#F9FAFB' }]}>Groups</Text>
-        <TouchableOpacity style={s.headerSearchBtn} onPress={() => setSearchVisible(true)} activeOpacity={0.7}>
-          <Ionicons name="search-outline" size={22} color={isDark ? '#D1D5DB' : '#374151'} />
-        </TouchableOpacity>
+        <View style={s.headerActions}>
+          <TouchableOpacity style={s.headerSearchBtn} onPress={() => setSearchVisible(true)} activeOpacity={0.7}>
+            <Ionicons name="search-outline" size={22} color={isDark ? '#D1D5DB' : '#374151'} />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={onNavigateToProfile} activeOpacity={0.7}>
+            <MascotAvatar skinIdx={myProfile?.avatar_idx ?? 0} photoUri={avatarUriFor(myProfile)} size={34} />
+          </TouchableOpacity>
+        </View>
       </View>
 
-      {/* Tab bar hides on scroll-down, reappears on scroll-up — genuinely
-          mounted/unmounted (LayoutAnimation smooths the transition), so
-          nothing is left behind when it's gone. */}
-      {tabBarVisible && (
-        <View style={[s.tabBar, isDark && { backgroundColor: '#1F2937' }]}>
-          {(['challenges', 'clubs', 'events'] as Tab[]).map((t) => (
-            <TouchableOpacity
-              key={t}
-              style={[s.tabBtn, tab === t && s.tabBtnActive, tab === t && isDark && { backgroundColor: '#374151' }]}
-              onPress={() => setTab(t)}
-            >
-              <Text style={[s.tabBtnText, tab === t && s.tabBtnTextActive, isDark && { color: tab === t ? '#F9FAFB' : '#9CA3AF' }]}>
-                {t === 'challenges' ? 'Challenges' : t === 'clubs' ? 'Clubs' : 'Events'}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      )}
-
-      <ScrollView contentContainerStyle={s.scrollContent} showsVerticalScrollIndicator={false} onScroll={handleScroll} scrollEventThrottle={16}>
+      {/* Collapsing area: the content scrolls under a floating tab bar. The
+          wrapper clips the bar as it slides up under the sticky header. */}
+      <View style={s.collapseWrap}>
+      <ScrollView
+        contentContainerStyle={[s.scrollContent, { paddingTop: TAB_BAR_BLOCK_HEIGHT }]}
+        showsVerticalScrollIndicator={false}
+        scrollEventThrottle={16}
+        onScroll={handleScroll}
+      >
         {tab === 'challenges' && (
           <>
             {featuredChallenges.map(renderFeaturedChallenge)}
@@ -613,18 +638,33 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
             <Text style={[s.groupSectionTitle, isDark && { color: '#F9FAFB' }]}>Clubs</Text>
             <View style={s.gridWrap}>
               {sportClubs.filter((c) => matchesSearch(c.name)).map((club) => (
-                <TouchableOpacity key={club.club_id} style={[s.gridCard, isDark && { backgroundColor: '#1F2937' }]} onPress={() => setSelectedClub(club)} activeOpacity={0.85}>
-                  {CLUB_PHOTO[club.category] ? (
-                    <Image source={{ uri: wikimediaThumb(CLUB_PHOTO[club.category]!, 250) }} style={s.clubIconCircle} resizeMode="cover" />
-                  ) : (
-                    <View style={[s.clubIconCircle, { backgroundColor: CLUB_COLOR[club.category] + '1F', alignItems: 'center', justifyContent: 'center' }]}>
-                      <ClubIcon category={club.category} color={CLUB_COLOR[club.category]} size={26} />
+                <TouchableOpacity
+                  key={club.club_id}
+                  style={[s.gridCard, isDark && { backgroundColor: '#1F2937' }]}
+                  onPress={() => setSelectedClub(club)}
+                  onLongPress={() => toggleTitleExpanded(club.club_id)}
+                  activeOpacity={0.85}
+                >
+                  <View style={{ alignItems: 'center', width: '100%' }}>
+                    {CLUB_PHOTO[club.category] && !failedClubPhotos.has(club.club_id) ? (
+                      <Image
+                        source={CLUB_PHOTO[club.category]!}
+                        style={s.clubIconCircle}
+                        resizeMode="cover"
+                        onError={() => setFailedClubPhotos((prev) => new Set(prev).add(club.club_id))}
+                      />
+                    ) : (
+                      <View style={[s.clubIconCircle, { backgroundColor: CLUB_COLOR[club.category] + '1F', alignItems: 'center', justifyContent: 'center' }]}>
+                        <ClubIcon category={club.category} color={CLUB_COLOR[club.category]} size={26} />
+                      </View>
+                    )}
+                    <Text style={[s.clubGridTitle, isDark && { color: '#F9FAFB' }]} numberOfLines={expandedCardTitles.has(club.club_id) ? undefined : 1}>{club.name}</Text>
+                    <Text style={[s.clubGridDesc, isDark && { color: '#9CA3AF' }]} numberOfLines={2}>{club.description}</Text>
+                  </View>
+                  <View style={s.gridFooter}>
+                    <View style={s.gridJoinBtn}>
+                      <Text style={s.joinBtnText}>View Club</Text>
                     </View>
-                  )}
-                  <Text style={[s.gridTitle, isDark && { color: '#F9FAFB' }]}>{club.name}</Text>
-                  <Text style={[s.gridDesc, isDark && { color: '#9CA3AF' }]} numberOfLines={3}>{club.description}</Text>
-                  <View style={s.gridJoinBtn}>
-                    <Text style={s.joinBtnText}>View Club</Text>
                   </View>
                 </TouchableOpacity>
               ))}
@@ -673,6 +713,19 @@ export default function GroupsScreen({ isDark = false }: { isDark?: boolean }) {
           </>
         )}
       </ScrollView>
+
+        {/* Floating tab bar — absolute over the content top; slides fully up
+            (hidden) or down (shown) by scroll direction (see barAnim above).
+            Opaque screen-bg strip so content scrolling underneath isn't
+            visible around the pill. */}
+        <Animated.View style={[s.tabBarFloat, isDark && { backgroundColor: '#111827' }, { transform: [{ translateY: tabTranslateY }], opacity: barAnim }]}>
+          <View style={s.tabBarBlock}>
+            <View style={[s.tabBar, isDark && { backgroundColor: '#1F2937' }]}>
+              {renderTabButtons(isDark)}
+            </View>
+          </View>
+        </Animated.View>
+      </View>
 
       {/* --- View All (Local Training / Races) --- */}
       <Modal visible={!!viewAllSection} animationType="slide" onRequestClose={() => setViewAllSection(null)}>
@@ -898,7 +951,7 @@ function EventDetailModal({ event, visible, onClose, isDark, onReport }: {
 
 const ed = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F9FAFB' },
-  closeBtn: { position: 'absolute', top: 52, right: 16, padding: 6 },
+  closeBtn: { position: 'absolute', top: 52, left: 16, padding: 6, zIndex: 1 },
   dateBadge: { position: 'absolute', bottom: 16, right: 16, backgroundColor: 'rgba(255,255,255,0.92)', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6 },
   dateBadgeText: { fontSize: 13, fontWeight: '800', color: '#111827' },
   body: { padding: 20, paddingBottom: 48 },
@@ -1127,18 +1180,25 @@ const s = StyleSheet.create({
     borderBottomColor: '#E5E7EB',
   },
   headerTitle: { fontSize: 28, fontWeight: '800', color: '#111827', letterSpacing: -0.5 },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 14 },
   headerSearchBtn: { padding: 4 },
 
+  // Clips the floating tab bar as it slides up under the sticky header.
+  collapseWrap: { flex: 1, overflow: 'hidden' },
+  // The tab bar floats over the top of the scroll content; its opaque strip
+  // is the screen background so content scrolling under it isn't visible
+  // around the pill. Height (tabBarBlock) sums to TAB_BAR_BLOCK_HEIGHT:
+  // 38 (tabBtn) + 6 (tabBar padding) + 16 (block) = 60.
+  tabBarFloat: { position: 'absolute', top: 0, left: 0, right: 0, backgroundColor: '#F9FAFB' },
+  tabBarBlock: { paddingTop: 10, paddingBottom: 6 },
   tabBar: {
     flexDirection: 'row',
     backgroundColor: '#F3F4F6',
     borderRadius: 12,
     padding: 3,
     marginHorizontal: 16,
-    marginTop: 10,
-    marginBottom: 10,
   },
-  tabBtn: { flex: 1, paddingVertical: 9, alignItems: 'center', borderRadius: 9 },
+  tabBtn: { flex: 1, height: 38, alignItems: 'center', justifyContent: 'center', borderRadius: 9 },
   tabBtnActive: { backgroundColor: '#FFFFFF', elevation: 1 },
   tabBtnText: { fontSize: 13, fontWeight: '700', color: '#9CA3AF' },
   tabBtnTextActive: { color: '#111827' },
@@ -1229,8 +1289,14 @@ const s = StyleSheet.create({
 
   // 2-column challenge/club grid
   gridWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 20 },
+  // Fixed content slots (medal + a always-present pill + title minHeight +
+  // desc minHeight + a fixed-height footer) keep every card in a grid the
+  // exact same height WITHOUT a big forced minHeight and WITHOUT
+  // justify-content:space-between (which was pushing the button far from the
+  // description and creating the "massive gap").
   gridCard: {
     width: '48%',
+    position: 'relative',
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     padding: 14,
@@ -1242,10 +1308,21 @@ const s = StyleSheet.create({
     shadowOpacity: 0.06,
     shadowRadius: 6,
   },
-  gridTitle: { fontSize: 13, fontWeight: '700', color: '#111827', textAlign: 'center', marginTop: 4 },
+  cornerBadge: {
+    position: 'absolute', top: 10, left: 10, zIndex: 1,
+    width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center',
+  },
+  gridTitle: { fontSize: 13, fontWeight: '700', color: '#111827', textAlign: 'center', marginTop: 8, lineHeight: 17, minHeight: 34 },
   gridDesc: { fontSize: 11, color: '#6B7280', textAlign: 'center', marginTop: 4, lineHeight: 15, minHeight: 30 },
-  gridDateText: { fontSize: 10.5, color: '#9CA3AF', fontWeight: '600', marginTop: 4, marginBottom: 4, textAlign: 'center' },
-  gridJoinBtn: { backgroundColor: PRIMARY_BLUE, borderRadius: 10, paddingVertical: 10, alignItems: 'center', marginTop: 8, width: '100%' },
+  // Club cards: one-line names, so no 2-line reservation — the description
+  // sits right under the title (no dead gap), tighter than challenge cards.
+  clubGridTitle: { fontSize: 14, fontWeight: '700', color: '#111827', textAlign: 'center', marginTop: 10, lineHeight: 18 },
+  clubGridDesc: { fontSize: 11, color: '#6B7280', textAlign: 'center', marginTop: 3, lineHeight: 15, minHeight: 30 },
+  // Small muted date/reset line between the description and the footer —
+  // plain text (not a colored pill), so it reads as quiet card meta.
+  gridMeta: { fontSize: 10.5, color: '#9CA3AF', fontWeight: '600', textAlign: 'center', marginTop: 6 },
+  gridFooter: { width: '100%', minHeight: 40, justifyContent: 'flex-end', marginTop: 8 },
+  gridJoinBtn: { backgroundColor: PRIMARY_BLUE, borderRadius: 10, paddingVertical: 10, alignItems: 'center', width: '100%' },
   clubIconCircle: { width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center', alignSelf: 'center', marginBottom: 4 },
 
   // Full-width featured/special challenge card — image on top, details below

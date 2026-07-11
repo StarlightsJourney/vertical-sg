@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { View, Image, StyleSheet } from 'react-native';
+import { View, Image, StyleSheet, type ImageSourcePropType } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Path, Circle, Polygon, Defs, LinearGradient as SvgGradient, Stop } from 'react-native-svg';
 import { wikimediaThumb } from '../utils/wikimediaThumb';
@@ -11,8 +11,16 @@ interface Props {
   height?: number;
   borderRadius?: number;
   children?: React.ReactNode;
-  /** Real photo URL (e.g. an openly-licensed Wikimedia Commons image) to use instead of the illustrated scene, when one exists for this specific place. Falls back to the vector illustration below if it fails to load. */
-  photoUri?: string;
+  /** Real photo to use instead of the illustrated scene, when one exists for
+   * this specific place. Falls back to the vector illustration below if it
+   * fails to load. A `require(...)` local asset (bundled with the app) is
+   * strongly preferred over a remote URL string — curated content photos
+   * used to be hotlinked live from Wikimedia, which is unreliable at
+   * runtime (rate-limited, "429 Too many requests", especially for
+   * on-demand thumbnail sizes) even though the same URL loads fine in a
+   * browser or via curl once. A string is still supported for genuinely
+   * dynamic/user-uploaded photos (e.g. Supabase Storage URLs). */
+  photoUri?: ImageSourcePropType | string;
 }
 
 // Cover "photo" banner. When a real photoUri is given (a specific, real
@@ -31,7 +39,14 @@ export default function SceneryBanner({ variant, height = 150, borderRadius = 18
     <View style={[styles.wrap, { height, borderRadius }]}>
       {showPhoto ? (
         <>
-          <Image source={{ uri: wikimediaThumb(photoUri!, 960) }} style={StyleSheet.absoluteFill} resizeMode="cover" onError={() => setPhotoFailed(true)} />
+          <Image
+            source={typeof photoUri === 'string' ? { uri: wikimediaThumb(photoUri, 960) } : photoUri!}
+            // Explicit full width/height + cover in style (not just the prop)
+            // so the image always fills and center-crops the banner regardless
+            // of the parent's absolute-layout resolution.
+            style={{ width: '100%', height: '100%', resizeMode: 'cover' }}
+            onError={() => setPhotoFailed(true)}
+          />
           <LinearGradient colors={['rgba(0,0,0,0.05)', 'rgba(0,0,0,0.45)']} start={{ x: 0, y: 0 }} end={{ x: 0, y: 1 }} style={StyleSheet.absoluteFill} />
         </>
       ) : (

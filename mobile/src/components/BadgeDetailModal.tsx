@@ -1,6 +1,13 @@
 import { View, Text, Modal, TouchableOpacity, StyleSheet } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
+import MedalBadge, { medalEmblemFor } from './MedalBadge';
+import { medalColorFor } from '../utils/medalColor';
 import type { BadgeDef } from '../types';
+
+/** Terse, Strava-style date: "Jul 11, 2026" — no "on", no full month name. */
+function formatAchievedDate(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
 
 interface Props {
   badge: BadgeDef | null;
@@ -10,35 +17,45 @@ interface Props {
   /** Omit to hide the "set as featured" action (e.g. viewing someone else's profile) */
   onSetFeatured?: () => void;
   onClose: () => void;
+  isDark?: boolean;
 }
 
-export default function BadgeDetailModal({ badge, earned, earnedAt, isFeatured, onSetFeatured, onClose }: Props) {
+export default function BadgeDetailModal({ badge, earned, earnedAt, isFeatured, onSetFeatured, onClose, isDark = false }: Props) {
   if (!badge) return null;
   const isMystery = badge.hidden && !earned;
 
   return (
     <Modal visible={!!badge} transparent animationType="fade" onRequestClose={onClose}>
       <TouchableOpacity style={styles.overlay} activeOpacity={1} onPress={onClose}>
-        <TouchableOpacity style={styles.card} activeOpacity={1}>
-          <View style={[styles.iconCircle, earned && styles.iconCircleEarned]}>
-            <Ionicons
-              name={isMystery ? 'help-outline' : (badge.icon as any)}
-              size={36}
-              color={earned ? '#60A5FA' : '#D1D5DB'}
-            />
+        <TouchableOpacity style={[styles.card, isDark && { backgroundColor: '#1F2937' }]} activeOpacity={1}>
+          {/* Same medal the badge shelf shows, so the "logo" is consistent
+              when you tap in. Locked/mystery just desaturate + dim it. */}
+          <View style={{ marginBottom: 16, opacity: earned ? 1 : 0.4 }}>
+            {isMystery ? (
+              <View style={[styles.mysteryDisc, isDark && { backgroundColor: '#374151' }]}>
+                <Ionicons name="help" size={34} color="#9CA3AF" />
+              </View>
+            ) : (
+              <MedalBadge
+                color={earned ? medalColorFor(badge) : '#B0B7C3'}
+                emblem={medalEmblemFor(badge.icon, badge.key, badge.resets === 'monthly')}
+                iconName={badge.icon}
+                size={72}
+              />
+            )}
           </View>
 
-          <Text style={styles.name}>{isMystery ? '???' : badge.name}</Text>
+          <Text style={[styles.name, isDark && { color: '#F9FAFB' }]}>{isMystery ? '???' : badge.name}</Text>
 
           {earned ? (
             <>
               <View style={styles.earnedPill}>
                 <Ionicons name="checkmark-circle" size={14} color="#10B981" />
                 <Text style={styles.earnedPillText}>
-                  Achieved{earnedAt ? ` on ${new Date(earnedAt).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}` : ''}
+                  {earnedAt ? formatAchievedDate(earnedAt) : 'Achieved'}
                 </Text>
               </View>
-              <Text style={styles.desc}>{badge.description}</Text>
+              <Text style={[styles.desc, isDark && { color: '#9CA3AF' }]}>{badge.description}</Text>
               {onSetFeatured && (
                 <TouchableOpacity
                   style={[styles.featureBtn, isFeatured && styles.featureBtnActive]}
@@ -54,7 +71,7 @@ export default function BadgeDetailModal({ badge, earned, earnedAt, isFeatured, 
           ) : (
             <>
               <Text style={styles.lockedLabel}>Not yet earned</Text>
-              <Text style={styles.desc}>
+              <Text style={[styles.desc, isDark && { color: '#9CA3AF' }]}>
                 {isMystery ? 'A hidden badge — you\'ll find out how when you earn it.' : `How to earn it: ${badge.description}`}
               </Text>
             </>
@@ -72,8 +89,7 @@ export default function BadgeDetailModal({ badge, earned, earnedAt, isFeatured, 
 const styles = StyleSheet.create({
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', padding: 32 },
   card: { backgroundColor: '#FFFFFF', borderRadius: 20, padding: 24, width: '100%', maxWidth: 340, alignItems: 'center' },
-  iconCircle: { width: 72, height: 72, borderRadius: 36, backgroundColor: '#F3F4F6', alignItems: 'center', justifyContent: 'center', marginBottom: 14 },
-  iconCircleEarned: { backgroundColor: '#EFF6FF' },
+  mysteryDisc: { width: 72, height: 72, borderRadius: 36, backgroundColor: '#F3F4F6', alignItems: 'center', justifyContent: 'center' },
   name: { fontSize: 19, fontWeight: '800', color: '#111827', marginBottom: 8, textAlign: 'center' },
   earnedPill: {
     flexDirection: 'row', alignItems: 'center', gap: 5,

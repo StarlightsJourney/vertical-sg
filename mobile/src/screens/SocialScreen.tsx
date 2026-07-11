@@ -16,7 +16,6 @@ import {
   Modal,
 } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import * as ImagePicker from 'expo-image-picker';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../config/supabase';
 import { getUnreadNotificationCount } from '../services/climbs';
@@ -25,19 +24,20 @@ import storage from '../utils/storage';
 import AuthPrompt from '../components/AuthPrompt';
 import MascotAvatar from '../components/MascotAvatar';
 import { avatarUriFor } from '../utils/avatarUri';
+import PhotoGridPicker from '../components/PhotoGridPicker';
+import PhotoGallery from '../components/PhotoGallery';
 import PublicProfileModal from '../components/PublicProfileModal';
 import LeaderboardModal from '../components/LeaderboardModal';
 import NotificationsModal from '../components/NotificationsModal';
-import ChallengeDetailModal, { challengeColor } from '../components/ChallengeDetailModal';
+import ChallengeDetailModal, { PRIMARY_BLUE } from '../components/ChallengeDetailModal';
+import MedalBadge, { medalEmblemFor } from '../components/MedalBadge';
+import { medalColorForChallenge, medalColorFor } from '../utils/medalColor';
+import { displayChallengeTitle, displayChallengeDescription } from '../utils/challengeDisplay';
 import type { Profile, Challenge } from '../types';
 import { BADGE_DEFS } from '../types';
 
 const HIDDEN_POSTS_KEY = 'hidden_feed_posts';
 
-function formatDateRange(startIso: string, endIso: string): string {
-  const opts: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric' };
-  return `${new Date(startIso).toLocaleDateString(undefined, opts)} – ${new Date(endIso).toLocaleDateString(undefined, opts)}`;
-}
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const MOCK_PHOTOS = [
@@ -52,6 +52,10 @@ interface FeedItem {
   floors_climbed: number;
   caption: string | null;
   photo_path: string | null;
+  /** Up to 6 Storage paths, in display order — kept in sync with photo_path
+   * (mirrors photo_paths[0]) by every write path. Null/empty for mock items
+   * and any pre-multi-photo rows without a migration backfill. */
+  photo_paths?: string[] | null;
   /** Local require() source for mock items — takes priority over photo_path
    * when set, since mock items don't have a real Supabase Storage path. */
   photoSource?: any;
@@ -156,6 +160,17 @@ const MOCK_FEED_ITEMS: FeedItem[] = [
   },
 ];
 
+/** Builds the mockProfile prop for PublicProfileModal when viewing one of
+ * the preview-only climbers (see MOCK_PROFILES/MOCK_LEADERBOARD above) —
+ * there's no real account/row behind these, so their stats come from the
+ * same hardcoded leaderboard entry instead of a Supabase query. */
+function mockProfileFor(userId: string) {
+  const profile = MOCK_PROFILES[userId];
+  const row = MOCK_LEADERBOARD.find((r) => r.user_id === userId);
+  if (!profile || !row) return undefined;
+  return { profile, stats: { climbs: row.total_climbs, floors: row.total_floors, tallest: row.best_single_climb } };
+}
+
 /** The timestamp a feed post should sort/display by: when it was actually
  * shared to the feed, falling back to when the climb itself was logged for
  * rows that predate the posted_at column (or were never explicitly posted,
@@ -193,7 +208,7 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
   // "Add photo/note" modal state
   const [editingClimbId, setEditingClimbId] = useState<string | null>(null);
   const [captionText, setCaptionText] = useState('');
-  const [postPhotoBase64, setPostPhotoBase64] = useState<string | null>(null);
+  const [postPhotosBase64, setPostPhotosBase64] = useState<string[]>([]);
   const [posting, setPosting] = useState(false);
 
   // "+" FAB — pick one of your recent climbs to post about
@@ -262,7 +277,7 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
     // show up here (bare "climbed X floors" entries stay in Profile only).
     const { data: climbs } = await supabase
       .from('climbs')
-      .select('climb_id, user_id, floors_climbed, caption, photo_path, tracking_method, created_at, posted_at, blocks(blk_no, street)')
+      .select('climb_id, user_id, floors_climbed, caption, photo_path, photo_paths, tracking_method, created_at, posted_at, blocks(blk_no, street)')
       .not('photo_path', 'is', null)
       // Approximates ordering by coalesce(posted_at, created_at) desc —
       // Postgrest can't express a coalesce directly, so order by posted_at
@@ -296,6 +311,7 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
         floors_climbed: c.floors_climbed,
         caption: c.caption,
         photo_path: c.photo_path,
+        photo_paths: c.photo_paths,
         created_at: c.created_at,
         posted_at: c.posted_at ?? null,
         blk_no: c.blocks?.blk_no ?? '',
@@ -377,12 +393,16 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
     const joinedIds = new Set((joined ?? []).map((j: any) => j.challenge_id));
     setMyChallengeIds(joinedIds);
 
+    let weeklyTotal = 0;
+    let monthlyTotal = 0;
+    const ltProgress: Record<string, number> = {};
     if (climbs) {
       const now = Date.now();
-      setWeeklyFloorsForChallenges(climbs.filter((c: any) => now - new Date(c.created_at).getTime() < 7 * 86400000).reduce((s, c: any) => s + c.floors_climbed, 0));
-      setMonthlyFloorsForChallenges(climbs.filter((c: any) => now - new Date(c.created_at).getTime() < 30 * 86400000).reduce((s, c: any) => s + c.floors_climbed, 0));
+      weeklyTotal = climbs.filter((c: any) => now - new Date(c.created_at).getTime() < 7 * 86400000).reduce((s, c: any) => s + c.floors_climbed, 0);
+      monthlyTotal = climbs.filter((c: any) => now - new Date(c.created_at).getTime() < 30 * 86400000).reduce((s, c: any) => s + c.floors_climbed, 0);
+      setWeeklyFloorsForChallenges(weeklyTotal);
+      setMonthlyFloorsForChallenges(monthlyTotal);
 
-      const ltProgress: Record<string, number> = {};
       for (const ch of all.filter((c) => c.starts_at && c.ends_at)) {
         const start = new Date(ch.starts_at!).getTime();
         const end = new Date(ch.ends_at!).getTime();
@@ -391,15 +411,34 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
       setLimitedTimeProgress(ltProgress);
     }
 
-    // Suggested = not already joined, prioritizing limited-time and
-    // unique/community/special challenges over the plain default set —
-    // once you've joined one it moves to "My Challenges" on Map instead.
-    const notJoined = all.filter((c) => !joinedIds.has(c.challenge_id));
+    // Not-joined challenges are prioritized first (limited-time, then
+    // unique/community/special, then the plain default set); joined-but-
+    // in-progress ones are still included, showing their progress bar
+    // instead of a Join button, so this section doesn't just disappear once
+    // you've joined everything currently available. Completed challenges
+    // are dropped entirely — there's nothing left to "suggest" about one
+    // you've already finished.
+    const progressFor = (ch: Challenge) => (ch.starts_at && ch.ends_at ? ltProgress[ch.challenge_id] ?? 0 : ch.period === 'monthly' ? monthlyTotal : weeklyTotal);
+    const isCompleted = (ch: Challenge) => joinedIds.has(ch.challenge_id) && progressFor(ch) >= ch.target_floors;
     const priority = (c: Challenge) => (c.starts_at && c.ends_at ? 0 : c.creator_id || c.difficulty === 'insane' ? 1 : 2);
-    setChallenges(notJoined.sort((a, b) => priority(a) - priority(b)).slice(0, 5));
+    const sorted = all
+      .filter((c) => !isCompleted(c))
+      .sort((a, b) => {
+        const aJoined = joinedIds.has(a.challenge_id) ? 1 : 0;
+        const bJoined = joinedIds.has(b.challenge_id) ? 1 : 0;
+        if (aJoined !== bJoined) return aJoined - bJoined;
+        return priority(a) - priority(b);
+      });
+    setChallenges(sorted.slice(0, 5));
   }, [user]);
 
   const loadRecommended = useCallback(async () => {
+    // Wait for auth to resolve before fetching — otherwise this can run once
+    // with user still null, which skips the "exclude myself" filter below
+    // entirely (undefined !== any real id), and if that stale response
+    // resolves after the later, correctly-filtered one, it clobbers it back
+    // to a list that includes your own account.
+    if (!user) return;
     const { data } = await supabase.from('leaderboard_weekly').select('*').order('total_floors', { ascending: false }).limit(10);
     if (!data) return;
     const others = (data as LeaderboardRow[]).filter((r) => r.user_id !== user?.id).slice(0, 5);
@@ -587,7 +626,7 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
     }
     setEditingClimbId(climbId);
     setCaptionText('');
-    setPostPhotoBase64(null);
+    setPostPhotosBase64([]);
   };
 
   const handleOpenComposer = async () => {
@@ -625,39 +664,27 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
     setPickerLoading(false);
   };
 
-  const pickPostPhoto = async (source: 'camera' | 'library') => {
-    const perm = source === 'camera'
-      ? await ImagePicker.requestCameraPermissionsAsync()
-      : await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) {
-      Alert.alert('Access needed', 'Enable access in Settings to add a photo.');
-      return;
-    }
-    const result = source === 'camera'
-      ? await ImagePicker.launchCameraAsync({ quality: 0.8, base64: true })
-      : await ImagePicker.launchImageLibraryAsync({ quality: 0.8, base64: true });
-    if (!result.canceled && result.assets?.[0]?.base64) {
-      setPostPhotoBase64(result.assets[0].base64);
-    }
-  };
-
   const submitPost = async () => {
     if (!editingClimbId || !user) return;
     // A photo is required — text-only posts were getting skipped over in the
     // feed, so this is now the one non-negotiable part of sharing a climb.
-    if (!postPhotoBase64) {
+    if (postPhotosBase64.length === 0) {
       Alert.alert('Photo required', 'Add a photo to share this climb — it\'s what gets people to actually stop and look.');
       return;
     }
     setPosting(true);
     try {
-      const photoPath = `feed/${user.id}-${Date.now()}.jpg`;
-      const bytes = base64ToUint8Array(postPhotoBase64);
-      const { error: uploadError } = await supabase.storage
-        .from('building-photos')
-        .upload(photoPath, bytes, { contentType: 'image/jpeg' });
-      if (uploadError) {
-        Alert.alert('Upload Failed', uploadError.message);
+      const results = await Promise.all(postPhotosBase64.map(async (base64, i) => {
+        const photoPath = `feed/${user.id}-${Date.now()}-${i}.jpg`;
+        const bytes = base64ToUint8Array(base64);
+        const { error: uploadError } = await supabase.storage
+          .from('building-photos')
+          .upload(photoPath, bytes, { contentType: 'image/jpeg' });
+        return uploadError ? null : photoPath;
+      }));
+      const photoPaths = results.filter((p): p is string => !!p);
+      if (photoPaths.length === 0) {
+        Alert.alert('Upload Failed', 'None of the photos could be uploaded.');
         setPosting(false);
         return;
       }
@@ -667,7 +694,7 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
       // became a feed post, which is what the feed should sort/display by.
       const { error } = await supabase
         .from('climbs')
-        .update({ caption: captionText.trim() || null, photo_path: photoPath, posted_at: new Date().toISOString() })
+        .update({ caption: captionText.trim() || null, photo_path: photoPaths[0], photo_paths: photoPaths, posted_at: new Date().toISOString() })
         .eq('climb_id', editingClimbId)
         .eq('user_id', user.id);
 
@@ -729,13 +756,12 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
                 </TouchableOpacity>
                 {leaderboard.map((row, i) => {
                   const isMe = user && row.user_id === user.id;
-                  const isMock = row.user_id.startsWith('mock-');
                   return (
                     <TouchableOpacity
                       key={row.user_id}
                       style={[s.lbRow, isMe && s.lbRowMe, isMe && isDark && { backgroundColor: 'rgba(37,99,235,0.22)' }]}
-                      onPress={() => !isMe && !isMock && setViewingProfileId(row.user_id)}
-                      disabled={!!isMe || isMock}
+                      onPress={() => !isMe && setViewingProfileId(row.user_id)}
+                      disabled={!!isMe}
                     >
                       <Text style={[s.lbRank, i < 3 && s.lbRankTop]}>{i + 1}</Text>
                       <MascotAvatar skinIdx={skinFor(row.user_id)} photoUri={photoFor(row.user_id)} size={26} />
@@ -749,7 +775,11 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
               </View>
             )}
 
-            {/* Suggested challenges — horizontal, big earned-badge treatment */}
+            {/* Suggested challenges — horizontal row, same medal/card
+                treatment as the Groups tab's challenge grid (MedalBadge,
+                shared medal color, generic-challenge display title/desc)
+                so a challenge doesn't look different depending on which
+                tab you see it from. */}
             {challenges.length > 0 && (
               <View style={s.challengesSection}>
                 <Text style={[s.cardTitle, isDark && { color: '#F9FAFB' }]}>Suggested Challenges</Text>
@@ -760,7 +790,16 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
                     const progressFloors = isLimitedTime ? (limitedTimeProgress[ch.challenge_id] ?? 0) : (ch.period === 'monthly' ? monthlyFloorsForChallenges : weeklyFloorsForChallenges);
                     const progressPct = Math.min(100, Math.round((progressFloors / ch.target_floors) * 100));
                     const completed = joined && progressPct >= 100;
-                    const color = challengeColor(ch.challenge_id);
+                    const color = medalColorForChallenge(ch);
+                    const cornerBadge: { icon: 'lock-closed' | 'people'; bg: string; fg: string } | null =
+                      ch.visibility === 'peers'
+                        ? { icon: 'lock-closed', bg: '#F5F3FF', fg: '#7C3AED' }
+                        : ch.creator_id
+                          ? { icon: 'people', bg: '#EFF6FF', fg: '#2563EB' }
+                          : null;
+                    const dateText = ch.starts_at && ch.ends_at
+                      ? `Ends ${new Date(ch.ends_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
+                      : ch.period === 'monthly' ? 'Resets monthly' : 'Resets weekly';
                     return (
                       <TouchableOpacity
                         key={ch.challenge_id}
@@ -768,47 +807,41 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
                         onPress={() => setSelectedChallenge(ch)}
                         activeOpacity={0.85}
                       >
-                        {ch.creator_id ? (
-                          <View style={[s.difficultyPill, s.challengeDifficultyPill, { backgroundColor: '#EFF6FF' }]}>
-                            <Text style={[s.difficultyText, { color: '#2563EB' }]}>COMMUNITY</Text>
-                          </View>
-                        ) : isLimitedTime ? (
-                          <View style={[s.difficultyPill, s.challengeDifficultyPill, { backgroundColor: color + '1A' }]}>
-                            <Text style={[s.difficultyText, { color }]}>{formatDateRange(ch.starts_at!, ch.ends_at!)}</Text>
-                          </View>
-                        ) : (
-                          <View style={[s.difficultyPill, s.challengeDifficultyPill, { backgroundColor: color + '1A' }]}>
-                            <Text style={[s.difficultyText, { color }]}>{ch.period === 'monthly' ? 'MONTHLY' : 'WEEKLY'}</Text>
+                        {cornerBadge && (
+                          <View style={[s.challengeCornerBadge, { backgroundColor: cornerBadge.bg }]}>
+                            <Ionicons name={cornerBadge.icon} size={11} color={cornerBadge.fg} />
                           </View>
                         )}
+                        <View style={{ alignItems: 'center', width: '100%' }}>
+                          <View style={{ position: 'relative' }}>
+                            <MedalBadge color={color} emblem={medalEmblemFor(ch.reward_icon, ch.badge_key, ch.generic_name)} iconName={ch.reward_icon} size={52} />
+                            {completed && (
+                              <View style={s.bigBadgeCheck}>
+                                <Ionicons name="checkmark-circle" size={15} color="#10B981" />
+                              </View>
+                            )}
+                          </View>
+                          <Text style={[s.challengeTitle, isDark && { color: '#F9FAFB' }, { marginTop: 10 }]} numberOfLines={2}>{displayChallengeTitle(ch)}</Text>
+                          <Text style={[s.challengeCardDesc, isDark && { color: '#9CA3AF' }]} numberOfLines={2}>{displayChallengeDescription(ch)}</Text>
+                          <Text style={s.challengeMeta}>{dateText}</Text>
+                        </View>
 
-                        <View style={[s.bigBadge, { backgroundColor: color + '1F' }]}>
-                          <Ionicons name={ch.reward_icon as any} size={38} color={color} />
-                          {completed && (
-                            <View style={s.bigBadgeCheck}>
-                              <Ionicons name="checkmark-circle" size={18} color="#10B981" />
+                        <View style={s.challengeFooter}>
+                          {joined ? (
+                            <View style={{ width: '100%' }}>
+                              <View style={s.challengeTrack}>
+                                <View style={[s.challengeFill, { width: `${progressPct}%`, backgroundColor: color }]} />
+                              </View>
+                              <Text style={s.challengeProgressText}>
+                                {completed ? 'Completed!' : `${progressFloors} / ${ch.target_floors} fl`}
+                              </Text>
                             </View>
+                          ) : (
+                            <TouchableOpacity style={[s.joinBtn, { backgroundColor: PRIMARY_BLUE }]} onPress={() => handleJoinChallenge(ch.challenge_id)}>
+                              <Text style={s.joinBtnText}>Join</Text>
+                            </TouchableOpacity>
                           )}
                         </View>
-                        <Text style={[s.rewardLabelBig, { color }]} numberOfLines={1}>{ch.reward_label}</Text>
-
-                        <Text style={[s.challengeTitle, isDark && { color: '#F9FAFB' }]} numberOfLines={2}>{ch.title}</Text>
-                        <Text style={[s.challengeCardDesc, isDark && { color: '#9CA3AF' }]} numberOfLines={3}>{ch.description}</Text>
-
-                        {joined ? (
-                          <View style={s.challengeProgressBlock}>
-                            <View style={s.challengeTrack}>
-                              <View style={[s.challengeFill, { width: `${progressPct}%`, backgroundColor: color }]} />
-                            </View>
-                            <Text style={s.challengeProgressText}>
-                              {completed ? 'Completed!' : `${progressFloors} / ${ch.target_floors} fl`}
-                            </Text>
-                          </View>
-                        ) : (
-                          <TouchableOpacity style={[s.joinBtn, { backgroundColor: color }]} onPress={() => handleJoinChallenge(ch.challenge_id)}>
-                            <Text style={s.joinBtnText}>Join</Text>
-                          </TouchableOpacity>
-                        )}
                       </TouchableOpacity>
                     );
                   })}
@@ -872,7 +905,7 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
             <View style={s.feedHeaderRow}>
               <TouchableOpacity
                 style={s.feedHeader}
-                onPress={() => !isMock && !isOwnPost && setViewingProfileId(item.user_id)}
+                onPress={() => !isOwnPost && setViewingProfileId(item.user_id)}
                 activeOpacity={0.7}
               >
                 <MascotAvatar skinIdx={skinFor(item.user_id)} photoUri={photoFor(item.user_id)} size={36} />
@@ -882,7 +915,12 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
                       {isOwnPost ? 'You' : nameFor(item.user_id)}
                     </Text>
                     {featuredBadgeDef && (
-                      <Ionicons name={featuredBadgeDef.icon as any} size={13} color="#F59E0B" />
+                      <MedalBadge
+                        color={medalColorFor(featuredBadgeDef)}
+                        emblem={medalEmblemFor(featuredBadgeDef.icon, featuredBadgeDef.key, featuredBadgeDef.resets === 'monthly')}
+                        iconName={featuredBadgeDef.icon}
+                        size={16}
+                      />
                     )}
                     {poster?.is_pro && (
                       <View style={s.proChip}><Text style={s.proChipText}>PRO</Text></View>
@@ -922,12 +960,13 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
               <Text style={[s.feedCaption, isDark && { color: '#F9FAFB' }]}>{item.caption}</Text>
             )}
 
-            {(item.photoSource || item.photo_path) && (
-              <Image
-                source={item.photoSource ?? { uri: supabase.storage.from('building-photos').getPublicUrl(item.photo_path!).data.publicUrl }}
-                style={s.feedPhoto}
-              />
-            )}
+            {item.photoSource ? (
+              <Image source={item.photoSource} style={s.feedPhoto} />
+            ) : (item.photo_paths?.length ?? 0) > 0 || item.photo_path ? (
+              <View style={{ marginTop: 10 }}>
+                <PhotoGallery paths={item.photo_paths?.length ? item.photo_paths : [item.photo_path!]} height={180} borderRadius={12} />
+              </View>
+            ) : null}
 
             <View style={s.feedActions}>
               <TouchableOpacity style={s.kudosBtn} onPress={() => handleToggleKudos(item)} activeOpacity={0.7}>
@@ -1075,33 +1114,23 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
               multiline
               maxLength={200}
             />
-            <TouchableOpacity
-              style={[s.postPhotoBtn, !postPhotoBase64 && s.postPhotoBtnRequired, isDark && { backgroundColor: '#111827' }]}
-              onPress={() => {
-                Alert.alert('Add Photo', '', [
-                  { text: 'Take Photo', onPress: () => pickPostPhoto('camera') },
-                  { text: 'Choose from Library', onPress: () => pickPostPhoto('library') },
-                  { text: 'Cancel', style: 'cancel' },
-                ]);
-              }}
-            >
-              {postPhotoBase64 ? (
-                <Image source={{ uri: `data:image/jpeg;base64,${postPhotoBase64}` }} style={s.postPhotoPreview} />
-              ) : (
-                <>
-                  <Ionicons name="camera-outline" size={20} color="#EF4444" />
-                  <Text style={s.postPhotoBtnRequiredText}>Attach a photo (required)</Text>
-                </>
-              )}
-            </TouchableOpacity>
+            <View style={{ marginBottom: 12 }}>
+              <PhotoGridPicker
+                photos={postPhotosBase64}
+                onChange={setPostPhotosBase64}
+                emptyLabel="Attach a photo (required)"
+                required
+                isDark={isDark}
+              />
+            </View>
             <View style={s.postModalActions}>
               <TouchableOpacity style={s.postCancelBtn} onPress={() => setEditingClimbId(null)}>
                 <Text style={s.postCancelText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[s.postSubmitBtn, (posting || !postPhotoBase64) && { opacity: 0.5 }]}
+                style={[s.postSubmitBtn, (posting || postPhotosBase64.length === 0) && { opacity: 0.5 }]}
                 onPress={submitPost}
-                disabled={posting || !postPhotoBase64}
+                disabled={posting || postPhotosBase64.length === 0}
               >
                 {posting ? <ActivityIndicator size="small" color="#FFF" /> : <Text style={s.postSubmitText}>Post</Text>}
               </TouchableOpacity>
@@ -1120,6 +1149,7 @@ export default function SocialScreen({ isDark = false, onNavigateToProfile, onNa
         userId={viewingProfileId}
         visible={!!viewingProfileId}
         onClose={() => setViewingProfileId(null)}
+        mockProfile={viewingProfileId?.startsWith('mock-') ? mockProfileFor(viewingProfileId) : undefined}
       />
 
       <LeaderboardModal
@@ -1354,8 +1384,12 @@ const s = StyleSheet.create({
   feedSectionTitle: { marginBottom: 4, marginTop: 4 },
   challengesSection: { marginBottom: 16 },
   challengeRow: { gap: 12, paddingRight: 8, paddingTop: 4 },
+  // Fixed content slots (medal + always-present pill + title/desc
+  // minHeights + fixed footer) keep every card the same height without a
+  // forced minHeight or space-between — matching the Groups tab's grid.
   challengeCard: {
     width: 210,
+    position: 'relative',
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     padding: 16,
@@ -1366,23 +1400,9 @@ const s = StyleSheet.create({
     shadowOpacity: 0.06,
     shadowRadius: 6,
   },
-  challengeDifficultyPill: {
-    alignSelf: 'flex-start',
-    marginBottom: 10,
-  },
-  difficultyPill: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 8,
-  },
-  difficultyText: { fontSize: 10.5, fontWeight: '800', letterSpacing: 0.4 },
-  bigBadge: {
-    width: 76,
-    height: 76,
-    borderRadius: 38,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 8,
+  challengeCornerBadge: {
+    position: 'absolute', top: 12, left: 12, zIndex: 1,
+    width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center',
   },
   bigBadgeCheck: {
     position: 'absolute',
@@ -1391,10 +1411,12 @@ const s = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderRadius: 10,
   },
-  rewardLabelBig: { fontSize: 12, fontWeight: '800', marginBottom: 8, textAlign: 'center' },
-  challengeTitle: { fontSize: 14, fontWeight: '700', color: '#111827', marginBottom: 4, textAlign: 'center', minHeight: 18 },
-  challengeCardDesc: { fontSize: 11.5, color: '#6B7280', textAlign: 'center', lineHeight: 15, marginBottom: 12, minHeight: 45 },
-  challengeProgressBlock: { marginTop: 2, width: '100%' },
+  communityPill: { alignSelf: 'center', backgroundColor: '#EFF6FF', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, marginTop: 8, marginBottom: 2 },
+  communityPillText: { fontSize: 10, fontWeight: '800', color: '#2563EB' },
+  challengeTitle: { fontSize: 13, fontWeight: '700', color: '#111827', marginTop: 8, textAlign: 'center', lineHeight: 17, minHeight: 34 },
+  challengeCardDesc: { fontSize: 11, color: '#6B7280', textAlign: 'center', lineHeight: 15, marginTop: 4, minHeight: 30 },
+  challengeMeta: { fontSize: 10.5, color: '#9CA3AF', fontWeight: '600', textAlign: 'center', marginTop: 6 },
+  challengeFooter: { width: '100%', minHeight: 40, justifyContent: 'flex-end', marginTop: 8 },
   challengeTrack: {
     height: 8,
     borderRadius: 4,
@@ -1579,13 +1601,6 @@ const s = StyleSheet.create({
     backgroundColor: '#F3F4F6', borderRadius: 12, padding: 14, fontSize: 14,
     color: '#111827', minHeight: 70, marginBottom: 14, textAlignVertical: 'top',
   },
-  postPhotoBtn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-    backgroundColor: '#F3F4F6', borderRadius: 12, padding: 14, marginBottom: 16, minHeight: 60,
-  },
-  postPhotoBtnRequired: { borderWidth: 1.5, borderColor: '#EF4444', borderStyle: 'dashed' },
-  postPhotoBtnRequiredText: { fontSize: 13, color: '#EF4444', fontWeight: '600' },
-  postPhotoPreview: { width: '100%', height: 160, borderRadius: 10 },
   postModalActions: { flexDirection: 'row', gap: 10 },
   postCancelBtn: { flex: 1, padding: 14, borderRadius: 12, backgroundColor: '#F3F4F6', alignItems: 'center' },
   postCancelText: { fontWeight: '600', color: '#6B7280', fontSize: 14 },

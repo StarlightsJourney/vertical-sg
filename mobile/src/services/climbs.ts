@@ -27,11 +27,12 @@ export async function logClimb(
   qty: number,
   partialFloors: number = 0,
   caption?: string,
-  photoPath?: string,
+  photoPaths?: string[],
   trackingMethod: 'barometer' | 'pedometer' | 'manual' = 'manual',
   durationSeconds?: number,
 ): Promise<{ synced: boolean; error?: string; climbId?: string }> {
   const floorsClimbed = storeys * qty + partialFloors;
+  const hasPhotos = !!photoPaths && photoPaths.length > 0;
 
   try {
     // A photo attached right at logging time means this climb is being
@@ -49,8 +50,9 @@ export async function logClimb(
       floors_climbed: floorsClimbed,
       synced: true,
       caption: caption ?? null,
-      photo_path: photoPath ?? null,
-      posted_at: photoPath ? new Date().toISOString() : null,
+      photo_path: hasPhotos ? photoPaths![0] : null,
+      photo_paths: hasPhotos ? photoPaths : null,
+      posted_at: hasPhotos ? new Date().toISOString() : null,
       tracking_method: trackingMethod,
       duration_seconds: durationSeconds ?? null,
     }).select('climb_id').single();

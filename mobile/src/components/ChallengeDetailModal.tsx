@@ -7,9 +7,10 @@ import MascotAvatar from './MascotAvatar';
 import { avatarUriFor } from '../utils/avatarUri';
 import MedalBadge, { medalEmblemFor } from './MedalBadge';
 import SceneryBanner from './SceneryBanner';
-import { medalColorForBadgeKey } from '../utils/medalColor';
-import { BADGE_DEFS } from '../types';
+import { challengeColor, medalColorForChallenge } from '../utils/medalColor';
 import type { Challenge, Profile } from '../types';
+
+export { challengeColor };
 
 interface Props {
   challenge: Challenge | null;
@@ -26,15 +27,6 @@ interface Props {
 }
 
 export const PRIMARY_BLUE = '#2563EB';
-
-// A varied palette keyed off the challenge id — not a difficulty ranking,
-// just visual variety so cards don't all look the same.
-const CHALLENGE_PALETTE = ['#2563EB', '#7C3AED', '#0D9488', '#DB2777', '#D97706', '#059669'];
-export function challengeColor(id: string): string {
-  let hash = 0;
-  for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) >>> 0;
-  return CHALLENGE_PALETTE[hash % CHALLENGE_PALETTE.length];
-}
 
 function formatDateRange(startIso: string, endIso: string): string {
   const opts: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric' };
@@ -91,8 +83,7 @@ export default function ChallengeDetailModal({ challenge, visible, onClose, join
 
   if (!challenge) return null;
 
-  const isSpecial = !!BADGE_DEFS.find((b) => b.key === challenge.badge_key)?.special;
-  const color = challenge.badge_key ? medalColorForBadgeKey(challenge.badge_key, isSpecial) : challengeColor(challenge.challenge_id);
+  const color = medalColorForChallenge(challenge);
   const pct = Math.min(100, Math.round((progressFloors / challenge.target_floors) * 100));
   const completed = joined && pct >= 100;
   const isLimitedTime = !!(challenge.starts_at && challenge.ends_at);
@@ -116,7 +107,7 @@ export default function ChallengeDetailModal({ challenge, visible, onClose, join
           </TouchableOpacity>
           <View style={st.heroMedalWrap}>
             <View style={{ position: 'relative' }}>
-              <MedalBadge color={color} emblem={medalEmblemFor(challenge.reward_icon, challenge.badge_key, challenge.generic_name)} size={84} />
+              <MedalBadge color={color} emblem={medalEmblemFor(challenge.reward_icon, challenge.badge_key, challenge.generic_name)} iconName={challenge.reward_icon} size={84} />
               {completed && (
                 <View style={st.heroBadgeCheck}>
                   <Ionicons name="checkmark-circle" size={20} color="#10B981" />
@@ -218,7 +209,7 @@ export default function ChallengeDetailModal({ challenge, visible, onClose, join
 
 const st = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F9FAFB' },
-  closeBtn: { position: 'absolute', top: 52, right: 16, padding: 6, zIndex: 1 },
+  closeBtn: { position: 'absolute', top: 52, left: 16, padding: 6, zIndex: 1 },
   heroMedalWrap: { position: 'absolute', bottom: -34, left: 20 },
   heroBadgeCheck: {
     position: 'absolute',

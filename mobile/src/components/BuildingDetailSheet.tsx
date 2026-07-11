@@ -16,6 +16,7 @@ import {
 import Ionicons from '@expo/vector-icons/Ionicons';
 import * as Linking from 'expo-linking';
 import * as ImagePicker from 'expo-image-picker';
+import { compressToBase64 } from '../utils/compressImage';
 import { supabase } from '../config/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { base64ToUint8Array } from '../utils/base64';
@@ -203,8 +204,9 @@ export default function BuildingDetailSheet({ block, visible, onClose }: Props) 
         result = await ImagePicker.launchImageLibraryAsync({ quality: 0.8, allowsEditing: true, base64: true });
       }
 
-      if (!result.canceled && result.assets?.[0]?.base64) {
-        await uploadPhoto(result.assets[0].base64);
+      const asset = result.assets?.[0];
+      if (!result.canceled && asset?.base64 && asset.uri) {
+        await uploadPhoto(await compressToBase64(asset.uri, asset.base64));
       }
     } catch (err) {
       console.error('Photo picker error:', err);

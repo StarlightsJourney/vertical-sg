@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Modal, ActivityIndicator, TextInput, Image, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Modal, ActivityIndicator, TextInput, Alert } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { Barometer, Pedometer } from 'expo-sensors';
-import * as ImagePicker from 'expo-image-picker';
+import { Barometer, Pedometer, Accelerometer } from 'expo-sensors';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../config/supabase';
 import { base64ToUint8Array } from '../utils/base64';
+import PhotoGridPicker from './PhotoGridPicker';
 import type { Block } from '../types';
 
 interface Props {
@@ -13,7 +13,7 @@ interface Props {
   visible: boolean;
   onClose: () => void;
   onSave: (
-    floorsClimbed: number, caption?: string, photoPath?: string,
+    floorsClimbed: number, caption?: string, photoPaths?: string[],
     trackingMethod?: 'barometer' | 'pedometer', durationSeconds?: number,
   ) => Promise<string | undefined>;
   onUseManualEntry: () => void;
@@ -21,12 +21,39 @@ interface Props {
 }
 
 const METERS_PER_FLOOR = 2.8; // matches est_height_m = storeys * 2.8 elsewhere in the app
-const MIN_DELTA_M = 0.1; // ignore barometer jitter below this per-sample noise floor
 const STEPS_PER_FLOOR = 16; // typical HDB stairwell flight — used when there's no barometer
 const MIN_VALID_SECONDS = 15; // shorter than this and it's almost certainly a mis-tap, not a real climb
 
+// --- Intelligent segmentation (barometer + accelerometer fusion) ---
+// Barometer alone cannot tell a stair climb from an elevator/escalator
+// ride — both move altitude the same way, and door-open pressure blips or
+// HVAC drafts can look like a small ascent too. The discriminator is
+// whether the body is actually stepping: rhythmic vertical jostling shows
+// up as elevated variance in accelerometer magnitude; a lift ride (or the
+// phone sitting still) doesn't. Pedometer-only mode (no barometer on the
+// device) doesn't need this — an elevator never generates step counts, so
+// it's already immune to this specific false-positive.
+const STEP_RATE_MIN = 0.1; // m/s — same magnitude as the old flat per-sample noise floor (0.1m @ ~1Hz), expressed as a rate so it still holds if a sample is dropped/delayed
+const LIFT_RATE_MIN = 0.12; // m/s — "real" altitude change when NOT corroborated by stepping; below this it's just rest-noise
+const ACCEL_SAMPLE_MS = 100; // ~10Hz — comfortably covers stair-climbing cadence (~1.5-2.5 steps/sec)
+const ACCEL_WINDOW = 20; // samples (~2s) of magnitude used to judge "is the body moving rhythmically right now"
+// Variance of accelerometer magnitude (g^2) over the window. Walking/
+// stair-climbing sits well above a smooth lift ride or a stationary phone.
+// NOT device-calibrated — cheap Android accelerometers run noisier than
+// iPhone's, so this is a starting point that needs real on-device tuning,
+// ideally per-device-tier rather than one global constant.
+const STEPPING_VARIANCE_THRESHOLD = 0.004;
+
 type Phase = 'checking' | 'unavailable' | 'ready' | 'tracking' | 'summary' | 'saved';
 type SensorMode = 'barometer' | 'pedometer';
+type SegmentPhase = 'ascent' | 'descent' | 'lift' | 'rest';
+
+const PHASE_INFO: Record<SegmentPhase, { label: string; color: string; icon: keyof typeof Ionicons.glyphMap }> = {
+  ascent: { label: 'Climbing', color: '#10B981', icon: 'arrow-up-circle' },
+  descent: { label: 'Descending (not counted)', color: '#3B82F6', icon: 'arrow-down-circle' },
+  lift: { label: 'Elevator detected — not counted', color: '#F59E0B', icon: 'alert-circle' },
+  rest: { label: 'Resting', color: '#9CA3AF', icon: 'pause-circle' },
+};
 
 const CLIMB_TIPS = [
   'Keep a steady pace — quick bursts burn out your legs fast.',
@@ -49,11 +76,13 @@ export default function ClimbTrackerModal({ block, visible, onClose, onSave, onU
   const [paused, setPaused] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [elevationGain, setElevationGain] = useState(0);
+  const [descentMeters, setDescentMeters] = useState(0);
+  const [segmentPhase, setSegmentPhase] = useState<SegmentPhase>('rest');
   const [stepCount, setStepCount] = useState(0);
   const [tipIdx, setTipIdx] = useState(0);
 
   const [captionText, setCaptionText] = useState('');
-  const [photoBase64, setPhotoBase64] = useState<string | null>(null);
+  const [photosBase64, setPhotosBase64] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [savedFloors, setSavedFloors] = useState(0);
   const [savedClimbId, setSavedClimbId] = useState<string | undefined>(undefined);
@@ -62,7 +91,9 @@ export default function ClimbTrackerModal({ block, visible, onClose, onSave, onU
 
   const baselinePressure = useRef<number | null>(null);
   const lastAltitude = useRef(0);
+  const lastBaroSampleAt = useRef(0);
   const totalGain = useRef(0);
+  const totalDescent = useRef(0);
   const elapsedBeforePauseMs = useRef(0);
   const segmentStart = useRef(0);
   const stepsBase = useRef(0);
@@ -70,10 +101,15 @@ export default function ClimbTrackerModal({ block, visible, onClose, onSave, onU
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const tipTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const subRef = useRef<{ remove: () => void } | null>(null);
+  const accelSubRef = useRef<{ remove: () => void } | null>(null);
+  const accelBuffer = useRef<number[]>([]);
+  const isSteppingRef = useRef(false);
 
   const stopSensor = useCallback(() => {
     subRef.current?.remove();
     subRef.current = null;
+    accelSubRef.current?.remove();
+    accelSubRef.current = null;
   }, []);
 
   const stopTracking = useCallback(() => {
@@ -94,19 +130,25 @@ export default function ClimbTrackerModal({ block, visible, onClose, onSave, onU
     setPhase('checking');
     setElapsed(0);
     setElevationGain(0);
+    setDescentMeters(0);
+    setSegmentPhase('rest');
     setStepCount(0);
     setTipIdx(0);
     setPaused(false);
     setCaptionText('');
-    setPhotoBase64(null);
+    setPhotosBase64([]);
     setSavedClimbId(undefined);
     setPostedToFeed(false);
     baselinePressure.current = null;
     lastAltitude.current = 0;
+    lastBaroSampleAt.current = 0;
     totalGain.current = 0;
+    totalDescent.current = 0;
     elapsedBeforePauseMs.current = 0;
     stepsBase.current = 0;
     pausedRef.current = false;
+    accelBuffer.current = [];
+    isSteppingRef.current = false;
 
     (async () => {
       const baroAvailable = await Barometer.isAvailableAsync();
@@ -137,20 +179,59 @@ export default function ClimbTrackerModal({ block, visible, onClose, onSave, onU
     };
   }, [visible, stopTracking]);
 
+  const startAccelerometerListener = useCallback(() => {
+    Accelerometer.setUpdateInterval(ACCEL_SAMPLE_MS);
+    accelSubRef.current = Accelerometer.addListener(({ x, y, z }) => {
+      const magnitude = Math.sqrt(x * x + y * y + z * z);
+      const buf = accelBuffer.current;
+      buf.push(magnitude);
+      if (buf.length > ACCEL_WINDOW) buf.shift();
+      if (buf.length >= ACCEL_WINDOW) {
+        const mean = buf.reduce((sum, v) => sum + v, 0) / buf.length;
+        const variance = buf.reduce((sum, v) => sum + (v - mean) ** 2, 0) / buf.length;
+        isSteppingRef.current = variance > STEPPING_VARIANCE_THRESHOLD;
+      }
+    });
+  }, []);
+
   const startBarometerListener = useCallback(() => {
     Barometer.setUpdateInterval(1000);
+    lastBaroSampleAt.current = Date.now();
     subRef.current = Barometer.addListener(({ pressure }) => {
+      const now = Date.now();
+      const dt = Math.max(0.2, (now - lastBaroSampleAt.current) / 1000); // seconds, clamped so a delayed sample doesn't spike the rate
+      lastBaroSampleAt.current = now;
+
       if (baselinePressure.current == null) {
         baselinePressure.current = pressure;
         return;
       }
       const altitude = 44330 * (1 - Math.pow(pressure / baselinePressure.current, 1 / 5.255));
       const delta = altitude - lastAltitude.current;
-      if (delta > MIN_DELTA_M && !pausedRef.current) {
-        totalGain.current += delta;
-        setElevationGain(totalGain.current);
-      }
       lastAltitude.current = altitude;
+      if (pausedRef.current) return;
+
+      const rate = delta / dt; // m/s, signed
+
+      if (Math.abs(rate) < STEP_RATE_MIN) {
+        setSegmentPhase('rest');
+      } else if (isSteppingRef.current) {
+        if (rate > 0) {
+          totalGain.current += delta;
+          setElevationGain(totalGain.current);
+          setSegmentPhase('ascent');
+        } else {
+          totalDescent.current += -delta;
+          setDescentMeters(totalDescent.current);
+          setSegmentPhase('descent');
+        }
+      } else if (Math.abs(rate) > LIFT_RATE_MIN) {
+        // Real altitude change with no stepping behind it — an elevator or
+        // escalator. Not counted toward floors climbed.
+        setSegmentPhase('lift');
+      } else {
+        setSegmentPhase('rest');
+      }
     });
   }, []);
 
@@ -164,8 +245,12 @@ export default function ClimbTrackerModal({ block, visible, onClose, onSave, onU
 
   const handleStart = () => {
     segmentStart.current = Date.now();
-    if (sensorMode === 'barometer') startBarometerListener();
-    else startPedometerListener();
+    if (sensorMode === 'barometer') {
+      startBarometerListener();
+      startAccelerometerListener();
+    } else {
+      startPedometerListener();
+    }
 
     timerRef.current = setInterval(() => {
       if (pausedRef.current) return;
@@ -218,55 +303,31 @@ export default function ClimbTrackerModal({ block, visible, onClose, onSave, onU
     onClose();
   };
 
-  const pickPhoto = async (source: 'camera' | 'library') => {
-    const perm = source === 'camera'
-      ? await ImagePicker.requestCameraPermissionsAsync()
-      : await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) {
-      Alert.alert('Access needed', 'Enable access in Settings to add a photo.');
-      return;
-    }
-    const result = source === 'camera'
-      ? await ImagePicker.launchCameraAsync({ quality: 0.8, base64: true })
-      : await ImagePicker.launchImageLibraryAsync({ quality: 0.8, base64: true });
-    if (!result.canceled && result.assets?.[0]?.base64) {
-      setPhotoBase64(result.assets[0].base64);
-    }
-  };
-
-  const openPhotoPicker = () => {
-    Alert.alert('Add Photo', '', [
-      { text: 'Take Photo', onPress: () => pickPhoto('camera') },
-      { text: 'Choose from Library', onPress: () => pickPhoto('library') },
-      { text: 'Cancel', style: 'cancel' },
-    ]);
-  };
-
   const floorsClimbed = Math.round(elevationGain / METERS_PER_FLOOR);
 
-  const uploadPhoto = async (base64: string): Promise<string | undefined> => {
-    if (!user) return undefined;
-    const photoPath = `feed/${user.id}-${Date.now()}.jpg`;
-    const bytes = base64ToUint8Array(base64);
-    const { error } = await supabase.storage.from('building-photos').upload(photoPath, bytes, { contentType: 'image/jpeg' });
-    if (error) {
-      Alert.alert('Upload Failed', error.message);
-      return undefined;
+  const uploadPhotos = async (photos: string[]): Promise<string[]> => {
+    if (!user || photos.length === 0) return [];
+    const results = await Promise.all(photos.map(async (base64, i) => {
+      const photoPath = `feed/${user.id}-${Date.now()}-${i}.jpg`;
+      const bytes = base64ToUint8Array(base64);
+      const { error } = await supabase.storage.from('building-photos').upload(photoPath, bytes, { contentType: 'image/jpeg' });
+      return error ? null : photoPath;
+    }));
+    const uploaded = results.filter((p): p is string => !!p);
+    if (uploaded.length < photos.length) {
+      Alert.alert('Upload Failed', `${photos.length - uploaded.length} of ${photos.length} photos couldn't be uploaded.`);
     }
-    return photoPath;
+    return uploaded;
   };
 
   const handleSaveClimb = async () => {
     const finalFloors = Math.max(1, floorsClimbed);
     setSaving(true);
     try {
-      let photoPath: string | undefined;
-      if (photoBase64) {
-        photoPath = await uploadPhoto(photoBase64);
-      }
-      const climbId = await onSave(finalFloors, captionText.trim() || undefined, photoPath, sensorMode, elapsed);
+      const photoPaths = await uploadPhotos(photosBase64);
+      const climbId = await onSave(finalFloors, captionText.trim() || undefined, photoPaths.length > 0 ? photoPaths : undefined, sensorMode, elapsed);
       setSavedClimbId(climbId);
-      setPostedToFeed(!!photoPath);
+      setPostedToFeed(photoPaths.length > 0);
       setSavedFloors(finalFloors);
       setPhase('saved');
     } finally {
@@ -274,19 +335,21 @@ export default function ClimbTrackerModal({ block, visible, onClose, onSave, onU
     }
   };
 
-  // Adding a photo after the climb was already saved (without one) — posts
+  // Adding photos after the climb was already saved (without any) — posts
   // it to the feed retroactively via an update, same as the composer flow
   // on SocialScreen for climbs logged without a photo.
   const handlePostToFeedNow = async () => {
-    if (!photoBase64 || !savedClimbId || !user) return;
+    if (photosBase64.length === 0 || !savedClimbId || !user) return;
     setPosting(true);
     try {
-      const photoPath = await uploadPhoto(photoBase64);
-      if (!photoPath) return;
+      const photoPaths = await uploadPhotos(photosBase64);
+      if (photoPaths.length === 0) return;
       // posted_at is stamped now (not copied from the climb's created_at) so
       // a climb tracked earlier but shared right now sorts and displays as a
       // fresh post in the feed, not "Xd ago".
-      const { error } = await supabase.from('climbs').update({ photo_path: photoPath, posted_at: new Date().toISOString() }).eq('climb_id', savedClimbId).eq('user_id', user.id);
+      const { error } = await supabase.from('climbs')
+        .update({ photo_path: photoPaths[0], photo_paths: photoPaths, posted_at: new Date().toISOString() })
+        .eq('climb_id', savedClimbId).eq('user_id', user.id);
       if (error) {
         Alert.alert('Error', error.message);
         return;
@@ -379,6 +442,15 @@ export default function ClimbTrackerModal({ block, visible, onClose, onSave, onU
               {sensorMode === 'pedometer' && (
                 <Text style={styles.sensorNote}>No barometer detected — estimating floors from your step count.</Text>
               )}
+              {sensorMode === 'barometer' && !paused && (
+                <View style={[styles.phaseBadge, { backgroundColor: PHASE_INFO[segmentPhase].color + '1A' }]}>
+                  <Ionicons name={PHASE_INFO[segmentPhase].icon} size={13} color={PHASE_INFO[segmentPhase].color} />
+                  <Text style={[styles.phaseBadgeText, { color: PHASE_INFO[segmentPhase].color }]}>{PHASE_INFO[segmentPhase].label}</Text>
+                </View>
+              )}
+              {sensorMode === 'barometer' && descentMeters > 0.5 && (
+                <Text style={styles.descentNote}>{descentMeters.toFixed(1)}m descended this session (not counted)</Text>
+              )}
             </View>
 
             <View style={styles.trackingControls}>
@@ -426,16 +498,13 @@ export default function ClimbTrackerModal({ block, visible, onClose, onSave, onU
                 multiline
                 maxLength={200}
               />
-              <TouchableOpacity style={styles.summaryPhotoBtn} onPress={openPhotoPicker}>
-                {photoBase64 ? (
-                  <Image source={{ uri: `data:image/jpeg;base64,${photoBase64}` }} style={styles.summaryPhotoPreview} />
-                ) : (
-                  <>
-                    <Ionicons name="camera-outline" size={20} color="#6B7280" />
-                    <Text style={styles.summaryPhotoBtnText}>Attach a photo to share to your feed</Text>
-                  </>
-                )}
-              </TouchableOpacity>
+              <View style={{ marginBottom: 16 }}>
+                <PhotoGridPicker
+                  photos={photosBase64}
+                  onChange={setPhotosBase64}
+                  emptyLabel="Attach photos to share to your feed"
+                />
+              </View>
 
               <TouchableOpacity style={[styles.primaryBtn, saving && { opacity: 0.6 }]} onPress={handleSaveClimb} disabled={saving}>
                 {saving ? <ActivityIndicator size="small" color="#FFF" /> : <Text style={styles.primaryBtnText}>Save Climb</Text>}
@@ -464,15 +533,14 @@ export default function ClimbTrackerModal({ block, visible, onClose, onSave, onU
             ) : (
               <>
                 <Text style={[styles.readyText, { marginTop: 4 }]}>No photo attached — this won't show on your feed.</Text>
-                {photoBase64 ? (
-                  <Image source={{ uri: `data:image/jpeg;base64,${photoBase64}` }} style={styles.savedPhotoPreview} />
-                ) : (
-                  <TouchableOpacity style={styles.summaryPhotoBtn} onPress={openPhotoPicker}>
-                    <Ionicons name="camera-outline" size={20} color="#6B7280" />
-                    <Text style={styles.summaryPhotoBtnText}>Attach a photo to share</Text>
-                  </TouchableOpacity>
-                )}
-                {photoBase64 && (
+                <View style={{ marginTop: 8, marginBottom: 8, width: '100%' }}>
+                  <PhotoGridPicker
+                    photos={photosBase64}
+                    onChange={setPhotosBase64}
+                    emptyLabel="Attach photos to share"
+                  />
+                </View>
+                {photosBase64.length > 0 && (
                   <TouchableOpacity style={[styles.shareBtn, posting && { opacity: 0.6 }]} onPress={handlePostToFeedNow} disabled={posting} activeOpacity={0.85}>
                     {posting ? <ActivityIndicator size="small" color="#FFF" /> : (
                       <>
@@ -524,6 +592,12 @@ const styles = StyleSheet.create({
   },
   tipText: { flex: 1, fontSize: 12.5, color: '#92400E', fontWeight: '500', lineHeight: 17 },
   sensorNote: { fontSize: 11.5, color: '#9CA3AF', textAlign: 'center', marginTop: 20, paddingHorizontal: 24, lineHeight: 16 },
+  phaseBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    borderRadius: 999, paddingVertical: 6, paddingHorizontal: 14, marginTop: 20,
+  },
+  phaseBadgeText: { fontSize: 12.5, fontWeight: '700' },
+  descentNote: { fontSize: 11, color: '#9CA3AF', marginTop: 8 },
   trackingHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingHorizontal: 24 },
   trackingAddress: { fontSize: 14, fontWeight: '600', color: '#6B7280' },
   liveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#EF4444' },
@@ -560,13 +634,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#F3F4F6', borderRadius: 12, padding: 14, fontSize: 14,
     color: '#111827', minHeight: 60, marginBottom: 12, textAlignVertical: 'top',
   },
-  summaryPhotoBtn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-    backgroundColor: '#F3F4F6', borderRadius: 12, padding: 14, marginBottom: 16, minHeight: 56,
-  },
-  summaryPhotoBtnText: { fontSize: 13, color: '#6B7280', fontWeight: '500' },
-  summaryPhotoPreview: { width: '100%', height: 140, borderRadius: 10 },
-  savedPhotoPreview: { width: 220, height: 140, borderRadius: 10, marginTop: 8, marginBottom: 8 },
 
   shareBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,

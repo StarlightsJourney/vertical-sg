@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Platform, PanResponder, type GestureResponderEvent } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Platform, PanResponder, Modal, type GestureResponderEvent } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import AnimatedSplash from './src/components/AnimatedSplash';
@@ -7,20 +7,24 @@ import OnboardingScreen from './src/screens/OnboardingScreen';
 import MapScreen from './src/screens/MapScreen';
 import SocialScreen from './src/screens/SocialScreen';
 import GroupsScreen from './src/screens/GroupsScreen';
+import HomeScreen from './src/screens/HomeScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
 import { AuthProvider } from './src/contexts/AuthContext';
 import storage from './src/utils/storage';
 
-// Phase 2a: 4-tab layout (My Climbs merged into Profile)
-// Order: Social — Map — Groups — Profile (Map is center anchor)
+// Phase 2a: 4-tab layout. Order: Social — Map — Groups — Home (Map is
+// center anchor). Profile (badges/history/settings) is no longer its own
+// tab — it's reached by tapping your own avatar in Social or Groups, opened
+// as an overlay (see profileModalVisible below). Home is the analytics/
+// goals dashboard that used to live at the bottom of Profile.
 const TABS = [
   { key: 'social', label: 'Social', icon: 'people-outline' as const, index: 0 },
   { key: 'map', label: 'Map', icon: 'map-outline' as const, index: 1 },
   { key: 'groups', label: 'Groups', icon: 'flag-outline' as const, index: 2 },
-  { key: 'profile', label: 'Profile', icon: 'person-outline' as const, index: 3 },
+  { key: 'home', label: 'Home', icon: 'home-outline' as const, index: 3 },
 ];
 
-const TABS_BY_INDEX = ['social', 'map', 'groups', 'profile'] as const;
+const TABS_BY_INDEX = ['social', 'map', 'groups', 'home'] as const;
 const SWIPE_DISTANCE_THRESHOLD = 60; // px horizontal drag to trigger tab change
 
 export default function App() {
@@ -28,6 +32,9 @@ export default function App() {
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null);
   const [activeTab, setActiveTab] = useState('map');
   const [visitedTabs, setVisitedTabs] = useState<Set<string>>(() => new Set(['map']));
+  // Profile (badges/history/settings) is reached via avatar tap, not a tab —
+  // rendered as a full-screen overlay rather than switching activeTab.
+  const [profileModalVisible, setProfileModalVisible] = useState(false);
 
   useEffect(() => {
     storage.getItem('onboarding_completed').then((val) => setOnboardingDone(val === 'true'));
@@ -154,7 +161,7 @@ export default function App() {
               don't mount at all, so cold launch only pays for Map. */}
           {visitedTabs.has('social') && (
             <View style={[styles.screen, activeTab !== 'social' && styles.hidden]}>
-              <SocialScreen isDark={isDark} onNavigateToProfile={() => goToTab('profile')} onNavigateToGroups={() => goToTab('groups')} isActive={activeTab === 'social'} />
+              <SocialScreen isDark={isDark} onNavigateToProfile={() => setProfileModalVisible(true)} onNavigateToGroups={() => goToTab('groups')} isActive={activeTab === 'social'} />
             </View>
           )}
           {visitedTabs.has('map') && (
@@ -164,12 +171,12 @@ export default function App() {
           )}
           {visitedTabs.has('groups') && (
             <View style={[styles.screen, activeTab !== 'groups' && styles.hidden]}>
-              <GroupsScreen isDark={isDark} />
+              <GroupsScreen isDark={isDark} onNavigateToProfile={() => setProfileModalVisible(true)} />
             </View>
           )}
-          {visitedTabs.has('profile') && (
-            <View style={[styles.screen, activeTab !== 'profile' && styles.hidden]}>
-              <ProfileScreen isDark={isDark} themeMode={themeMode} onSetThemeMode={handleSetThemeMode} isActive={activeTab === 'profile'} />
+          {visitedTabs.has('home') && (
+            <View style={[styles.screen, activeTab !== 'home' && styles.hidden]}>
+              <HomeScreen isDark={isDark} themeMode={themeMode} onSetThemeMode={handleSetThemeMode} onNavigateToProfile={() => setProfileModalVisible(true)} isActive={activeTab === 'home'} />
             </View>
           )}
 
@@ -189,6 +196,16 @@ export default function App() {
               );
             })}
           </View>
+
+          <Modal visible={profileModalVisible} animationType="slide" onRequestClose={() => setProfileModalVisible(false)}>
+            <ProfileScreen
+              isDark={isDark}
+              themeMode={themeMode}
+              onSetThemeMode={handleSetThemeMode}
+              isActive={profileModalVisible}
+              onClose={() => setProfileModalVisible(false)}
+            />
+          </Modal>
         </View>
       )}
       {!splashDone && <AnimatedSplash onFinish={handleSplashFinish} />}

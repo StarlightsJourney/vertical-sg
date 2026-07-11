@@ -24,7 +24,7 @@ import { StatCell, GridDivider } from '../components/StatGrid';
 import RadialProgress from '../components/RadialProgress';
 import TrendSparkline from '../components/TrendSparkline';
 import MedalBadge, { medalEmblemFor } from '../components/MedalBadge';
-import { medalColorForBadgeKey } from '../utils/medalColor';
+import { medalColorFor } from '../utils/medalColor';
 import { computeXP, computeLevelProgress } from '../utils/leveling';
 import type { ClimbLog, UserBadge, Profile, BadgeDef } from '../types';
 import { BADGE_DEFS } from '../types';
@@ -107,13 +107,6 @@ function getTierColor(storeys: number): string {
   return '#7C3AED';
 }
 
-// Shared with GroupsScreen/ChallengeDetailModal (src/utils/medalColor.ts) so
-// the same badge always shows the same color everywhere in the app — this
-// used to be computed independently here and in Groups, which could show
-// two different colors for the same badge.
-function medalColorFor(def: BadgeDef): string {
-  return medalColorForBadgeKey(def.key, !!def.special);
-}
 
 /** Floors climbed per week for the last N weeks (oldest first, this week last). */
 function computeWeeklyBuckets(climbs: { climbedAt: string; floors: number }[], weeks: number): number[] {
@@ -262,9 +255,13 @@ interface ProfileScreenProps {
   themeMode?: 'light' | 'dark' | 'auto';
   onSetThemeMode?: (mode: 'light' | 'dark' | 'auto') => void;
   isActive?: boolean;
+  /** Present when opened as an overlay (from an avatar tap in Social/Groups
+   * — Profile is no longer its own tab) rather than mounted as a tab
+   * itself, so a close button is only shown in that context. */
+  onClose?: () => void;
 }
 
-export default function ProfileScreen({ isDark = false, themeMode = 'auto', onSetThemeMode, isActive }: ProfileScreenProps) {
+export default function ProfileScreen({ isDark = false, themeMode = 'auto', onSetThemeMode, isActive, onClose }: ProfileScreenProps) {
   const { user, isAnonymous, loading: authLoading } = useAuth();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [editingHandle, setEditingHandle] = useState(false);
@@ -499,6 +496,11 @@ export default function ProfileScreen({ isDark = false, themeMode = 'auto', onSe
             Discord-Nitro-style, as a reward moment rather than a default look. */}
         {isLegendary ? (
           <Animated.View style={[s.banner, { backgroundColor: legendaryColor }]}>
+            {onClose && (
+              <TouchableOpacity style={s.bannerCloseBtn} onPress={onClose} activeOpacity={0.7} hitSlop={8}>
+                <Ionicons name="chevron-down" size={24} color="#FFFFFF" />
+              </TouchableOpacity>
+            )}
             <LinearGradient
               colors={['rgba(255,255,255,0.22)', 'rgba(0,0,0,0.28)']}
               style={StyleSheet.absoluteFill}
@@ -509,6 +511,11 @@ export default function ProfileScreen({ isDark = false, themeMode = 'auto', onSe
           </Animated.View>
         ) : (
           <View style={[s.banner, isDark && { backgroundColor: '#1F2937' }]}>
+            {onClose && (
+              <TouchableOpacity style={s.bannerCloseBtn} onPress={onClose} activeOpacity={0.7} hitSlop={8}>
+                <Ionicons name="chevron-down" size={24} color="#FFFFFF" />
+              </TouchableOpacity>
+            )}
             <TouchableOpacity style={s.bannerSettingsBtn} onPress={() => setSettingsVisible(true)} activeOpacity={0.7} hitSlop={8}>
               <Ionicons name="settings-outline" size={22} color="#FFFFFF" />
             </TouchableOpacity>
@@ -556,7 +563,14 @@ export default function ProfileScreen({ isDark = false, themeMode = 'auto', onSe
               disabled={isAnonymous}
             >
               {featuredBadgeDef && (
-                <Ionicons name={featuredBadgeDef.icon as any} size={17} color="#D97706" style={{ marginRight: 6 }} />
+                <View style={{ marginRight: 6 }}>
+                  <MedalBadge
+                    color={medalColorFor(featuredBadgeDef)}
+                    emblem={medalEmblemFor(featuredBadgeDef.icon, featuredBadgeDef.key, featuredBadgeDef.resets === 'monthly')}
+                    iconName={featuredBadgeDef.icon}
+                    size={20}
+                  />
+                </View>
               )}
               <Text style={[s.displayName, isDark && { color: '#F9FAFB' }]}>
                 {isAnonymous ? 'Guest Climber' : (profile?.display_name ?? 'Climber')}
@@ -804,8 +818,13 @@ export default function ProfileScreen({ isDark = false, themeMode = 'auto', onSe
                   // until the challenge is re-completed this month.
                   const isActiveThisSeason = earned && (!isMonthly || calendarMonthKey(new Date(earnedAt!)) === thisMonthKey);
                   const isRenewalPending = earned && isMonthly && !isActiveThisSeason;
-                  const isChallengeMedal = def.category === 'challenge';
-                  const medalColor = isRenewalPending ? (isDark ? '#4B5563' : '#B0B7C3') : medalColorFor(def);
+                  // Every badge — challenge or achievement — now renders as the
+                  // same hand-drawn medal (not a plain Ionicon), so the shelf is
+                  // consistent with the challenge cards. Color comes from the
+                  // shared medalColorFor (category/tier/special); the emblem from
+                  // the badge's icon. Locked/pending states just desaturate and
+                  // dim the same medal so earned-vs-locked stays legible.
+                  const lockedMedalColor = isDark ? '#4B5563' : '#B0B7C3';
                   const emblem = medalEmblemFor(def.icon, def.key, isMonthly);
 
                   return (
@@ -817,25 +836,19 @@ export default function ProfileScreen({ isDark = false, themeMode = 'auto', onSe
                             s.badgeItemEarned,
                             isDark && s.badgeItemEarnedDark,
                             isMonthly && s.badgeItemGlow,
-                            isMonthly && { borderColor: medalColor },
+                            isMonthly && { borderColor: medalColorFor(def) },
                           ]}
                         >
-                          {isChallengeMedal ? (
-                            <MedalBadge color={medalColor} emblem={emblem} size={34} />
-                          ) : (
-                            <Ionicons name={def.icon as any} size={28} color={ACCENT} />
-                          )}
+                          <MedalBadge color={medalColorFor(def)} emblem={emblem} iconName={def.icon} size={34} />
                           <Text style={[s.badgeName, isDark && { color: '#F9FAFB' }]} numberOfLines={1}>
                             {def.name}
                           </Text>
                         </View>
                       ) : isRenewalPending ? (
                         <View style={[s.badgeItem, s.badgeRenewal, isDark && { backgroundColor: '#1F2937', borderColor: '#374151' }]}>
-                          {isChallengeMedal ? (
-                            <MedalBadge color={medalColor} emblem={emblem} size={34} />
-                          ) : (
-                            <Ionicons name={def.icon as any} size={28} color={isDark ? '#4B5563' : '#D1D5DB'} />
-                          )}
+                          <View style={{ opacity: 0.55 }}>
+                            <MedalBadge color={lockedMedalColor} emblem={emblem} iconName={def.icon} size={34} />
+                          </View>
                           <Text style={[s.badgeName, isDark ? { color: '#9CA3AF' } : s.badgeNameLocked]} numberOfLines={1}>
                             {def.name}
                           </Text>
@@ -845,11 +858,15 @@ export default function ProfileScreen({ isDark = false, themeMode = 'auto', onSe
                         </View>
                       ) : (
                         <View style={[s.badgeItem, s.badgeLocked, isDark && { backgroundColor: '#1F2937' }]}>
-                          <Ionicons
-                            name={isMystery ? 'help-outline' : (def.icon as any)}
-                            size={28}
-                            color={isDark ? '#4B5563' : '#D1D5DB'}
-                          />
+                          {isMystery ? (
+                            <View style={[s.badgeMystery, isDark && { backgroundColor: '#374151' }]}>
+                              <Ionicons name="help" size={20} color={isDark ? '#6B7280' : '#9CA3AF'} />
+                            </View>
+                          ) : (
+                            <View style={{ opacity: 0.32 }}>
+                              <MedalBadge color={lockedMedalColor} emblem={emblem} iconName={def.icon} size={34} />
+                            </View>
+                          )}
                           <Text style={[s.badgeName, isDark ? { color: '#6B7280' } : s.badgeNameLocked]} numberOfLines={1}>
                             {isMystery ? '???' : def.name}
                           </Text>
@@ -913,6 +930,7 @@ export default function ProfileScreen({ isDark = false, themeMode = 'auto', onSe
         isFeatured={!!selectedBadge && profile?.featured_badge === selectedBadge.key}
         onSetFeatured={selectedBadge && earnedBadges.has(selectedBadge.key) ? () => handleSetFeatured(selectedBadge.key) : undefined}
         onClose={() => setSelectedBadge(null)}
+        isDark={isDark}
       />
 
       <SettingsModal
@@ -973,6 +991,13 @@ const s = StyleSheet.create({
     top: 52,
     right: 16,
     padding: 4,
+  },
+  bannerCloseBtn: {
+    position: 'absolute',
+    top: 52,
+    left: 16,
+    padding: 4,
+    zIndex: 1,
   },
   header: {
     alignItems: 'center',
@@ -1209,6 +1234,12 @@ const s = StyleSheet.create({
   badgeLocked: {
     backgroundColor: '#F3F4F6',
     opacity: 0.5,
+  },
+  // Grey disc with a "?" for still-hidden mystery badges — keeps the "unknown"
+  // feel while the same medal footprint (34px) as every other badge.
+  badgeMystery: {
+    width: 34, height: 34, borderRadius: 17,
+    backgroundColor: '#E5E7EB', alignItems: 'center', justifyContent: 'center',
   },
   // Flat neutral card by default — the medal/tier color (applied inline per
   // badge) is what's meant to stand out here, not a colored card background.

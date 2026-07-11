@@ -40,6 +40,10 @@ export interface Profile {
   is_pro: boolean;
   /** Storage path (building-photos bucket, avatars/ prefix) for a real uploaded photo — takes priority over the mascot skin when set. */
   avatar_photo_path?: string | null;
+  /** Weekly floor goal — set at onboarding from path/motivation/fitness answers (see utils/goals.ts), editable from Home afterward. */
+  weekly_goal_floors?: number | null;
+  /** Suggested climbs/week, derived from onboarding path choice — drives Home's calendar. */
+  climb_cadence_per_week?: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -54,6 +58,8 @@ export interface ClimbRecord {
   synced: boolean;
   caption: string | null;
   photo_path: string | null;
+  /** Up to 6 Storage paths, in display order — kept in sync with photo_path (mirrors photo_paths[0]) by every write path. Null/empty means no gallery. */
+  photo_paths?: string[] | null;
   /** How floors_climbed was actually determined — shown to other users so they know how much to trust the number. */
   tracking_method: 'barometer' | 'pedometer' | 'manual';
   duration_seconds: number | null;

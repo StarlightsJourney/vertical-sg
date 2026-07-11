@@ -5,6 +5,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../config/supabase';
 import { base64ToUint8Array } from '../utils/base64';
+import { compressToBase64 } from '../utils/compressImage';
 import { avatarUriFor } from '../utils/avatarUri';
 import MascotAvatar from './MascotAvatar';
 import type { Profile } from '../types';
@@ -47,12 +48,13 @@ export default function SettingsModal({
     const result = source === 'camera'
       ? await ImagePicker.launchCameraAsync({ quality: 0.7, base64: true, allowsEditing: true, aspect: [1, 1] })
       : await ImagePicker.launchImageLibraryAsync({ quality: 0.7, base64: true, allowsEditing: true, aspect: [1, 1] });
-    if (result.canceled || !result.assets?.[0]?.base64) return;
+    const asset = result.assets?.[0];
+    if (result.canceled || !asset?.base64 || !asset.uri) return;
 
     setUploadingPhoto(true);
     try {
       const path = `avatars/${user.id}-${Date.now()}.jpg`;
-      const bytes = base64ToUint8Array(result.assets[0].base64);
+      const bytes = base64ToUint8Array(await compressToBase64(asset.uri, asset.base64));
       const { error: uploadError } = await supabase.storage.from('building-photos').upload(path, bytes, { contentType: 'image/jpeg' });
       if (uploadError) { Alert.alert('Upload Failed', uploadError.message); return; }
 

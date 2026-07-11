@@ -9,7 +9,7 @@ interface Props {
   block: Block | null;
   distanceKm: number | null;
   onLogClimb?: (
-    block: Block, qty: number, partialFloors: number, caption?: string, photoPath?: string,
+    block: Block, qty: number, partialFloors: number, caption?: string, photoPaths?: string[],
     trackingMethod?: 'barometer' | 'pedometer' | 'manual', durationSeconds?: number,
   ) => Promise<string | undefined> | void;
   onViewDetails?: (block: Block) => void;
@@ -66,7 +66,7 @@ export default function BlockDetailSheet({ block, distanceKm, onLogClimb, onView
   };
 
   const handleTrackerSave = async (
-    floorsClimbed: number, caption?: string, photoPath?: string,
+    floorsClimbed: number, caption?: string, photoPaths?: string[],
     trackingMethod?: 'barometer' | 'pedometer' | 'manual', durationSeconds?: number,
   ): Promise<string | undefined> => {
     // floorsClimbed is a real barometer-measured total (always >= 1, see
@@ -74,7 +74,7 @@ export default function BlockDetailSheet({ block, distanceKm, onLogClimb, onView
     // remainder the same way manual entry does, so it reconstructs identically.
     const qty = Math.floor(floorsClimbed / block.storeys);
     const partial = floorsClimbed % block.storeys;
-    return (await onLogClimb?.(block, qty, partial, caption, photoPath, trackingMethod, durationSeconds)) ?? undefined;
+    return (await onLogClimb?.(block, qty, partial, caption, photoPaths, trackingMethod, durationSeconds)) ?? undefined;
   };
 
   return (

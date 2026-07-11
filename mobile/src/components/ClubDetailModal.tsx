@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { View, Text, Modal, TouchableOpacity, ScrollView, TextInput, ActivityIndicator, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, Modal, TouchableOpacity, ScrollView, TextInput, ActivityIndicator, StyleSheet, KeyboardAvoidingView, Platform, type ImageSourcePropType } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { supabase } from '../config/supabase';
 import { useAuth } from '../contexts/AuthContext';
@@ -16,6 +16,19 @@ const CLUB_SCENERY: Record<OfficialClub['category'], SceneryVariant> = {
   Hiking: 'mountains',
   Climbing: 'mountains',
   Announcements: 'skyline',
+};
+
+// Real photo per category — falls back to the illustrated scene above when
+// absent (Announcements has no photo, see GroupsScreen's banner instead).
+// Single source of truth: the club grid card in GroupsScreen.tsx imports
+// this same map so the photo never differs between the card and this modal.
+// Bundled local assets (assets/groups/), not hotlinked from Wikimedia at
+// runtime — the live CDN rate-limits on-demand thumbnail requests, which a
+// one-off curl/browser check won't reveal but real usage hits reliably.
+export const CLUB_PHOTO: Partial<Record<OfficialClub['category'], ImageSourcePropType>> = {
+  'Trail Running': require('../../assets/groups/club_trail_running.jpg'),
+  Hiking: require('../../assets/groups/club_hiking.jpg'),
+  Climbing: require('../../assets/groups/club_climbing.jpg'),
 };
 
 interface Props {
@@ -166,7 +179,7 @@ export default function ClubDetailModal({ club, visible, onClose, isDark = false
           <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}>
           <ScrollView contentContainerStyle={st.body} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
             {/* AI-generated (vector) club profile scene — no live image-generation tool available, so this is a crafted illustrated banner standing in for one. */}
-            <SceneryBanner variant={CLUB_SCENERY[club.category]} height={130} borderRadius={16}>
+            <SceneryBanner variant={CLUB_SCENERY[club.category]} photoUri={CLUB_PHOTO[club.category]} height={130} borderRadius={16}>
               <View style={st.bannerOverlay}>
                 <Text style={st.bannerTitle}>{club.name}</Text>
               </View>
@@ -296,7 +309,7 @@ const st = StyleSheet.create({
   bannerTitle: { fontSize: 19, fontWeight: '800', color: '#FFFFFF', textShadowColor: 'rgba(0,0,0,0.35)', textShadowRadius: 6 },
   categoryPill: {
     alignSelf: 'flex-start', fontSize: 11, fontWeight: '800', color: '#2563EB',
-    backgroundColor: '#EFF6FF', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4, marginTop: 14, marginBottom: 10, overflow: 'hidden',
+    backgroundColor: '#EFF6FF', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4, marginTop: 8, marginBottom: 6, overflow: 'hidden',
   },
   description: { fontSize: 14, color: '#374151', lineHeight: 20, marginBottom: 10 },
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 14 },

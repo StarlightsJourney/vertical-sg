@@ -881,7 +881,7 @@ export default function MapScreen({ isDark: isDarkProp, onNavigateToSocial, isAc
   }, []);
 
   const handleLogClimb = useCallback(async (
-    block: Block, qty: number, partialFloors: number, caption?: string, photoPath?: string,
+    block: Block, qty: number, partialFloors: number, caption?: string, photoPaths?: string[],
     trackingMethod?: 'barometer' | 'pedometer' | 'manual', durationSeconds?: number,
   ) => {
     if (!user) return undefined;
@@ -895,7 +895,7 @@ export default function MapScreen({ isDark: isDarkProp, onNavigateToSocial, isAc
       qty,
       partialFloors,
       caption,
-      photoPath,
+      photoPaths,
       trackingMethod,
       durationSeconds,
     );
